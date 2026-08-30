@@ -30,9 +30,21 @@ function verifier() {
   return createGoogleVerifier({ clientId: TEST_CLIENT_ID, client, now: () => timestamp });
 }
 
-test('valid RSA-signed Google claims map only stable subject and display name', async () => {
+test('valid RSA-signed Google claims map verified identity and allow absent email for ordinary users', async () => {
   const identity = await verifier()(token(), nonce);
-  assert.deepEqual(identity, { googleSub: '12345678901234567890', name: '테스트 참여자' });
+  assert.deepEqual(identity, { googleSub: '12345678901234567890', name: '테스트 참여자', email: null, emailVerified: false });
+});
+
+test('administrator email evidence comes only from signed claims and requires boolean email_verified', async () => {
+  const verified = await verifier()(token({ email: 'HSO1025@GMAIL.COM', email_verified: true }), nonce);
+  assert.equal(verified.email, 'hso1025@gmail.com');
+  assert.equal(verified.emailVerified, true);
+  for (const email_verified of [false, 'true', 1, null]) {
+    const identity = await verifier()(token({ email: 'hso1025@gmail.com', email_verified }), nonce);
+    assert.equal(identity.emailVerified, false);
+  }
+  const alias = await verifier()(token({ email: 'hso1025+admin@gmail.com', email_verified: true }), nonce);
+  assert.equal(alias.email, 'hso1025+admin@gmail.com');
 });
 
 test('invalid RSA signature and modified signed content are rejected', async () => {

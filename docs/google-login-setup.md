@@ -1,6 +1,6 @@
 # Google 로그인 준비 상태
 
-확인일: 2026-08-31, Asia/Seoul. 사용자가 제공한 웹용 OAuth 2.0 클라이언트로 Google 전용 로그인 화면과 서버 세션을 구현·배포했다. 자동 검사는 통과했으나 운영 도메인의 실제 Google 버튼이 origin 미허용으로 차단되는 것을 확인했다. 이 설정을 해결하기 전에는 실제 Google 로그인과 제안 접수의 전체 성공을 확인한 상태가 아니다.
+확인일: 2026-08-31, Asia/Seoul. 사용자가 제공한 웹용 OAuth 2.0 클라이언트로 Google 전용 로그인 화면과 서버 세션을 구현·배포했다. 초기에는 운영 Google 버튼의 origin 차단을 확인했다. 03:26 KST 재검사에서는 실제 버튼 HTTP 200과 origin 오류 미발생을 확인했으며, 계정 로그인·제안 접수·지정 관리자 접근의 전체 성공을 직접 확인한 것은 아니다.
 
 ## 완료한 작업
 
@@ -20,7 +20,9 @@
 
 운영 배포 후 별도의 로그인되지 않은 Chromium으로 `https://yourga.me`를 열어 실제 Google 버튼을 검사했다. Google의 `/gsi/button`이 HTTP 403을 반환했고, 허용되지 않은 origin이라는 제공자 오류를 두 번 확인했다. 이는 테스트 대역이 아닌 실제 제공자 응답이다. 로컬 화면의 버튼 렌더링 성공과 구분한다.
 
-필요한 조치: [webug-504110 프로젝트의 OAuth 클라이언트](https://console.cloud.google.com/auth/clients?project=webug-504110)에서 사용자가 제공한 웹 클라이언트의 **승인된 JavaScript 원본**에 `https://yourga.me`를 추가한다. origin에는 경로나 마지막 슬래시를 붙이지 않는다. 이 callback 방식 때문에 임의의 redirect URI나 새 클라이언트를 만들 필요는 없다. 설정 반영 뒤 실제 도메인의 Google 로그인, 잔여 횟수 조회, 명시한 초안의 단일 자동 접수를 재검증한다.
+2026-08-31 03:26 KST에 새 익명 Chromium으로 다시 검사했다. 실제 `/gsi/button`은 HTTP 200이었고 Google 콘솔 로그에 origin 거부 오류가 나타나지 않았다. 제공자 응답 HTML에 포함된 일반 오류 메시지 문자열만으로 차단으로 판정하지 않고, 실제 오류 응답·콘솔 오류를 구분했다. 이번 작업에서 Google 콘솔 설정을 변경하지 않았으며 변경 주체·시점은 추정하지 않는다.
+
+차단이 다시 발생할 때 확인할 설정: [webug-504110 프로젝트의 OAuth 클라이언트](https://console.cloud.google.com/auth/clients?project=webug-504110)의 **승인된 JavaScript 원본**은 `https://yourga.me`다. origin에는 경로나 마지막 슬래시를 붙이지 않는다. 이 callback 방식 때문에 임의의 redirect URI나 새 클라이언트를 만들지 않는다. 실제 도메인의 Google 로그인, 잔여 횟수 조회, 명시한 초안의 단일 자동 접수와 관리자 인증은 별도로 검증한다.
 
 Google의 일반 Web OAuth 클라이언트 설정은 [Google Auth Platform의 Clients](https://console.cloud.google.com/auth/clients)에서 관리한다. 일반 클라이언트를 임의의 관리 API나 `gcloud iam oauth-clients`로 수정하지 않는다. Google은 일반 OAuth 클라이언트의 프로그램 방식 생성·수정을 지원하지 않는다고 설명하며, IAM OAuth 클라이언트는 Workforce Identity Federation용 별도 리소스다. [공식 설정 원칙](https://developers.google.com/identity/protocols/oauth2/resources/best-practices), [IAM OAuth 애플리케이션](https://docs.cloud.google.com/iam/docs/workforce-manage-oauth-app)
 
@@ -32,4 +34,4 @@ Google의 일반 Web OAuth 클라이언트 설정은 [Google Auth Platform의 Cl
 - Google API 데이터 접근 없이 로그인에 필요한 기본 신원 정보만 요청한다. 전송하려던 초안의 자동 접수와 시간당 제한은 Google이 아니라 앱 서버가 처리한다.
 - 기본 Vercel 별칭 `yourgame-eosin.vercel.app`에서는 로그인 origin이 갈라지지 않도록 대표 주소 `https://yourga.me`로 이동시킨다. 운영 변경 요청은 대표 origin만 허용한다. [Vercel 호스트 조건 리다이렉트](https://vercel.com/docs/project-configuration/vercel-json)
 
-로그인 UI·서버 세션·세션 유지·로그아웃·초안 복원·중복 접수 방지는 자동 검사로 확인했다. 운영 화면·DB·익명 세션·CSRF와 잘못된 자격증명 거부도 확인했다. 허용 origin 오류는 아직 해결되지 않았고 실제 Google 계정 로그인은 완료하지 않았다. `authConfigured=true`와 테스트 통과만으로 실제 Google 로그인 완료라고 표시하지 않는다. 현재 제공자 차단 기록은 `.local/google-provider-status.json`에 남긴다.
+로그인 UI·서버 세션·세션 유지·로그아웃·초안 복원·중복 접수 방지는 자동 검사로 확인했다. 운영 화면·DB·익명 세션·CSRF와 잘못된 자격증명 거부도 확인했다. 최신 제공자 버튼 검사에서 이전 차단은 재현되지 않았으나 실제 Google 계정 로그인은 직접 완료하지 않았다. `authConfigured=true`, 버튼 HTTP 200과 테스트 통과만으로 실제 Google 로그인 완료라고 표시하지 않는다. 최신 제공자 검사 기록은 `.local/google-provider-status.json`에 남긴다.

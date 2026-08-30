@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
+import { readFile } from 'node:fs/promises';
 import {
   ANONYMOUS_SESSION_MS, FIRST_RELEASE, LOGIN_SESSION_MS,
   MAX_BYTES, SUBMISSION_LIMIT, WINDOW_MS, currentCollection, readConfig,
@@ -9,6 +10,7 @@ import { ApiError, unavailable } from './errors.mjs';
 import { createGoogleVerifier, secureEqual } from './google.mjs';
 import { createStore, hashValue } from './store.mjs';
 import { withNetworkDeadline } from './network.mjs';
+import { publicService, proposalsAllowed } from './admin-policy.mjs';
 
 const BODY_LIMIT = 16 * 1024;
 const METHODS = {
@@ -18,6 +20,8 @@ const METHODS = {
   '/api/logout': ['POST'],
   '/api/proposals': ['GET', 'POST', 'PATCH'],
   '/api/health': ['GET'],
+  '/api/admin': ['GET', 'POST'],
+  '/api/admin-page': ['GET'],
 };
 
 function header(req, name) {
@@ -116,6 +120,7 @@ export function createApiHandler({
   store,
   getStore,
   verifyCredential,
+  readAdminPage = () => readFile(new URL('./admin-page.html', import.meta.url), 'utf8'),
   now = Date.now,
   log = entry => console.error(JSON.stringify(entry)),
 } = {}) {
@@ -152,9 +157,13 @@ export function createApiHandler({
 
         if (route === '/api/status') {
           const time = now();
+          const service = await (await resolveStore()).getService();
+          const collection = currentCollection(time);
+          if (!proposalsAllowed(service)) collection.status = service.mode === 'ended' ? 'ended' : 'paused';
           return respond(res, 200, {
             serverTime: new Date(time).toISOString(),
-            collection: currentCollection(time),
+            collection,
+            service: publicService(service),
             firstReleaseAt: new Date(FIRST_RELEASE).toISOString(),
             googleClientId: config.googleClientId,
             limits: { bytes: MAX_BYTES, submissions: SUBMISSION_LIMIT, windowSeconds: WINDOW_MS / 1000 },
@@ -166,9 +175,11 @@ export function createApiHandler({
 
         if (route === '/api/health') {
           let database = config.databaseUrl || store || getStore ? 'unavailable' : 'unconfigured';
+          let service = null;
           try {
             const db = await resolveStore();
             await db.health();
+            service = await db.getService();
             database = 'ok';
           } catch (error) {
             safeLog(log, 'health_database_error', route, requestId, error);
@@ -178,7 +189,9 @@ export function createApiHandler({
           return respond(res, healthy ? 200 : 503, {
             status: healthy ? 'ok' : 'degraded', database, authConfigured,
             version: config.version, serverTime: new Date(now()).toISOString(),
-            collectionOpen: true, gamePublished: false,
+            collectionOpen: service ? proposalsAllowed(service) : false, gamePublished: false,
+            serviceMode: service?.mode ?? 'unknown',
+            developmentEnabled: service ? service.mode === 'active' && service.developmentEnabled : false,
           });
         }
 
@@ -192,6 +205,19 @@ export function createApiHandler({
             setSessionCookie(res, created.token, config, false);
           }
           return respond(res, 200, sessionPayload(session));
+        }
+        if (route === '/api/admin-page') {
+          if (!session?.user) {
+            res.statusCode = 302;
+            res.setHeader('Location', '/?admin=1');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.end('관리자 로그인이 필요합니다.');
+          }
+          await db.admin.requireAdmin(session);
+          const html = await readAdminPage();
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.statusCode = 200;
+          return res.end(html);
         }
         if (!session) throw new ApiError(401, 'LOGIN_REQUIRED', '로그인한 뒤 제안을 제출해 주세요.');
         if (mutation && !secureEqual(header(req, 'x-csrf-token'), session.csrfToken)) {
@@ -216,6 +242,18 @@ export function createApiHandler({
           return respond(res, 200, sessionPayload(anonymous.session));
         }
         if (!session.user) throw new ApiError(401, 'LOGIN_REQUIRED', '로그인한 뒤 제안을 제출해 주세요.');
+        if (route === '/api/admin') {
+          if (method === 'GET') {
+            const url = new URL(req.url, 'http://internal.invalid');
+            const keys = [...url.searchParams.keys()];
+            if (url.search.length > 4096 || new Set(keys).size !== keys.length) {
+              throw new ApiError(422, 'INVALID_ADMIN_INPUT', '관리 목록 조회 조건을 확인해 주세요.');
+            }
+            return respond(res, 200, await db.admin.query(session, Object.fromEntries(url.searchParams)));
+          }
+          await db.admin.requireAdmin(session);
+          return respond(res, 200, await db.admin.mutate(session, await readJson(req)));
+        }
         if (method === 'GET') {
           const result = await db.listProposals(session.user.id);
           return respond(res, 200, { ...result, ownerId: session.user.id });

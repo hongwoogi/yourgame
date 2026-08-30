@@ -24,7 +24,8 @@ function proposal(ownerId) {
 async function fixture(page) {
   const state = {
     session: structuredClone(ALICE), sessionCalls: 0, privateCalls: 0, posts: 0,
-    holdSessions: null, holdNextSessionFailure: null,
+    holdSessions: null, holdNextSessionFailure: null, holdNextStatus: null,
+    service: { mode: 'active', proposalsEnabled: true, developmentEnabled: true, message: '' },
   };
   await page.clock.install({ time: new Date(START) });
   await page.route('https://accounts.google.com/**', (route) => route.abort());
@@ -32,12 +33,21 @@ async function fixture(page) {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-    if (pathname === '/api/status') return reply({
-      serverTime: new Date(START).toISOString(),
-      collection: { id: 'initial', status: 'open', closesAt: '2026-08-31T14:00:00.000Z', initialClosed: false },
-      firstReleaseAt: '2026-08-31T15:00:00.000Z', googleClientId: 'race-fixture.apps.googleusercontent.com',
-      limits: { bytes: 2000, submissions: 3, windowSeconds: 3600 }, game: { published: false },
-    });
+    if (pathname === '/api/status') {
+      const snapshot = {
+        serverTime: new Date(START).toISOString(),
+        collection: { id: 'initial', status: state.service.mode === 'maintenance' ? 'paused' : 'open', closesAt: '2026-08-31T14:00:00.000Z', initialClosed: false },
+        firstReleaseAt: '2026-08-31T15:00:00.000Z', googleClientId: 'race-fixture.apps.googleusercontent.com',
+        limits: { bytes: 2000, submissions: 3, windowSeconds: 3600 }, game: { published: false }, service: structuredClone(state.service),
+      };
+      const held = state.holdNextStatus;
+      if (held) {
+        state.holdNextStatus = null;
+        held.started.resolve();
+        await held.release.promise;
+      }
+      return reply(snapshot);
+    }
     if (pathname === '/api/session') {
       state.sessionCalls += 1;
       const failedRead = state.holdNextSessionFailure;
@@ -67,7 +77,12 @@ async function fixture(page) {
         serverTime: new Date(START).toISOString(),
       });
     }
-    if (pathname === '/api/proposals') state.posts += 1;
+    if (pathname === '/api/proposals') {
+      state.posts += 1;
+      if (state.service.mode === 'maintenance') return reply({ error: {
+        code: 'SERVICE_MAINTENANCE', message: '서비스 점검 중에는 제안을 접수하지 않습니다.',
+      } }, 409);
+    }
     return reply({ error: { code: 'UNEXPECTED_REQUEST', message: 'Unexpected regression-fixture request.' } }, 400);
   });
   await page.goto('/');
@@ -127,4 +142,30 @@ test('a session read that fails after logout cannot disable the newly ready anon
     await expect(page.locator('#prompt')).toHaveValue('로그아웃 후에도 보존할 새 제안');
     expect(state.posts).toBe(0);
   } finally { staleRead.release.resolve(); }
+});
+
+test('an older active status response cannot reopen submissions after a newer operational rejection', async ({ page }) => {
+  const state = await fixture(page);
+  const staleStatus = { started: deferred(), release: deferred() };
+  state.holdNextStatus = staleStatus;
+  await page.locator('#prompt').fill('점검 시작과 상태 응답이 엇갈려도 보존할 제안');
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await staleStatus.started.promise;
+    state.service = { mode: 'maintenance', proposalsEnabled: false, developmentEnabled: false, message: '운영 점검 중입니다.' };
+    await page.locator('#submit-button').click();
+    await expect(page.locator('#form-message')).toContainText('점검');
+    await expect(page.locator('#service-notice')).toHaveAttribute('data-mode', 'maintenance');
+    await expect(page.locator('#prompt-form')).toHaveAttribute('aria-busy', 'false');
+
+    const oldResponse = page.waitForResponse((response) => response.url().endsWith('/api/status'));
+    staleStatus.release.resolve();
+    await (await oldResponse).finished();
+    await expect(page.locator('#retry-connection')).toBeEnabled();
+    await expect(page.locator('#submit-button')).toBeDisabled();
+    await expect(page.locator('#service-notice')).toHaveAttribute('data-mode', 'maintenance');
+    await expect(page.locator('#prompt')).toHaveValue('점검 시작과 상태 응답이 엇갈려도 보존할 제안');
+    expect(state.posts).toBe(1);
+    expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  } finally { staleStatus.release.resolve(); }
 });

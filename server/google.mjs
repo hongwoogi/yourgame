@@ -2,6 +2,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { timingSafeEqual } from 'node:crypto';
 import { ApiError } from './errors.mjs';
 import { networkSignal, UPSTREAM_TIMEOUT_MS } from './network.mjs';
+import { normalizedEmail } from './admin-policy.mjs';
 
 function invalidCredential() {
   return new ApiError(401, 'INVALID_GOOGLE_CREDENTIAL', 'Google 로그인을 다시 진행해 주세요.');
@@ -68,6 +69,8 @@ export function createGoogleVerifier({ clientId, client = boundedGoogleClient(),
       googleSub: payload.sub,
       name: typeof payload.name === 'string' && payload.name.trim()
         ? [...payload.name.trim()].slice(0, 80).join('') : '참여자',
+      email: normalizedEmail(payload.email),
+      emailVerified: payload.email_verified === true,
     };
   };
 }

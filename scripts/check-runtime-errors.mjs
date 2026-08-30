@@ -12,7 +12,10 @@ const LOOKBACK_MS = 10 * 60 * 1000;
 const RETENTION_MS = 2 * 60 * 60 * 1000;
 const MAX_RECORDS = 50;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
-const API_PATHS = new Set(['/api/status', '/api/session', '/api/login', '/api/logout', '/api/proposals', '/api/health']);
+const API_PATHS = new Set([
+  '/api/status', '/api/session', '/api/login', '/api/logout', '/api/proposals', '/api/health',
+  '/api/admin', '/api/admin-page', '/admin', '/admin/',
+]);
 const QUERY_CODES = new Set([
   'cli_unavailable', 'project_not_linked', 'query_timeout', 'query_output_too_large',
   'authentication_required', 'access_denied', 'plan_restricted', 'unsupported_cli',

@@ -5,11 +5,17 @@ import {
 } from './config.mjs';
 import { ApiError } from './errors.mjs';
 import { checkSchema, writeBatch } from './database.mjs';
+import { checkAdminSchema } from './admin-schema.mjs';
+import { createAdminStore } from './admin-store.mjs';
+import {
+  ADMIN_EMAIL, normalizedEmail, PROPOSAL_ACCESS_SQL, assertProposalAccess, proposalAccessStatement,
+} from './admin-policy.mjs';
+import { DATABASE_NOW_SQL } from './database-clock.mjs';
+
+export { DATABASE_NOW_SQL } from './database-clock.mjs';
 
 export const hashValue = value => createHash('sha256').update(value).digest('hex');
 const randomToken = () => randomBytes(32).toString('base64url');
-export const DATABASE_NOW_SQL = `(CAST(strftime('%s', 'now') AS INTEGER) * 1000
-  + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER))`;
 const cleanupSessions = time => ({
   sql: `DELETE FROM sessions WHERE token_hash IN
     (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 100)`,
@@ -68,17 +74,26 @@ function sessionView(row) {
     googleNonce: row.google_nonce,
     nonceExpiresAt: Number(row.nonce_expires_at),
     expiresAt: Number(row.expires_at),
-    user: row.user_id ? { id: row.user_id, name: row.name } : null,
+    user: row.user_id ? { id: row.user_id, name: row.name, isAdmin: Number(row.is_admin) === 1 } : null,
   };
 }
 
-const sessionSql = `SELECT s.*, u.name FROM sessions s
-  LEFT JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`;
+const sessionSql = `SELECT s.*, u.name,
+  CASE WHEN a.email_verified = 1 AND a.email = '${ADMIN_EMAIL}' AND i.user_id IS NOT NULL THEN 1 ELSE 0 END AS is_admin
+  FROM sessions s LEFT JOIN users u ON u.id = s.user_id
+  LEFT JOIN session_auth a ON a.token_hash = s.token_hash
+  LEFT JOIN admin_identity i ON i.id = 1 AND i.user_id = u.id AND i.google_sub = u.google_sub
+  WHERE s.token_hash = ? AND s.expires_at > ?
+    AND NOT EXISTS (SELECT 1 FROM member_access m WHERE m.user_id = s.user_id AND m.status = 'suspended')`;
 
 export function createStore(client, { now = Date.now, databaseClockSql = DATABASE_NOW_SQL } = {}) {
+  const admin = createAdminStore(client, { now, databaseClockSql });
   return {
+    admin,
+    getService: admin.getService,
     async health() {
       await checkSchema(client);
+      await checkAdminSchema(client);
       return 'ok';
     },
 
@@ -151,24 +166,48 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
       const tokenHash = hashValue(token);
       const csrfToken = randomToken();
       const googleNonce = randomToken();
-      const expiresAt = time + LOGIN_SESSION_MS;
+      const email = normalizedEmail(identity.email);
+      const emailVerified = identity.emailVerified === true && email !== null;
       const oldSessionCondition = `EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?
-        AND google_nonce = ? AND expires_at > ? AND nonce_expires_at > ?)`;
-      const oldSessionArgs = [session.tokenHash, session.googleNonce, time, time];
+        AND google_nonce = ? AND expires_at > ${databaseClockSql} AND nonce_expires_at > ${databaseClockSql})
+        AND NOT EXISTS (SELECT 1 FROM member_access m JOIN users u ON u.id = m.user_id
+          WHERE u.google_sub = ? AND m.status = 'suspended')`;
+      const oldSessionArgs = [session.tokenHash, session.googleNonce, identity.googleSub];
       const results = await writeBatch(client, [
         {
+          sql: 'SELECT m.status FROM member_access m JOIN users u ON u.id = m.user_id WHERE u.google_sub = ?',
+          args: [identity.googleSub],
+        },
+        {
           sql: `INSERT INTO users(id, google_sub, name, created_at, updated_at)
-            SELECT ?, ?, ?, ?, ? WHERE ${oldSessionCondition}
+            SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} WHERE ${oldSessionCondition}
             ON CONFLICT(google_sub) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
-          args: [randomUUID(), identity.googleSub, identity.name, time, time, ...oldSessionArgs],
+          args: [randomUUID(), identity.googleSub, identity.name, ...oldSessionArgs],
+        },
+        {
+          sql: `INSERT INTO member_access(user_id, email, updated_at)
+            SELECT id, ?, ${databaseClockSql} FROM users WHERE google_sub = ? AND ${oldSessionCondition}
+            ON CONFLICT(user_id) DO UPDATE SET email = COALESCE(excluded.email, member_access.email)`,
+          args: [emailVerified ? email : null, identity.googleSub, ...oldSessionArgs],
         },
         {
           sql: `INSERT INTO sessions(token_hash, user_id, csrf_token, google_nonce,
               nonce_expires_at, created_at, expires_at)
-            SELECT ?, users.id, ?, ?, ?, ?, ? FROM users
+            SELECT ?, users.id, ?, ?, ${databaseClockSql} + ?, ${databaseClockSql}, ${databaseClockSql} + ? FROM users
             WHERE google_sub = ? AND ${oldSessionCondition}`,
-          args: [tokenHash, csrfToken, googleNonce, time + GOOGLE_NONCE_MS, time, expiresAt,
+          args: [tokenHash, csrfToken, googleNonce, GOOGLE_NONCE_MS, LOGIN_SESSION_MS,
             identity.googleSub, ...oldSessionArgs],
+        },
+        {
+          sql: `INSERT INTO session_auth(token_hash, email, email_verified, authenticated_at)
+            SELECT token_hash, ?, ?, ${databaseClockSql} FROM sessions WHERE token_hash = ?`,
+          args: [email, Number(emailVerified), tokenHash],
+        },
+        {
+          sql: `INSERT INTO admin_identity(id, user_id, google_sub, created_at)
+            SELECT 1, u.id, u.google_sub, ${databaseClockSql} FROM sessions s JOIN users u ON u.id = s.user_id
+            WHERE s.token_hash = ? AND ? = 1 AND ? = ? ON CONFLICT(id) DO NOTHING`,
+          args: [tokenHash, Number(emailVerified), email, ADMIN_EMAIL],
         },
         {
           sql: 'DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?)',
@@ -177,7 +216,10 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
         cleanupSessions(time),
         { sql: sessionSql, args: [tokenHash, time] },
       ]);
-      const updated = sessionView(results[4].rows[0]);
+      if (results[0].rows[0]?.status === 'suspended') {
+        throw new ApiError(403, 'USER_SUSPENDED', '이 계정은 이용이 정지되어 로그인할 수 없습니다.');
+      }
+      const updated = sessionView(results.at(-1).rows[0]);
       if (!updated) {
         throw new ApiError(409, 'LOGIN_SESSION_CHANGED', '로그인 상태가 변경되었습니다. 새로고침한 뒤 다시 시도해 주세요.');
       }
@@ -216,6 +258,8 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
       ], 'read');
       const time = Number(results[1].rows[0].now_ms);
       return {
+        // This is the round's edit lifetime. Temporary operating controls are
+        // reported separately and rechecked atomically when saving a change.
         proposals: results[0].rows.map(row => proposalView(row, time)),
         quota: quotaView(results[1]),
         serverTime: new Date(time).toISOString(),
@@ -239,13 +283,16 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
               CASE WHEN clock.now_ms < ? THEN 'initial' ELSE 'pending' END, 1 FROM clock
             WHERE (SELECT COUNT(*) FROM proposals
               WHERE user_id = ? AND created_at > clock.now_ms - ? AND created_at <= clock.now_ms) < ?
+              AND ${PROPOSAL_ACCESS_SQL}
             ON CONFLICT(user_id, request_id) DO NOTHING`,
           args: [randomUUID(), userId, requestId, bodyHash, body, INITIAL_CUTOFF,
-            userId, WINDOW_MS, SUBMISSION_LIMIT],
+            userId, WINDOW_MS, SUBMISSION_LIMIT, userId, userId],
         },
         { sql: 'SELECT * FROM proposals WHERE user_id = ? AND request_id = ?', args: [userId, requestId] },
         quotaStatement(userId, databaseClockSql),
+        proposalAccessStatement(userId),
       ]);
+      assertProposalAccess(results[3].rows[0]);
       const time = Number(results[2].rows[0].now_ms);
       const quota = quotaView(results[2]);
       const row = results[1].rows[0];
@@ -271,12 +318,15 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
           sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
             UPDATE proposals SET body = ?, updated_at = MAX(created_at, (SELECT now_ms FROM clock)), revision = revision + 1
             WHERE id = ? AND user_id = ? AND revision = ?
-              AND (round_id = 'pending' OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))`,
-          args: [body, id, userId, revision, INITIAL_CUTOFF],
+              AND (round_id = 'pending' OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))
+              AND ${PROPOSAL_ACCESS_SQL}`,
+          args: [body, id, userId, revision, INITIAL_CUTOFF, userId, userId],
         },
         { sql: 'SELECT * FROM proposals WHERE id = ?', args: [id] },
         quotaStatement(userId, databaseClockSql),
+        proposalAccessStatement(userId),
       ]);
+      assertProposalAccess(results[3].rows[0]);
       const time = Number(results[2].rows[0].now_ms);
       const row = results[1].rows[0];
       if (!row) throw new ApiError(404, 'PROPOSAL_NOT_FOUND', '제안을 찾을 수 없습니다.');

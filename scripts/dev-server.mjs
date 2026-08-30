@@ -17,7 +17,7 @@ const mimeTypes = {
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
-const routes = new Set(['status', 'session', 'login', 'logout', 'proposals', 'health']);
+const routes = new Set(['status', 'session', 'login', 'logout', 'proposals', 'health', 'admin', 'admin-page']);
 
 export const devServer = http.createServer(async (req, res) => {
   try {
@@ -28,6 +28,7 @@ export const devServer = http.createServer(async (req, res) => {
     }
     const url = new URL(req.url, process.env.APP_ORIGIN);
     if (url.pathname === '/health.json') url.pathname = '/api/health';
+    if (url.pathname === '/admin' || url.pathname === '/admin/') url.pathname = '/api/admin-page';
     if (url.pathname.startsWith('/api/')) {
       const route = url.pathname.slice(5);
       if (!routes.has(route)) {

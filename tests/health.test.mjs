@@ -68,6 +68,20 @@ test('success checks both routes and persists last success and healthy version',
   assert.deepEqual(state.activeIncidents, []);
 });
 
+test('intentional service closure is not mislabeled as an infrastructure outage', async t => {
+  const { options } = await fixture(t, (_request, response, check) => {
+    response.writeHead(200, { 'Content-Type': check === 'api' ? 'application/json' : 'text/html' });
+    response.end(check === 'api' ? JSON.stringify({ ...GOOD_HEALTH,
+      collectionOpen: false, service: { mode: 'ended', proposalsEnabled: false, developmentEnabled: false } })
+      : GOOD_PAGE.replace('yourga.me</body>', 'yourga.me 서비스가 종료되었습니다.</body>'));
+    return true;
+  });
+  const report = await runOnce(options);
+  assert.equal(report.status, 'healthy');
+  assert.equal(report.notificationRecommended, false);
+  assert.deepEqual(report.newIncidents, []);
+});
+
 test('a repeated non-200 failure creates one incident and a real recovery', async (t) => {
   let failing = false;
   const { options } = await fixture(t, (_request, response, check) => {

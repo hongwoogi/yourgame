@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client';
 import { ApiError } from './errors.mjs';
 import { boundedFetch } from './network.mjs';
+import { initializeAdminDatabase } from './admin-schema.mjs';
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA = [
@@ -53,6 +54,7 @@ export const SCHEMA = [
 export async function initializeDatabase(client) {
   await client.batch(SCHEMA, 'write');
   await checkSchema(client);
+  await initializeAdminDatabase(client);
 }
 
 export async function checkSchema(client) {

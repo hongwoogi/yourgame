@@ -8,12 +8,16 @@
   const ATTEMPT_KEY = 'yourgame.attempt.v1';
   const AUTH_PULSE_KEY = 'yourgame.auth-pulse.v1';
   const PENDING_MAX_AGE = 10 * 60 * 1000;
+  const entryParameters = new URLSearchParams(window.location.search);
+  const requestedAdmin = entryParameters.get('admin') === '1';
+  const requestedReauthentication = requestedAdmin && entryParameters.get('reauth') === '1';
   const encoder = new TextEncoder();
   const byId = (id) => document.getElementById(id);
   const ui = Object.fromEntries([
     'prompt', 'prompt-form', 'submit-button', 'submit-label', 'submit-icon', 'submit-spinner',
     'byte-count', 'prompt-hint', 'submission-title', 'form-feedback', 'form-message',
-    'login-button', 'logout-button', 'user-name', 'login-dialog', 'close-login',
+    'login-button', 'logout-button', 'user-name', 'admin-link', 'login-dialog', 'close-login',
+    'login-title', 'login-description', 'service-notice', 'service-title', 'service-message', 'service-detail',
     'google-signin', 'google-button-area', 'login-message', 'login-draft-note', 'retry-google',
     'quota-container', 'quota-status', 'quota-note', 'my-proposals', 'proposal-list',
     'proposal-count', 'edit-banner', 'cancel-edit', 'reload-edit', 'copy-edit',
@@ -28,6 +32,8 @@
   let googleNonce = null;
   let sessionReady = false;
   let statusReady = false;
+  let statusReadSequence = 0;
+  let submissionBlock = null;
   let proposals = [];
   let quota = null;
   let privateReady = false;
@@ -35,6 +41,10 @@
   let editDrafts = { activeId: null, items: {} };
   let submitting = false;
   let authenticating = false;
+  let composing = false;
+  let adminEntryPending = requestedAdmin;
+  let adminRedirecting = false;
+  let loginPurpose = 'login';
   let synchronizing = false;
   let privatePromise = null;
   let privatePromiseEpoch = -1;
@@ -44,6 +54,8 @@
   let proposalMutationVersion = 0;
   let googleLoadPromise = null;
   let googleGeneration = 0;
+  let googleButtonGeneration = -1;
+  let googleButtonWidth = 0;
   let preservePendingOnClose = false;
   let loginReturnFocus = null;
   let serverBase = null;
@@ -99,7 +111,7 @@
   }
 
   let pending = readJson('sessionStorage', PENDING_KEY);
-  if (!validPending(pending)) clearPending();
+  if (requestedAdmin || !validPending(pending)) clearPending();
   let attempt = readJson('sessionStorage', ATTEMPT_KEY);
   if (!attempt || typeof attempt.body !== 'string' || typeof attempt.requestId !== 'string') attempt = null;
 
@@ -203,6 +215,76 @@
     return { bytes: status?.limits?.bytes || 2000, submissions: status?.limits?.submissions || 3 };
   }
 
+  function operatingState() {
+    // Older status fixtures omit service; the collection status still limits submissions.
+    const service = status?.service || {};
+    const ended = service.mode === 'ended' || status?.collection?.status === 'ended' || submissionBlock?.mode === 'ended';
+    const maintenance = service.mode === 'maintenance' || submissionBlock?.mode === 'maintenance';
+    return {
+      mode: ended ? 'ended' : maintenance ? 'maintenance' : 'active',
+      proposalsPaused: ended || maintenance || service.proposalsEnabled === false
+        || status?.collection?.status === 'paused' || Boolean(submissionBlock),
+      developmentPaused: ended || maintenance || service.developmentEnabled === false,
+      message: typeof service.message === 'string' ? service.message.slice(0, 2000) : '',
+    };
+  }
+
+  function proposalsOpen() {
+    return statusReady && status?.collection?.status === 'open' && !operatingState().proposalsPaused;
+  }
+
+  function pausedSubmissionMessage() {
+    const { mode } = operatingState();
+    const reason = mode === 'ended' ? '서비스가 종료되어'
+      : mode === 'maintenance' ? '서비스 점검 중이라' : '제안 접수가 일시정지되어';
+    return `${reason} 새 제안과 수정 내용을 접수하지 않아요. 작성한 내용은 보관되며 자동 전송하지 않습니다.`;
+  }
+
+  function cancelPausedSend() {
+    const wasPending = Boolean(pending);
+    clearPending();
+    if (ui['login-dialog'].open && loginPurpose === 'submission') {
+      ui['login-draft-note'].textContent = pausedSubmissionMessage();
+    }
+    if (wasPending) feedback(pausedSubmissionMessage(), 'error', { reason: 'service' });
+  }
+
+  function renderService() {
+    const state = operatingState();
+    const notice = ui['service-notice'];
+    notice.hidden = !state.proposalsPaused && !state.developmentPaused && !state.message;
+    notice.dataset.mode = state.mode;
+    notice.dataset.paused = String(state.proposalsPaused);
+    const title = state.mode === 'ended' ? '서비스가 종료되었습니다'
+      : state.mode === 'maintenance' ? '서비스 점검 중입니다'
+        : state.proposalsPaused ? '제안 접수를 일시정지했습니다'
+          : state.developmentPaused ? '자동 개발을 일시정지했습니다' : '운영 공지';
+    const detail = state.proposalsPaused
+      ? '새 제안과 수정은 접수하지 않습니다. 작성한 초안과 기존 접수 내역은 보존되며, 로그인과 내 제안 조회는 계속 이용할 수 있어요.'
+      : state.developmentPaused ? '새 게임 개발·공개는 대기 중입니다. 제안 접수는 계속 이용할 수 있어요.' : '';
+    for (const [key, text] of [['service-title', title], ['service-message', state.message], ['service-detail', detail]]) {
+      if (ui[key].textContent !== text) ui[key].textContent = text;
+    }
+    ui['service-message'].hidden = !state.message;
+    ui['service-detail'].hidden = !detail;
+  }
+
+  function isServiceRejection(error) {
+    return error.status === 423 || ['SERVICE_ENDED', 'SERVICE_MAINTENANCE', 'PROPOSALS_PAUSED'].includes(error.data?.error?.code);
+  }
+
+  function applyServiceRejection(error) {
+    const code = error.data?.error?.code;
+    submissionBlock = { mode: code === 'SERVICE_ENDED' ? 'ended' : code === 'SERVICE_MAINTENANCE' ? 'maintenance' : 'active' };
+    // A status read started before this rejection cannot reopen the form afterward.
+    statusReadSequence += 1;
+    cancelPausedSend();
+    saveCurrentDraft();
+    feedback(pausedSubmissionMessage(), 'error', { reason: 'service' });
+    renderControls();
+    renderTime();
+  }
+
   function shortTime(value, includeSeconds = false) {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return '시각 확인 중';
@@ -239,8 +321,11 @@
   function renderControls() {
     const count = renderBytes();
     const loggedIn = Boolean(user);
+    const operations = operatingState();
+    renderService();
     ui['login-button'].hidden = loggedIn;
-    ui['login-button'].disabled = authenticating || !sessionReady || !statusReady;
+    ui['login-button'].disabled = authenticating || !sessionReady;
+    ui['admin-link'].hidden = user?.isAdmin !== true;
     ui['logout-button'].hidden = !loggedIn;
     ui['logout-button'].disabled = authenticating || submitting;
     ui['user-name'].hidden = !loggedIn;
@@ -265,11 +350,12 @@
     }
     const editingLocked = editing && (!editing.editable || editing.conflict);
     const noQuota = loggedIn && (!quota || quota.remaining <= 0);
-    ui['submit-button'].disabled = submitting || authenticating || !sessionReady || !statusReady
+    ui['submit-button'].disabled = submitting || authenticating || composing || !sessionReady || !statusReady
       || (loggedIn && !privateReady)
       || count > limits().bytes || Boolean(editingLocked) || (!editing && noQuota)
-      || status?.collection?.status !== 'open';
+      || !proposalsOpen();
     ui['submit-label'].textContent = submitting ? (editing ? '저장 중…' : '접수 중…')
+      : operations.proposalsPaused ? (operations.mode === 'ended' ? '접수 종료' : '접수 일시정지')
       : editing ? (editingLocked ? '수정 상태 확인' : '수정 저장')
         : loggedIn && quota?.remaining === 0 ? '횟수 충전 대기' : '제안 보내기';
     ui['submit-spinner'].hidden = !submitting;
@@ -283,9 +369,16 @@
     const target = Date.parse(status?.firstReleaseAt || FIRST_RELEASE);
     const remaining = Math.max(0, Math.ceil((target - now) / 1000));
     const published = status?.game?.published === true;
-    ui.countdown.hidden = remaining === 0 || published;
-    ui['release-message'].hidden = remaining > 0 && !published;
-    if (published) {
+    const operations = operatingState();
+    const releasePaused = operations.mode !== 'active' || (!published && operations.developmentPaused);
+    ui.countdown.hidden = remaining === 0 || published || releasePaused;
+    ui['release-message'].hidden = remaining > 0 && !published && !releasePaused;
+    if (releasePaused) {
+      ui['countdown-title'].textContent = operations.mode === 'ended' ? '서비스 종료'
+        : operations.mode === 'maintenance' ? '서비스 점검 중' : '자동 개발 일시정지';
+      ui['release-message'].textContent = operations.mode === 'ended' ? '서비스 운영이 종료되었습니다.'
+        : operations.mode === 'maintenance' ? '운영 점검을 진행하고 있어요.' : '다음 개발을 기다리고 있어요.';
+    } else if (published) {
       ui['countdown-title'].textContent = '첫 번째 게임';
       ui['release-message'].textContent = '첫 게임이 공개되었습니다.';
     } else if (remaining === 0) {
@@ -299,16 +392,18 @@
       });
       ui.countdown.setAttribute('aria-label', `공개 목표까지 ${values[0]}일 ${values[1]}시간 ${values[2]}분 ${values[3]}초`);
     }
-    ui['release-note'].textContent = !statusReady ? '서버 연결을 확인 중입니다. 기기 시간으로 표시합니다.'
+    ui['release-note'].textContent = !statusReady ? (releasePaused ? '운영 상태를 다시 확인하고 있습니다.' : '서버 연결을 확인 중입니다. 기기 시간으로 표시합니다.')
+      : releasePaused ? '운영 재개와 새 공개가 확인되기 전에는 공개 완료로 표시하지 않습니다.'
       : published ? '공개 상태는 서버에서 확인한 정보입니다.'
         : remaining === 0 ? '공개 목표 시각이 지났습니다. 준비 상태를 확인하고 있어요.'
           : '한국시간 기준 · 제작과 검증을 마친 뒤 공개합니다.';
     const initialClosed = status?.collection?.initialClosed === true || now >= Date.parse(FIRST_CLOSE);
-    const open = statusReady && status?.collection?.status === 'open';
+    const open = proposalsOpen();
     ui['collection-dot'].classList.toggle('is-open', open);
     ui['collection-label'].textContent = !statusReady ? '제안 모집 상태 확인 중'
+      : operations.proposalsPaused ? (operations.mode === 'ended' ? '제안 접수가 종료되었습니다' : operations.mode === 'maintenance' ? '점검 중 · 제안 접수 일시정지' : '제안 접수 일시정지')
       : open ? (initialClosed ? '다음 회차 제안을 모집하고 있어요' : '지금, 첫 제안을 모집하고 있어요') : '제안 모집을 준비하고 있어요';
-    ui['collection-deadline'].textContent = initialClosed
+    ui['collection-deadline'].textContent = operations.proposalsPaused ? '새 제안·수정 접수 중단 · 작성한 내용과 기존 접수 내역은 보존됩니다' : initialClosed
       ? '첫 회차 모집 마감 · 지금 보낸 제안은 다음 회차에 접수됩니다'
       : '첫 제안 마감 · 08.31 23:00 KST';
     const boundary = `${initialClosed}-${remaining === 0}`;
@@ -379,15 +474,27 @@
   }
 
   async function refreshStatus() {
+    const sequence = ++statusReadSequence;
     try {
       const data = await request('/api/status');
+      if (sequence !== statusReadSequence) return status;
       if (!data.collection || !data.firstReleaseAt || !data.serverTime) throw new RequestError('모집 상태를 확인하지 못했어요. 다시 연결해 주세요.');
+      if (data.service !== undefined && (!data.service || !['active', 'maintenance', 'ended'].includes(data.service.mode)
+        || typeof data.service.proposalsEnabled !== 'boolean' || typeof data.service.developmentEnabled !== 'boolean'
+        || typeof data.service.message !== 'string')) throw new RequestError('운영 상태를 확인하지 못했어요. 작성한 내용은 보관됩니다.');
+      const wasPaused = operatingState().proposalsPaused;
       status = data;
+      submissionBlock = null;
       statusReady = true;
+      if (operatingState().proposalsPaused) cancelPausedSend();
+      else if (wasPaused && ui['form-feedback'].dataset.reason === 'service') {
+        feedback('제안 접수가 재개됐어요. 작성한 내용을 확인한 뒤 전송 버튼을 눌러주세요. 자동 전송하지 않습니다.');
+      }
       renderTime();
       renderControls();
       return data;
     } catch (error) {
+      if (sequence !== statusReadSequence) return status;
       statusReady = false;
       renderControls();
       renderTime();
@@ -426,7 +533,7 @@
       const actions = document.createElement('div');
       actions.className = 'proposal-meta-right';
       const state = document.createElement('span');
-      state.textContent = proposal.editable ? '수정 가능' : '수정 마감';
+      state.textContent = proposal.editable ? (operatingState().proposalsPaused ? '저장 일시정지' : '수정 가능') : '수정 마감';
       actions.append(state);
       if (proposal.editable) {
         const editButton = document.createElement('button');
@@ -525,6 +632,9 @@
     ui['retry-connection'].disabled = true;
     try {
       const results = await Promise.allSettled([refreshStatus(), refreshSession()]);
+      // Admin access must remain reachable when public status or proposal reads fail.
+      const handledAdminEntry = results[1].status === 'fulfilled' && await handleAdminEntry();
+      if (adminRedirecting) return true;
       const failure = results.find((result) => result.status === 'rejected');
       if (failure) {
         throw failure.reason;
@@ -533,7 +643,7 @@
       ui['connection-notice'].hidden = true;
       pollFailures = 0;
       lastSyncAt = Date.now();
-      if (resumePending && validPending(pending)) {
+      if (!handledAdminEntry && resumePending && validPending(pending)) {
         if (user) await resumeExplicitSend();
         else if (pending.body === ui.prompt.value) await openLogin(true);
         else clearPending();
@@ -615,7 +725,14 @@
   }
 
   async function sendProposal(body, requestId) {
-    if (submitting || !user || !privateReady || !validateBody(body)) return;
+    if (submitting || composing || !user || !privateReady || !validateBody(body)) return;
+    if (!proposalsOpen()) {
+      clearPending();
+      feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
+        : '지금은 제안을 접수할 수 없어요. 작성한 내용을 보관하고 모집 상태를 다시 확인해 주세요.', 'error',
+      { reason: operatingState().proposalsPaused ? 'service' : '' });
+      return;
+    }
     submitting = true;
     proposalMutationVersion += 1;
     const editingAtSend = editing ? { ...editing } : null;
@@ -655,7 +772,10 @@
       feedback(error.status === 0 && !editingAtSend
         ? '접수 결과를 확인하지 못했어요. 작성한 내용은 보관됩니다. 다시 전송해도 같은 요청이 중복 접수되지 않아요.'
         : error.message, 'error', { reason: error.status === 429 ? 'quota' : '' });
-      if (error.status === 409 && editingAtSend) {
+      if (isServiceRejection(error)) {
+        applyServiceRejection(error);
+        await refreshStatus().catch(() => {});
+      } else if (error.status === 409 && editingAtSend) {
         editing.conflict = true;
         await loadPrivate().catch(() => {});
         feedback(error.message, 'error', { reload: editing?.editable === true, copy: Boolean(editing) });
@@ -677,6 +797,12 @@
     const queued = pending;
     clearPending();
     if (!validPending(queued) || !user || editing) return;
+    if (composing || !proposalsOpen()) {
+      feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
+        : '작성 내용과 접수 상태를 확인한 뒤 전송 버튼을 다시 눌러주세요. 자동 제출하지 않았어요.', 'error',
+      { reason: operatingState().proposalsPaused ? 'service' : '' });
+      return;
+    }
     if (ui.prompt.value !== queued.body) {
       feedback('작성한 내용이 달라져 자동 제출하지 않았어요. 내용을 확인한 뒤 전송해 주세요.');
       return;
@@ -724,18 +850,66 @@
     return googleLoadPromise;
   }
 
+  function navigateToAdmin() {
+    if (adminRedirecting || user?.isAdmin !== true) return;
+    adminRedirecting = true;
+    clearPending();
+    saveCurrentDraft();
+    // This is an entry shortcut only. The server authorizes every admin request.
+    window.location.assign('/admin');
+  }
+
+  async function handleAdminEntry() {
+    if (!adminEntryPending || !sessionReady) return false;
+    adminEntryPending = false;
+    clearPending();
+    saveCurrentDraft();
+    // Consuming these flags prevents Back/reload from reopening the same login modal.
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete('admin');
+    nextUrl.searchParams.delete('reauth');
+    window.history.replaceState(window.history.state, '', nextUrl.pathname + nextUrl.search + nextUrl.hash);
+    if (user?.isAdmin === true && !requestedReauthentication) navigateToAdmin();
+    else await openLogin(false, { forAdmin: true });
+    return true;
+  }
+
+  function renderGoogleButton(generation = googleButtonGeneration) {
+    if (generation !== googleGeneration || !ui['login-dialog'].open || authenticating
+      || !window.google?.accounts?.id) return;
+    const availableWidth = Math.floor(ui['google-signin'].getBoundingClientRect().width);
+    const width = Math.min(350, availableWidth);
+    if (width <= 0 || (generation === googleButtonGeneration && width === googleButtonWidth)) return;
+    googleButtonGeneration = generation;
+    googleButtonWidth = width;
+    ui['google-signin'].replaceChildren();
+    window.google.accounts.id.renderButton(ui['google-signin'], {
+      type: 'standard', theme: 'outline', size: 'large', text: 'continue_with',
+      shape: 'rectangular', width, locale: 'ko', logo_alignment: 'left',
+    });
+  }
+
   async function prepareGoogle() {
     const generation = ++googleGeneration;
+    googleButtonGeneration = -1;
+    googleButtonWidth = 0;
     ui['retry-google'].hidden = true;
     ui['google-signin'].replaceChildren();
     loginMessage('Google 로그인 연결을 준비하고 있습니다.');
     try {
       await refreshSession();
       if (generation !== googleGeneration || !ui['login-dialog'].open) return;
-      if (user) {
+      if (user && loginPurpose !== 'admin') {
         closeLogin(true);
-        await loadPrivate();
-        await resumeExplicitSend();
+        try {
+          await refreshStatus();
+          await loadPrivate();
+          await resumeExplicitSend();
+        } catch (error) {
+          clearPending();
+          feedback('접수 상태를 확인하지 못해 자동 제출하지 않았어요. 작성한 내용은 보관됩니다. 연결을 확인한 뒤 다시 전송해 주세요.', 'error');
+          connectionError(error.message);
+        }
         return;
       }
       if (!status?.googleClientId) throw new Error('Google 로그인 설정을 확인하지 못했어요. 입력한 내용은 보관됩니다. 잠시 후 다시 연결해 주세요.');
@@ -746,11 +920,8 @@
         callback: (response) => handleGoogleCredential(response, generation),
         ux_mode: 'popup', context: 'signin',
       });
-      window.google.accounts.id.renderButton(ui['google-signin'], {
-        type: 'standard', theme: 'outline', size: 'large', text: 'continue_with',
-        shape: 'rectangular', width: 350, locale: 'ko', logo_alignment: 'left',
-      });
-      loginMessage('Google 버튼을 눌러 로그인해 주세요.');
+      renderGoogleButton(generation);
+      loginMessage(loginPurpose === 'admin' ? '관리자 계정으로 Google 로그인을 완료해 주세요.' : 'Google 버튼을 눌러 로그인해 주세요.');
     } catch (error) {
       if (generation !== googleGeneration) return;
       loginMessage(error.message, true);
@@ -758,11 +929,18 @@
     }
   }
 
-  async function openLogin(forSubmission = false) {
+  async function openLogin(forSubmission = false, { forAdmin = false } = {}) {
     if (authenticating || submitting) return;
-    if (!forSubmission) clearPending();
+    if (!forSubmission || forAdmin) clearPending();
+    saveCurrentDraft();
+    loginPurpose = forAdmin ? 'admin' : forSubmission ? 'submission' : 'login';
     loginReturnFocus = document.activeElement;
-    ui['login-draft-note'].textContent = forSubmission
+    ui['login-title'].textContent = forAdmin ? '관리자 로그인' : '당신의 아이디어를\n이어갈 차례.';
+    ui['login-description'].textContent = forAdmin
+      ? '관리자 계정을 다시 확인합니다.\nGoogle 로그인을 완료하면 관리자 화면으로 이동해요.'
+      : 'Google 계정으로 로그인하고 제안을 남겨주세요.\n최근 60분 동안 최대 3개의 제안을 보낼 수 있어요.';
+    ui['login-draft-note'].textContent = forAdmin
+      ? '제안과 수정 초안은 이 브라우저에 보관합니다. 관리자 로그인으로 제안이 전송되지는 않아요.' : forSubmission
       ? '작성한 내용은 보관됩니다. 로그인 후 남은 횟수가 있으면 이 제안을 바로 접수해요.'
       : '작성한 내용은 이 브라우저에 보관됩니다. 로그인만으로 제안이 전송되지는 않아요.';
     if (!ui['login-dialog'].open) ui['login-dialog'].showModal();
@@ -783,32 +961,54 @@
       loginMessage('로그인을 완료하지 못했어요. Google 버튼을 눌러 다시 시도해 주세요.', true);
       return;
     }
+    const forAdmin = loginPurpose === 'admin';
+    let freshLoginCompleted = false;
     authenticating = true;
     ui['close-login'].disabled = true;
     ui['google-button-area'].inert = true;
-    loginMessage('Google 계정과 남은 제출 횟수를 확인하고 있어요.');
+    loginMessage(forAdmin ? 'Google 계정과 관리자 권한을 확인하고 있어요.' : 'Google 계정과 남은 제출 횟수를 확인하고 있어요.');
     renderControls();
     try {
       const data = await request('/api/login', { method: 'POST', body: { credential: response.credential } });
       // Login rotates the session. Use the new CSRF token before any automatic submission.
+      authEpoch += 1;
+      sessionReadSequence += 1;
       applySession(data);
+      freshLoginCompleted = true;
       await refreshSession();
       if (!user) throw new Error('로그인 상태를 확인하지 못했어요. 다시 시도해 주세요.');
+      if (forAdmin) {
+        clearPending();
+        authenticating = false;
+        closeLogin(true);
+        writeStorage('localStorage', AUTH_PULSE_KEY, String(Date.now()));
+        if (user.isAdmin === true) navigateToAdmin();
+        else {
+          feedback('로그인한 계정에는 관리자 권한이 없어요. 제안은 전송하지 않았으며 작성한 내용은 보관됩니다.', 'error');
+          await loadPrivate().catch(() => {});
+        }
+        return;
+      }
+      // Operations may have been paused while the Google popup was open.
+      await refreshStatus();
       await loadPrivate();
       authenticating = false;
       closeLogin(true);
-      feedback('로그인했어요. 아이디어를 남겨주세요.');
+      feedback(operatingState().proposalsPaused ? `로그인했어요. ${pausedSubmissionMessage()}` : '로그인했어요. 아이디어를 남겨주세요.',
+        operatingState().proposalsPaused ? 'error' : 'success', { reason: operatingState().proposalsPaused ? 'service' : '' });
       writeStorage('localStorage', AUTH_PULSE_KEY, String(Date.now()));
       await resumeExplicitSend();
     } catch (error) {
-      if (user) {
+      if (!forAdmin && freshLoginCompleted && user) {
         clearPending();
         authenticating = false;
         closeLogin();
         feedback('로그인했지만 제출 준비를 마치지 못했어요. 작성한 내용은 보관됩니다. 연결을 다시 확인한 뒤 전송해 주세요.', 'error');
       } else {
+        if (forAdmin) clearPending();
         loginMessage(error.message, true);
         ui['retry-google'].hidden = false;
+        googleButtonGeneration = -1;
         ui['google-signin'].replaceChildren();
         try { await refreshSession(); } catch { sessionReady = false; }
       }
@@ -818,7 +1018,6 @@
       ui['google-button-area'].inert = false;
       renderControls();
       renderProposals();
-      if (narrowScreen.matches && ui['login-dialog'].open) closeLogin();
     }
   }
 
@@ -856,15 +1055,32 @@
     renderControls();
   });
 
+  ui.prompt.addEventListener('compositionstart', () => {
+    composing = true;
+    renderControls();
+  });
+  ui.prompt.addEventListener('compositionend', () => {
+    composing = false;
+    saveCurrentDraft();
+    renderControls();
+  });
+
   ui['prompt-form'].addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (submitting || authenticating) return;
+    if (submitting || authenticating || composing) return;
     const body = ui.prompt.value;
     saveCurrentDraft();
     if (!validateBody(body)) return;
     if (!statusReady || !sessionReady) {
       feedback('서버와 로그인 연결을 먼저 확인해 주세요. 작성한 내용은 그대로 남아 있어요.', 'error');
       await synchronize();
+      return;
+    }
+    if (!proposalsOpen()) {
+      clearPending();
+      feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
+        : '지금은 제안을 접수할 수 없어요. 작성한 내용은 보관되며 자동 전송하지 않습니다.', 'error',
+      { reason: operatingState().proposalsPaused ? 'service' : '' });
       return;
     }
     if (!user) {
@@ -897,6 +1113,7 @@
   ui['login-dialog'].addEventListener('close', () => {
     if (!preservePendingOnClose) clearPending();
     preservePendingOnClose = false;
+    loginPurpose = 'login';
     if (loginReturnFocus?.isConnected && !loginReturnFocus.hidden) loginReturnFocus.focus();
   });
   ui['login-dialog'].addEventListener('click', (event) => {
@@ -933,13 +1150,10 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && Date.now() - lastSyncAt > 15000) synchronize();
   });
-  const narrowScreen = window.matchMedia('(max-width: 799px)');
-  narrowScreen.addEventListener('change', (event) => {
-    if (event.matches && ui['login-dialog'].open && !authenticating) closeLogin();
-  });
+  window.addEventListener('resize', () => { renderGoogleButton(); });
 
   renderControls();
   renderTime();
   setInterval(renderTime, 1000);
-  synchronize({ resumePending: !narrowScreen.matches });
+  synchronize({ resumePending: true });
 })();

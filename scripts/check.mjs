@@ -25,10 +25,17 @@ const html = await readFile(path.join(root, 'public', 'index.html'), 'utf8');
 if (!html.includes('lang="ko"') || !html.includes('app.js') || !html.includes('styles.css')) {
   throw new Error('The Korean entry page and its assets must be present.');
 }
-for (const asset of ['app.js', 'styles.css']) {
+for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css']) {
   if (!(await readFile(path.join(root, 'public', asset), 'utf8')).trim()) {
     throw new Error(`Required browser asset is empty: ${asset}`);
   }
+}
+const adminHtml = await readFile(path.join(root, 'server', 'admin-page.html'), 'utf8');
+if (!adminHtml.includes('lang="ko"') || !adminHtml.includes('/admin.js') || !adminHtml.includes('/admin.css')) {
+  throw new Error('The protected administrator page and its assets must be present.');
+}
+if ((await readdir(path.join(root, 'public'))).some(name => /^admin(?:-page)?\.html$/i.test(name))) {
+  throw new Error('Administrator HTML must not be deployed as a public static file.');
 }
 console.log(`Checked ${sourceFiles.length} JavaScript files and deployment configuration.`);
 if (process.argv.includes('--test')) {

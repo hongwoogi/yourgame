@@ -81,8 +81,9 @@ test('new errors notify once across overlapping windows while a different reques
   assert.equal(JSON.parse(state).seen.length, 2);
 });
 
-test('all six existing API routes are covered, including authentication and proposal failure', () => {
-  const paths = ['/api/status', '/api/session', '/api/login', '/api/logout', '/api/proposals', '/api/health'];
+test('public and protected API routes are covered, including rewritten admin paths', () => {
+  const paths = ['/api/status', '/api/session', '/api/login', '/api/logout', '/api/proposals', '/api/health',
+    '/api/admin', '/api/admin-page', '/admin', '/admin/'];
   const parsed = parseRuntimeLogs(output(paths.map((path, index) => event({ requestPath: path, timestamp: NOW - index * 1000 }))), NOW);
   assert.deepEqual(new Set(parsed.events.map(row => row.path)), new Set(paths));
 });

@@ -224,7 +224,8 @@ test('login uses opaque rotated HttpOnly host-only cookies; logout revokes them'
   assert.notEqual(login.cookie, initial.cookie);
   assert.notEqual(login.body.csrfToken, initial.body.csrfToken);
   assert.notEqual(login.body.googleNonce, initial.body.googleNonce);
-  assert.deepEqual(Object.keys(login.body.user).sort(), ['id', 'name']);
+  assert.deepEqual(Object.keys(login.body.user).sort(), ['id', 'isAdmin', 'name']);
+  assert.equal(login.body.user.isAdmin, false);
   const token = login.cookie.split('=')[1];
   const persisted = await f.client.execute('SELECT token_hash FROM sessions');
   assert.ok(persisted.rows.some(row => row.token_hash === hashValue(token)));

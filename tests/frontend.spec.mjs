@@ -1,16 +1,26 @@
 import { test, expect } from '@playwright/test';
 
+// Browser behavior only: API responses, Google identity and button width are mocked.
+// Real OAuth signatures, administrator authorization and database writes are covered separately.
 const START = Date.parse('2026-08-31T03:00:00Z');
 const CUTOFF = '2026-08-31T14:00:00.000Z';
 const RELEASE = '2026-08-31T15:00:00.000Z';
 const anonymous = { user: null, csrfToken: 'anonymous-csrf', googleNonce: 'anonymous-nonce' };
 const signedIn = { user: { id: 'browser-test-user', name: '테스트 참여자' }, csrfToken: 'signed-in-csrf', googleNonce: 'signed-in-nonce' };
+const administrator = { user: { id: 'browser-admin', name: '테스트 관리자', isAdmin: true }, csrfToken: 'admin-csrf', googleNonce: 'admin-nonce' };
+const activeService = { mode: 'active', proposalsEnabled: true, developmentEnabled: true, message: '' };
+
+function savedProposal(id = 'existing-proposal') {
+  return { id, body: '원래 접수한 제안', createdAt: new Date(START).toISOString(),
+    updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true };
+}
 
 async function fixture(page, options = {}) {
   const state = {
     session: structuredClone(anonymous),
     quota: { remaining: 3, limit: 3, nextAvailableAt: null },
-    proposals: [], posts: [], patches: [], loginFailure: false, submissionFailure: false, privateFailure: false,
+    proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0,
+    loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false,
     serverTime: START, ...options,
   };
   await page.clock.install({ time: new Date(START) });
@@ -18,30 +28,46 @@ async function fixture(page, options = {}) {
     contentType: 'text/javascript',
     body: `window.google = { accounts: { id: {
       initialize(options) { window.testGoogleOptions = options; },
-      renderButton(container) {
+      renderButton(container, options) {
+        window.testGoogleButtonOptions = options;
         const button = document.createElement('button');
         button.type = 'button'; button.textContent = 'Google 테스트 로그인';
+        button.style.width = options.width + 'px'; button.style.minHeight = '44px'; button.style.flexShrink = '0';
         button.addEventListener('click', () => window.testGoogleOptions.callback({credential:'browser-fixture-only'}));
         container.replaceChildren(button);
       },
       disableAutoSelect() {}, cancel() {}
     } } };`,
   }));
+  await page.route('**/admin', (route) => {
+    state.adminVisits += 1;
+    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Mock admin destination</title><h1>관리자 도착 테스트</h1>' });
+  });
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-    if (pathname === '/api/status') return reply({
-      serverTime: new Date(state.serverTime).toISOString(),
-      collection: { id: 'initial', status: 'open', closesAt: CUTOFF, releaseAt: RELEASE, initialClosed: false },
-      firstReleaseAt: RELEASE, googleClientId: 'browser-fixture.apps.googleusercontent.com',
-      limits: { bytes: 2000, submissions: 3, windowSeconds: 3600 }, game: { published: false },
-    });
+    const operationCode = () => state.serviceRejection?.code || (state.service?.mode === 'ended' ? 'SERVICE_ENDED'
+      : state.service?.mode === 'maintenance' ? 'SERVICE_MAINTENANCE'
+        : state.service?.proposalsEnabled === false ? 'PROPOSALS_PAUSED' : null);
+    if (pathname === '/api/status') {
+      state.statusCalls += 1;
+      if (state.statusFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '운영 상태를 확인할 수 없습니다.' } }, 503);
+      return reply({
+        serverTime: new Date(state.serverTime).toISOString(),
+        collection: { id: 'initial', status: state.collectionStatus || (state.service?.mode === 'ended' ? 'ended'
+          : operationCode() ? 'paused' : 'open'), closesAt: CUTOFF, releaseAt: RELEASE, initialClosed: false },
+        firstReleaseAt: RELEASE, googleClientId: 'browser-fixture.apps.googleusercontent.com',
+        limits: { bytes: 2000, submissions: 3, windowSeconds: 3600 }, game: { published: state.published === true },
+        ...(state.service !== undefined ? { service: state.service } : {}),
+      });
+    }
     if (pathname === '/api/session') return reply(state.session);
     if (pathname === '/api/login') {
+      state.loginCalls += 1;
       if (state.loginFailure) return reply({ error: { code: 'LOGIN_UNAVAILABLE', message: 'Google 로그인 연결에 실패했습니다. 다시 시도해 주세요.' } }, 503);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
-      state.session = structuredClone(signedIn);
+      state.session = structuredClone(state.loginSession || signedIn);
       return reply(state.session);
     }
     if (pathname === '/api/logout') {
@@ -55,7 +81,8 @@ async function fixture(page, options = {}) {
     if (pathname === '/api/proposals' && request.method() === 'POST') {
       const payload = request.postDataJSON();
       state.posts.push(payload);
-      expect(request.headers()['x-csrf-token']).toBe(signedIn.csrfToken);
+      expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
+      if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       if (state.submissionFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '저장에 실패했습니다. 입력 내용은 유지됩니다.' } }, 503);
       if (state.quota.remaining === 0) return reply({ error: { code: 'QUOTA_EXCEEDED', message: '제출 가능 횟수를 모두 사용했습니다.' }, quota: state.quota }, 429);
       const existing = state.proposals.find((p) => p.requestId === payload.requestId);
@@ -71,7 +98,8 @@ async function fixture(page, options = {}) {
     if (pathname === '/api/proposals' && request.method() === 'PATCH') {
       const payload = request.postDataJSON();
       state.patches.push(payload);
-      expect(request.headers()['x-csrf-token']).toBe(signedIn.csrfToken);
+      expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
+      if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       const proposal = state.proposals.find((p) => p.id === payload.id);
       if (!proposal?.editable) return reply({ error: { code: 'PROPOSAL_FROZEN', message: '마감된 제안은 수정할 수 없습니다.' } }, 409);
       if (payload.revision !== proposal.revision) return reply({ error: { code: 'REVISION_CONFLICT', message: '다른 창에서 제안이 변경되었습니다.' } }, 409);
@@ -80,8 +108,9 @@ async function fixture(page, options = {}) {
     }
     return reply({ error: { code: 'NOT_FOUND', message: 'Unknown fixture endpoint' } }, 404);
   });
-  await page.goto('/');
-  await expect(page.locator(state.session.user ? '#logout-button' : '#login-button')).toBeEnabled();
+  await page.goto(options.path || '/');
+  if (options.expectAdminNavigation) await expect(page).toHaveURL('http://localhost:3000/admin');
+  else await expect(page.locator(state.session.user ? '#logout-button' : '#login-button')).toBeEnabled();
   return state;
 }
 
@@ -181,11 +210,69 @@ test('editing is available at zero quota and does not become a new submission', 
   expect(state.proposals[0].createdAt).toBe(original.createdAt);
 });
 
-test('narrow screens give the declared PC-only notice', async ({ page }) => {
-  await fixture(page);
+for (const width of [360, 390]) {
+  test(`mobile ${width}px supports byte limits, Google auto-submit and editing without horizontal overflow`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const state = await fixture(page);
+    await expect(page.locator('#hero-title')).toBeVisible();
+    await expect(page.locator('#countdown')).toBeVisible();
+    await expect(page.locator('.hero-description')).toContainText('PC·모바일');
+    expect(await page.locator('#prompt').evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+    const steps = await page.locator('.process-step').evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect(); return { x: rect.x, y: rect.y, bottom: rect.bottom };
+    }));
+    for (let index = 1; index < steps.length; index += 1) {
+      expect(steps[index].x).toBe(steps[0].x);
+      expect(steps[index].y).toBeGreaterThan(steps[index - 1].bottom);
+    }
+    await page.locator('#prompt').fill('가'.repeat(667));
+    await expect(page.locator('#byte-count')).toContainText('2,001');
+    await expect(page.locator('#submit-button')).toBeDisabled();
+    await expect(page.locator('#prompt')).toHaveValue('가'.repeat(667));
+    await page.locator('#prompt').fill('가'.repeat(666) + 'ab');
+    await expect(page.locator('#byte-count')).toContainText('2,000');
+    await page.locator('#submit-button').click();
+    const googleButton = page.getByRole('button', { name: 'Google 테스트 로그인' });
+    await expect(googleButton).toBeVisible();
+    for (const element of [page.locator('#login-dialog'), googleButton]) {
+      const bounds = await element.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    }
+    expect(await page.locator('#login-dialog').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await googleLogin(page);
+    await expect.poll(() => state.posts.length).toBe(1);
+    await expect(page.locator('#prompt')).toHaveValue('');
+    await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
+    await page.locator('#prompt').fill('모바일에서도 터치로 수정하는 제안');
+    await page.locator('#submit-button').click();
+    await expect.poll(() => state.patches.length).toBe(1);
+    expect(state.posts).toHaveLength(1);
+    expect(state.patches[0].body).toBe('모바일에서도 터치로 수정하는 제안');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+test('IME composition and a mobile orientation change retain the draft and explicit Send intent', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.desktop-notice')).toBeVisible();
-  await expect(page.locator('.desktop-app')).toBeHidden();
+  const state = await fixture(page);
+  await page.locator('#prompt').fill('모바일 한글 조합 중인 초안');
+  await page.locator('#prompt').dispatchEvent('compositionstart', { data: '안' });
+  await page.locator('#prompt-form').dispatchEvent('submit');
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect(page.locator('#prompt')).toHaveValue('모바일 한글 조합 중인 초안');
+  await page.locator('#prompt').dispatchEvent('compositionend', { data: '안' });
+  await page.locator('#submit-button').click();
+  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  await page.setViewportSize({ width: 360, height: 740 });
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  expect(await page.locator('#login-dialog').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await googleLogin(page);
+  await expect.poll(() => state.posts.length).toBe(1);
+  expect(state.posts[0].body).toBe('모바일 한글 조합 중인 초안');
 });
 
 test('closing a Send login modal cancels auto-send before a later header login', async ({ page }) => {
@@ -255,4 +342,228 @@ test('temporary private-list failure locks submission without replacing an in-pr
   await expect(page.locator('#prompt')).toHaveValue('조회 장애 중에도 계속 보존할 수정 초안');
   expect(state.posts).toHaveLength(0);
   expect(state.patches).toHaveLength(0);
+});
+
+test('only the server boolean admin flag reveals the fixed admin link, including on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  const state = await fixture(page, { session: { ...structuredClone(administrator), user: { ...administrator.user, name: '아주 긴 이름을 사용하는 관리자 참여자', isAdmin: 'true' } } });
+  await expect(page.locator('#admin-link')).toBeHidden();
+  state.session.user.isAdmin = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#admin-link')).toBeVisible();
+  await expect(page.locator('#admin-link')).toHaveAttribute('href', '/admin');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator('#logout-button').click();
+  await expect(page.locator('#admin-link')).toBeHidden();
+});
+
+test('admin entry clears pending Send, preserves the draft and ignores external redirect parameters', async ({ page }) => {
+  const draft = '관리자 로그인에서는 전송하면 안 되는 제안';
+  await page.addInitScript(({ draft, started }) => {
+    if (location.pathname !== '/' || sessionStorage.getItem('admin-entry-seeded')) return;
+    sessionStorage.setItem('admin-entry-seeded', '1');
+    localStorage.setItem('yourgame.draft.v1', draft);
+    sessionStorage.setItem('yourgame.pending.v1', JSON.stringify({ body: draft, requestId: 'admin-entry-test', createdAt: started }));
+  }, { draft, started: START });
+  const state = await fixture(page, { path: '/?admin=1&redirect=https://example.invalid/', loginSession: structuredClone(administrator) });
+  await expect(page.locator('#login-title')).toHaveText('관리자 로그인');
+  await expect(page.locator('#login-draft-note')).toContainText('전송되지는');
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  await googleLogin(page);
+  await expect(page).toHaveURL('http://localhost:3000/admin');
+  expect(state.adminVisits).toBe(1);
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+  expect(await page.evaluate(() => localStorage.getItem('yourgame.draft.v1'))).toBe(draft);
+});
+
+test('an already authenticated admin can enter despite public status and proposal read failures', async ({ page }) => {
+  const state = await fixture(page, { path: '/?admin=1', session: structuredClone(administrator),
+    statusFailure: true, privateFailure: true, expectAdminNavigation: true });
+  expect(state.adminVisits).toBe(1);
+  expect(state.loginCalls).toBe(0);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('admin reauthentication requires a successful new login and does not trust the old admin session after failure', async ({ page }) => {
+  const state = await fixture(page, { path: '/?admin=1&reauth=1', session: structuredClone(administrator),
+    loginSession: { ...structuredClone(administrator), csrfToken: 'fresh-admin-csrf', googleNonce: 'fresh-admin-nonce' }, loginFailure: true });
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  expect(state.loginCalls).toBe(0);
+  await googleLogin(page);
+  await expect(page.locator('#login-message')).toContainText('실패');
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  expect(state.adminVisits).toBe(0);
+  state.loginFailure = false;
+  await page.locator('#retry-google').click();
+  await googleLogin(page);
+  await expect(page).toHaveURL('http://localhost:3000/admin');
+  expect(state.loginCalls).toBe(2);
+  expect(state.adminVisits).toBe(1);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('an ordinary account completing admin login stays on the public page without submitting or looping', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('yourgame.draft.v1', '권한이 없어도 보존할 초안'));
+  const state = await fixture(page, { path: '/?admin=1&reauth=1' });
+  await googleLogin(page);
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect(page.locator('#form-message')).toContainText('관리자 권한이 없어요');
+  await expect(page.locator('#prompt')).toHaveValue('권한이 없어도 보존할 초안');
+  await expect(page).toHaveURL('http://localhost:3000/');
+  await page.clock.fastForward(46_000);
+  await page.reload();
+  await expect(page.locator('#logout-button')).toBeVisible();
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  expect(state.adminVisits).toBe(0);
+  expect(state.loginCalls).toBe(1);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('canceling admin reauthentication consumes the entry flags and keeps existing drafts', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('yourgame.draft.v1', '재인증 취소 후 남길 초안'));
+  const state = await fixture(page, { path: '/?admin=1&reauth=1', session: structuredClone(administrator) });
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  await page.reload();
+  await expect(page.locator('#admin-link')).toBeVisible();
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect(page.locator('#prompt')).toHaveValue('재인증 취소 후 남길 초안');
+  expect(state.adminVisits).toBe(0);
+  expect(state.loginCalls).toBe(0);
+  expect(state.posts).toHaveLength(0);
+});
+
+for (const [name, service] of [
+  ['maintenance', { ...activeService, mode: 'maintenance' }],
+  ['ended', { ...activeService, mode: 'ended' }],
+  ['proposals paused', { ...activeService, proposalsEnabled: false }],
+]) {
+  test(`${name} preserves new/edit drafts and history while blocking all submission paths`, async ({ page }) => {
+    const state = await fixture(page, { session: structuredClone(administrator), proposals: [savedProposal()],
+      service: { ...service, message: '운영 안내 <img src=x onerror="window.unsafeAnnouncement=true">' }, published: name === 'ended' });
+    await expect(page.locator('#service-notice')).toBeVisible();
+    await expect(page.locator('#service-message')).toContainText('<img');
+    await expect(page.locator('#service-message img')).toHaveCount(0);
+    await expect(page.locator('#admin-link')).toBeVisible();
+    await expect(page.locator('#my-proposals')).toBeVisible();
+    await page.locator('#prompt').fill('운영 중지 중에 작성하는 새 초안');
+    await expect(page.locator('#prompt')).toBeEnabled();
+    await expect(page.locator('#submit-button')).toBeDisabled();
+    await page.locator('#prompt-form').dispatchEvent('submit');
+    await expect(page.locator('#form-message')).toContainText('자동 전송하지');
+    await page.locator('#my-proposals summary').click();
+    await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
+    await page.locator('#prompt').fill('운영 중지 중에도 보존할 수정 초안');
+    await expect(page.locator('#submit-button')).toBeDisabled();
+    await page.locator('#prompt-form').dispatchEvent('submit');
+    await page.reload();
+    await expect(page.locator('#edit-banner')).toBeVisible();
+    await expect(page.locator('#prompt')).toHaveValue('운영 중지 중에도 보존할 수정 초안');
+    await page.locator('#cancel-edit').click();
+    await expect(page.locator('#prompt')).toHaveValue('운영 중지 중에 작성하는 새 초안');
+    if (name === 'ended') {
+      await expect(page.locator('#countdown')).toBeHidden();
+      await expect(page.locator('#release-message')).toHaveText('서비스 운영이 종료되었습니다.');
+      await expect(page.locator('#release-message')).not.toContainText('공개되었습니다');
+    }
+    expect(state.posts).toHaveLength(0);
+    expect(state.patches).toHaveLength(0);
+    expect(state.proposals[0].body).toBe('원래 접수한 제안');
+  });
+}
+
+test('a development-only pause keeps proposal submission available', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(signedIn), service: { ...activeService, developmentEnabled: false } });
+  await expect(page.locator('#service-title')).toContainText('자동 개발');
+  await expect(page.locator('#release-message')).toContainText('기다리고');
+  await page.locator('#prompt').fill('개발 대기 중에도 접수할 제안');
+  await page.locator('#submit-button').click();
+  await expect.poll(() => state.posts.length).toBe(1);
+  await expect(page.locator('#prompt')).toHaveValue('');
+});
+
+test('a pause during the Google popup cancels auto-send permanently but still permits login', async ({ page }) => {
+  const state = await fixture(page);
+  await page.locator('#prompt').fill('중지 중에는 자동 전송하면 안 되는 내용');
+  await page.locator('#submit-button').click();
+  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+  state.service = { ...activeService, mode: 'maintenance', message: '잠시 점검합니다.' };
+  // Login rechecks status even if the normal background poll has not run yet.
+  await googleLogin(page);
+  await expect(page.locator('#logout-button')).toBeVisible();
+  await expect(page.locator('#service-notice')).toBeVisible();
+  await expect(page.locator('#prompt')).toHaveValue('중지 중에는 자동 전송하면 안 되는 내용');
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  expect(state.posts).toHaveLength(0);
+  state.service = { ...activeService };
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await expect(page.locator('#form-message')).toContainText('접수가 재개');
+  await page.reload();
+  await expect(page.locator('#prompt')).toHaveValue('중지 중에는 자동 전송하면 안 되는 내용');
+  expect(state.posts).toHaveLength(0);
+});
+
+test('a failed status check after discovering an existing login cancels the pending Send', async ({ page }) => {
+  const state = await fixture(page);
+  await page.locator('#prompt').fill('다른 창 로그인 확인 뒤에도 보존할 초안');
+  // Another tab has signed in, but the public page still displays its anonymous session.
+  state.session = structuredClone(signedIn);
+  state.statusFailure = true;
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#connection-notice')).toBeVisible();
+  await expect(page.locator('#form-message')).toContainText('자동 제출하지 않았어요');
+  await expect(page.locator('#prompt')).toHaveValue('다른 창 로그인 확인 뒤에도 보존할 초안');
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  state.statusFailure = false;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await page.reload();
+  await expect(page.locator('#prompt')).toHaveValue('다른 창 로그인 확인 뒤에도 보존할 초안');
+  expect(state.posts).toHaveLength(0);
+});
+
+test('an operational 409 during edit is not a revision conflict and retains both drafts', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(signedIn), proposals: [savedProposal('pause-edit')] });
+  await page.locator('#prompt').fill('수정과 별도로 남겨둔 새 제안');
+  await page.locator('#my-proposals summary').click();
+  await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
+  await page.locator('#prompt').fill('저장 직전 점검이 시작된 수정 내용');
+  state.service = { ...activeService, mode: 'maintenance' };
+  await page.locator('#submit-button').click();
+  await expect.poll(() => state.patches.length).toBe(1);
+  await expect(page.locator('#form-message')).toContainText('점검');
+  await expect(page.locator('#reload-edit')).toBeHidden();
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  await expect(page.locator('#prompt')).toHaveValue('저장 직전 점검이 시작된 수정 내용');
+  state.service = { ...activeService };
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await expect(page.locator('#form-message')).toContainText('접수가 재개');
+  expect(state.patches).toHaveLength(1);
+  await page.locator('#cancel-edit').click();
+  await expect(page.locator('#prompt')).toHaveValue('수정과 별도로 남겨둔 새 제안');
+  expect(state.posts).toHaveLength(0);
+  expect(state.proposals[0].revision).toBe(1);
+});
+
+test('a 423 blocks repeat Send even if refreshing status fails, without losing the draft', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(signedIn) });
+  await page.locator('#prompt').fill('일시 중지 응답 이후에도 남겨둘 제안');
+  state.serviceRejection = { status: 423, code: 'SERVICE_LOCKED' };
+  state.statusFailure = true;
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('접수가 일시정지');
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  await expect(page.locator('#service-notice')).toBeVisible();
+  await expect(page.locator('#prompt')).toHaveValue('일시 중지 응답 이후에도 남겨둘 제안');
+  expect(state.posts).toHaveLength(1);
+  expect(state.proposals).toHaveLength(0);
+  state.serviceRejection = null;
+  state.statusFailure = false;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  expect(state.posts).toHaveLength(1);
 });
