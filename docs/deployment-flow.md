@@ -1,16 +1,16 @@
 # PC에서 시작하는 Git 연동 배포
 
-상태: 배포 경로는 사용자 합의 반영. 아래 완료 확인 절차는 구현을 위한 설계 권고이며, 공개 시각 정책은 인터뷰에서 확인할 사항이다. 실제 저장소 연결, 작업자 실행 또는 배포는 수행하지 않았다.
+상태: GitHub·Vercel 연결과 준비 페이지 자동 배포는 완료했다. 로컬 게임 변경 작업자와 공개 집계 기능은 아직 구현하지 않았으며 공개 시각 정책도 미정이다. 실제 연결 현황은 [인프라 연결 상태](infrastructure-status.md)를 따른다.
 
 ## 역할과 경로
 
 Turso Free에 제안과 회차 상태를 보관한다. 개인 PC가 확정된 회차를 가져와 Codex로 게임을 변경하고 로컬 검증을 수행한다. 검증된 코드를 연결된 GitHub 저장소의 운영 브랜치에 push하면 Vercel이 빌드와 배포를 시작한다.
 
-사용자는 Turso·GitHub·Vercel 회원가입을 완료했으며, Cloudflare를 통해 구매한 yourga.me를 대표 도메인으로 연결할 예정이다. 계정 준비와 도메인 구매는 사용자 설명으로 확인했고, 이 게임용 리소스 생성 여부나 DNS 연결 상태는 아직 확인하지 않았다. 실제 도메인 설정은 변경하지 않았다.
+GitHub의 hongwoogi/yourgame 비공개 저장소와 Vercel의 yourgame 프로젝트를 연결했다. main push에서 production 배포가 생성되고 기본 운영 주소에서 준비 페이지가 응답하는 것을 확인했다. yourga.me는 Vercel에 등록했지만 Cloudflare DNS 승인이 남아 있다. Turso DB 생성은 Marketplace 약관 승인 대기 중이다.
 
 Vercel Cron은 사용하지 않는다. 기존에 합의한 주기는 PC 측 작업자가 관리하는 방향이며, 매 회차 사람이 배포 버튼을 누르는 절차를 새로 요구하지 않는다. 로컬 작업자의 실제 실행 방식은 아직 구현하지 않았다.
 
-운영 브랜치는 Vercel의 Production Branch 설정으로 결정되며 특정 이름을 가정하지 않는다. 다른 브랜치는 기본적으로 preview 배포 대상이므로 작업용 브랜치의 배포 성공을 새 게임 공개로 집계하지 않는다. [Vercel Git 연동](https://vercel.com/docs/git)
+운영 브랜치는 Vercel의 Production Branch 설정으로 결정되며 현재 연결에서는 main이다. main push로 production 배포가 생성되는 것을 확인했다. 다른 브랜치는 기본적으로 preview 배포 대상이므로 작업용 브랜치의 배포 성공을 새 게임 공개로 집계하지 않는다. 준비 페이지 배포도 게임 v1 공개나 최초 모집 시작으로 집계하지 않는다. [Vercel Git 연동](https://vercel.com/docs/git)
 
 ## 권장 완료 확인
 

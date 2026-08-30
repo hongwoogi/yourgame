@@ -1,12 +1,12 @@
 # 무료 관리형 DB 비교
 
-상태: 공식 문서 조사 후 Turso Free를 설계상 선택했다. 이후 사용자가 Turso·Vercel·GitHub 회원가입 완료를 알렸다. 이 작업에서 DB 등 리소스 생성, 연결 및 결제 설정은 수행하지 않았다.
+상태: 공식 문서 조사 후 Turso 무료 플랜을 선택했다. 이후 사용자가 회원가입 완료를 알리고 CLI 연결을 요청했다. 2026-08-31 GitHub·Vercel 연결을 완료했고, Turso DB 생성은 Marketplace 약관 승인 대기 중이다. DB 생성이나 유료 플랜 선택은 수행하지 않았다.
 
 ## 요구와 추천
 
 사용자는 GitHub와 Vercel을 유지하고 직접 DB 서버를 운영하지 않기를 원한다. 기존 Supabase는 프로젝트 한도가 찼으므로 후보에서 제외한다. 게임 세이브는 로컬에 두고 온라인 DB에는 계정, 제안, 집계, 기여 이력, 최소 활동 기록과 작업 상태를 저장한다.
 
-비교 당시 추천은 **Turso Free**, 대안은 **Neon Free**였으며 이후 사용자가 GitHub·Vercel·Turso Free 구성을 수락했다. 사용자 설명에 따라 회원가입 완료를 기록했으며, 실제 계정 연결과 플랜 선택 화면 확인은 아직 하지 않았다.
+비교 당시 추천은 **Turso Free**, 대안은 **Neon Free**였으며 이후 사용자가 GitHub·Vercel·Turso Free 구성을 수락했다. 실제 Vercel CLI의 tursocloud/database 연동에서는 무료 플랜이 Starter, plan ID starter, 월 $0로 표시되는 것을 확인했다. 도쿄 hnd1, 이름 yourgame, production 연결을 지정한 생성 요청은 약관 승인 요구로 중단되어 아직 DB를 생성하지 않았다. 기존 직접 가입 Turso 계정과 Marketplace 계정의 관계 및 실제 사용량 한도는 연결 후 확인한다.
 
 ## 공식 무료 한도 비교
 
