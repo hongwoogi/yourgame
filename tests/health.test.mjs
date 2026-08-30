@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomInt } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -11,8 +12,37 @@ import { checkHealth, parseArguments, runOnce } from '../scripts/check-health.mj
 const GOOD_HEALTH = { status: 'ok', database: 'ok', authConfigured: true, version: '0.1.0' };
 const GOOD_PAGE = '<!doctype html><html><body data-app="yourgame">yourga.me</body></html>';
 const SCRIPT_PATH = new URL('../scripts/check-health.mjs', import.meta.url);
+const FIRST_TEST_PORT = 49152;
+const LAST_TEST_PORT = 65535;
+const MAX_BIND_ATTEMPTS = 16;
 
-async function fixture(t, responder) {
+async function listenForFixture(server, choosePort = () => randomInt(FIRST_TEST_PORT, LAST_TEST_PORT + 1)) {
+  // listen(0) follows the host's configurable dynamic range, which can include
+  // ports rejected by Fetch before a request reaches this server. Keep test
+  // listeners in an allowed range without changing host/network configuration.
+  for (let attempt = 0; attempt < MAX_BIND_ATTEMPTS; attempt += 1) {
+    const port = choosePort(attempt);
+    assert.ok(Number.isInteger(port) && port >= FIRST_TEST_PORT && port <= LAST_TEST_PORT);
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          server.off('error', onError);
+          server.off('listening', onListening);
+        };
+        const onError = error => { cleanup(); reject(error); };
+        const onListening = () => { cleanup(); resolve(); };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        try { server.listen(port, '127.0.0.1'); } catch (error) { onError(error); }
+      });
+      return;
+    } catch (error) {
+      if (!['EADDRINUSE', 'EACCES'].includes(error.code) || attempt + 1 === MAX_BIND_ATTEMPTS) throw error;
+    }
+  }
+}
+
+async function fixture(t, responder, { choosePort } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'yourgame-health-'));
   const calls = { api: 0, page: 0 };
   const server = createServer((request, response) => {
@@ -22,15 +52,15 @@ async function fixture(t, responder) {
     response.writeHead(200, { 'Content-Type': check === 'api' ? 'application/json' : 'text/html' });
     response.end(check === 'api' ? JSON.stringify(GOOD_HEALTH) : GOOD_PAGE);
   });
-  await new Promise((done) => server.listen(0, '127.0.0.1', done));
   t.after(async () => {
     server.closeAllConnections();
-    await new Promise((done) => server.close(done));
+    if (server.listening) await new Promise((done) => server.close(done));
     const absoluteDirectory = resolve(directory);
     assert.equal(dirname(absoluteDirectory), resolve(tmpdir()));
     assert.ok(basename(absoluteDirectory).startsWith('yourgame-health-'));
     await rm(absoluteDirectory, { recursive: true, force: true });
   });
+  await listenForFixture(server, choosePort);
   return {
     calls, directory,
     options: {
@@ -66,6 +96,51 @@ test('success checks both routes and persists last success and healthy version',
   const state = JSON.parse(await readFile(options.statePath, 'utf8'));
   assert.equal(state.lastSuccess, report.timestamp);
   assert.deepEqual(state.activeIncidents, []);
+});
+
+test('a busy allowed fixture port is retried without sending probes or changing endpoint request counts', async t => {
+  const occupied = await fixture(t);
+  const occupiedPort = Number(new URL(occupied.options.url).port);
+  const tried = [];
+  const { options, calls } = await fixture(t, undefined, { choosePort: attempt => {
+    const port = attempt === 0 ? occupiedPort : randomInt(FIRST_TEST_PORT, LAST_TEST_PORT + 1);
+    tried.push(port);
+    return port;
+  } });
+  assert.equal(tried[0], occupiedPort);
+  assert.ok(tried.length >= 2 && tried.length <= MAX_BIND_ATTEMPTS);
+  assert.notEqual(new URL(options.url).port, String(occupiedPort));
+  const report = await runOnce(options);
+  assert.equal(report.status, 'healthy');
+  assert.deepEqual(report.newIncidents, []);
+  assert.deepEqual(report.checks.map(check => check.attempts), [1, 1]);
+  assert.deepEqual(calls, { api: 1, page: 1 });
+  assert.deepEqual(occupied.calls, { api: 0, page: 0 });
+});
+
+test('exhausted fixture binding retries fail explicitly and remain bounded', async t => {
+  const occupied = await fixture(t);
+  const occupiedPort = Number(new URL(occupied.options.url).port);
+  let attempts = 0;
+  await assert.rejects(fixture(t, undefined, { choosePort: () => { attempts += 1; return occupiedPort; } }),
+    error => error.code === 'EADDRINUSE');
+  assert.equal(attempts, MAX_BIND_ATTEMPTS);
+  assert.deepEqual(occupied.calls, { api: 0, page: 0 });
+});
+
+test('real connection failures on allowed ports remain network errors rather than becoming timeouts', async t => {
+  const { options, calls } = await fixture(t, (request, _response, check) => {
+    if (check !== 'api') return false;
+    request.socket.destroy();
+    return true;
+  });
+  const report = await runOnce(options);
+  assert.equal(report.status, 'degraded');
+  assert.equal(report.checks[0].code, 'network_error');
+  assert.equal(report.checks[0].statusCode, null);
+  assert.equal(report.checks[0].attempts, 2);
+  assert.equal(report.checks[1].status, 'ok');
+  assert.deepEqual(calls, { api: 2, page: 1 });
 });
 
 test('intentional service closure is not mislabeled as an infrastructure outage', async t => {
