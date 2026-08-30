@@ -1,0 +1,8 @@
+.git
+.local
+.env
+.env.*
+docs
+scripts
+README.md
+CONTEXT.md
