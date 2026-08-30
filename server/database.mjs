@@ -3,6 +3,8 @@ import { ApiError } from './errors.mjs';
 import { boundedFetch } from './network.mjs';
 import { initializeAdminDatabase } from './admin-schema.mjs';
 import { initializeSafetyDatabase } from './safety-schema.mjs';
+import { initializeCommunityDatabase } from './community-schema.mjs';
+import { initializeContributionDatabase } from './contribution-schema.mjs';
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA = [
@@ -57,6 +59,8 @@ export async function initializeDatabase(client) {
   await checkSchema(client);
   await initializeAdminDatabase(client);
   await initializeSafetyDatabase(client);
+  await initializeCommunityDatabase(client);
+  await initializeContributionDatabase(client);
 }
 
 export async function checkSchema(client) {

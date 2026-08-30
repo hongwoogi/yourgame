@@ -14,6 +14,7 @@ import { publicService, proposalsAllowed } from './admin-policy.mjs';
 import { SAFETY_POLICY_VERSION } from './safety-policy.mjs';
 import { LOCALE_VARY, localizeProposalPayload, requestLocale } from './localization.mjs';
 import { apiErrorMessage } from '../public/error-messages.js';
+import { publicContributionPolicy } from './contribution-policy.mjs';
 
 const BODY_LIMIT = 16 * 1024;
 const METHODS = {
@@ -23,6 +24,7 @@ const METHODS = {
   '/api/login': ['POST'],
   '/api/logout': ['POST'],
   '/api/proposals': ['GET', 'POST', 'PATCH'],
+  '/api/community': ['GET', 'POST'],
   '/api/health': ['GET'],
   '/api/admin': ['GET', 'POST'],
   '/api/admin-page': ['GET'],
@@ -114,6 +116,16 @@ function respond(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function communityView(req) {
+  const url = new URL(req.url, 'http://internal.invalid');
+  const entries = [...url.searchParams];
+  if (url.search.length > 128 || entries.length > 1
+      || entries.some(([key, value]) => key !== 'view' || !['public', 'me'].includes(value))) {
+    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the community request.');
+  }
+  return url.searchParams.get('view') || 'public';
+}
+
 function safeLog(log, event, route, requestId, error) {
   const code = /^[A-Z][A-Z0-9_]{0,50}$/.test(error?.code || '') ? error.code : 'UNKNOWN';
   log({ event, route, requestId, code });
@@ -163,6 +175,16 @@ export function createApiHandler({
         ensureOrigin(req, config.appOrigin, mutation);
 
         if (route === '/api/locale') return respond(res, 200, language);
+
+        if (route === '/api/community' && method === 'GET' && communityView(req) === 'public') {
+          // Public reads never create or refresh a session, or copy an account
+          // name into a public identity. Each store filters the visible records.
+          const db = await resolveStore();
+          const [feed, leaderboard] = await Promise.all([
+            db.community.publicFeed(), db.contribution.leaderboard({ limit: 10 }),
+          ]);
+          return respond(res, 200, { ...feed, leaderboard: { items: leaderboard.items }, scoring: publicContributionPolicy() });
+        }
 
         if (route === '/api/status') {
           const time = now();
@@ -254,6 +276,21 @@ export function createApiHandler({
           return respond(res, 200, sessionPayload(anonymous.session));
         }
         if (!session.user) throw new ApiError(401, 'LOGIN_REQUIRED', '로그인한 뒤 제안을 제출해 주세요.');
+        if (route === '/api/community') {
+          if (method === 'GET') {
+            communityView(req);
+            const [participation, contribution] = await Promise.all([
+              db.community.privateState(session), db.contribution.privateSummary(session),
+            ]);
+            return respond(res, 200, { ...participation, ownerId: session.user.id, contribution });
+          }
+          // There is deliberately no browser/admin action to mint points or
+          // declare an unverified game release successful.
+          if (new URL(req.url, 'http://internal.invalid').search) {
+            throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the community request.');
+          }
+          return respond(res, 200, await db.community.mutate(session, await readJson(req)));
+        }
         if (route === '/api/admin') {
           if (method === 'GET') {
             const url = new URL(req.url, 'http://internal.invalid');

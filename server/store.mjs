@@ -12,6 +12,10 @@ import {
 } from './admin-policy.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { checkSafetySchema } from './safety-schema.mjs';
+import { checkCommunitySchema } from './community-schema.mjs';
+import { createCommunityStore } from './community-store.mjs';
+import { checkContributionSchema } from './contribution-schema.mjs';
+import { createContributionStore } from './contribution-store.mjs';
 import {
   assertScreenedBody, EDIT_REVIEW_COOLDOWN_MS, PROPOSAL_ATTEMPT_LIMIT, PROPOSAL_ATTEMPT_WINDOW_MS,
 } from './safety-policy.mjs';
@@ -96,11 +100,15 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
   const admin = createAdminStore(client, { now, databaseClockSql });
   return {
     admin,
+    community: createCommunityStore(client, { databaseClockSql }),
+    contribution: createContributionStore(client, { databaseClockSql }),
     getService: admin.getService,
     async health() {
       await checkSchema(client);
       await checkAdminSchema(client);
       await checkSafetySchema(client);
+      await checkCommunitySchema(client);
+      await checkContributionSchema(client);
       return 'ok';
     },
 

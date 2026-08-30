@@ -17,7 +17,7 @@ const mimeTypes = {
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
-const routes = new Set(['locale', 'status', 'session', 'login', 'logout', 'proposals', 'health', 'admin', 'admin-page']);
+const routes = new Set(['locale', 'status', 'session', 'login', 'logout', 'proposals', 'community', 'health', 'admin', 'admin-page']);
 
 export const devServer = http.createServer(async (req, res) => {
   try {

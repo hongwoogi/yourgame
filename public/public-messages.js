@@ -909,6 +909,390 @@ const copy = {
   "offline": [
     "You're offline. Your draft is saved and won't be sent automatically when the connection returns.",
     "인터넷 연결이 끊겼어요. 작성한 내용은 보관되며, 연결이 돌아와도 자동 전송하지 않습니다."
+  ],
+  "previewEyebrow": [
+    "THE GAME SPACE",
+    "게임이 들어올 공간"
+  ],
+  "previewTitle": [
+    "Room for the first adventure.",
+    "첫 모험을 기다리는 공간."
+  ],
+  "previewAria": [
+    "Empty white game preview. No playable game is available.",
+    "빈 흰색 게임 미리보기입니다. 아직 플레이할 게임은 없습니다."
+  ],
+  "previewAspect": [
+    "9 to 16 aspect ratio",
+    "가로 9, 세로 16 비율"
+  ],
+  "previewFallback": [
+    "This is a blank preview, not a playable game.",
+    "플레이할 수 있는 게임이 아닌 빈 미리보기입니다."
+  ],
+  "previewBadge": [
+    "PREVIEW ONLY · NOT PLAYABLE",
+    "미리보기 전용 · 아직 플레이할 수 없어요"
+  ],
+  "previewNote": [
+    "A blank 9:16 canvas marks the future game area. The first game is still being prepared; this is not a game screen or a live build.",
+    "향후 게임이 표시될 자리를 흰색 9:16 캔버스로 마련했습니다. 첫 게임을 준비 중이며 실제 게임 화면이나 실행 중인 빌드가 아닙니다."
+  ],
+  "communityEyebrow": [
+    "IDEAS FROM THE COMMUNITY",
+    "함께 나누는 아이디어"
+  ],
+  "communityTitle": [
+    "See what others have in mind.",
+    "다른 참여자의 생각도 만나보세요."
+  ],
+  "communityIntro": [
+    "Only ideas shared with the author's consent and approved for safety appear here. Public aliases are separate from Google profiles.",
+    "작성자가 공개에 동의하고 안전 승인을 받은 제안만 표시합니다. 공개 별명은 Google 프로필과 별개입니다."
+  ],
+  "feedOrder": [
+    "Community feed order",
+    "공개 제안 정렬"
+  ],
+  "recentIdeas": [
+    "Recent ideas",
+    "최근 의견"
+  ],
+  "popularIdeas": [
+    "Popular ideas",
+    "인기 의견"
+  ],
+  "refreshCommunity": [
+    "Refresh",
+    "새로고침"
+  ],
+  "communityLoading": [
+    "Loading shared ideas…",
+    "공개 제안을 불러오는 중…"
+  ],
+  "loadMoreIdeas": [
+    "Load more ideas",
+    "의견 더 보기"
+  ],
+  "leaderboardEyebrow": [
+    "CONTRIBUTIONS THAT MADE IT IN",
+    "실제로 반영된 기여"
+  ],
+  "leaderboardTitle": [
+    "Contribution board",
+    "기여도 리더보드"
+  ],
+  "leaderboardNote": [
+    "Points reflect verified contributions to released game versions. No test scores or sample players are shown.",
+    "실제 공개된 게임에 검증된 기여를 점수로 기록합니다. 테스트 점수나 가상의 참여자를 표시하지 않습니다."
+  ],
+  "leaderboardLoading": [
+    "Loading contributions…",
+    "기여도를 불러오는 중…"
+  ],
+  "retryCommunityAction": [
+    "Check the same request again",
+    "같은 요청 결과 다시 확인"
+  ],
+  "publicationEyebrow": [
+    "YOUR CHOICE TO SHARE",
+    "공개 여부는 직접 선택"
+  ],
+  "closePublication": [
+    "Close sharing dialog",
+    "공개 설정 창 닫기"
+  ],
+  "publicationSourceLabel": [
+    "THE EXACT TEXT YOU WILL SHARE",
+    "공개할 원문 그대로 확인"
+  ],
+  "cancelSharing": [
+    "Cancel",
+    "취소"
+  ],
+  "communityEmpty": [
+    "No ideas have been shared and safety-approved yet. Your submissions remain private unless you choose to share them.",
+    "아직 공개 동의와 안전 승인을 모두 받은 제안이 없습니다. 직접 공개를 선택하지 않은 제안은 비공개로 유지됩니다."
+  ],
+  "leaderboardEmpty": [
+    "No verified contribution scores are listed yet. Only participants who opt in will appear.",
+    "아직 표시할 검증된 기여도 기록이 없습니다. 리더보드는 공개에 동의한 참여자만 표시합니다."
+  ],
+  "communityUnavailable": [
+    "Couldn't load the community. You can still write or edit your own ideas. Try Refresh shortly.",
+    "커뮤니티를 불러오지 못했습니다. 내 제안 작성과 수정은 계속 이용할 수 있어요. 잠시 후 새로고침해 주세요."
+  ],
+  "communityInvalid": [
+    "The community response couldn't be verified. No unverified ideas or scores are displayed.",
+    "커뮤니티 응답을 확인하지 못했습니다. 확인되지 않은 제안이나 점수는 표시하지 않습니다."
+  ],
+  "communityPrivateUnavailable": [
+    "Couldn't check your sharing and voting settings. Your idea draft is unchanged. Refresh the community before making changes.",
+    "공개·투표 설정을 확인하지 못했습니다. 작성 중인 초안은 그대로입니다. 변경하려면 커뮤니티를 다시 불러와 주세요."
+  ],
+  "communityAccountChanged": [
+    "Your account changed. Sharing and voting were not repeated. Check your account and try again.",
+    "로그인 계정이 바뀌었습니다. 공개 설정이나 투표를 다시 실행하지 않았어요. 계정을 확인한 뒤 다시 시도해 주세요."
+  ],
+  "voteQuota": [
+    "{remaining} / {limit} votes available this round",
+    "이번 회차 남은 투표 {remaining} / {limit}"
+  ],
+  "voteQuotaNote": [
+    "Up and down votes share this allowance. Changing or removing a vote does not submit a new idea.",
+    "찬성·반대는 같은 투표권을 사용합니다. 표 변경·취소는 새 제안 접수와 별개입니다."
+  ],
+  "voteLoginNote": [
+    "Log in to vote. You will need to choose your vote again after login.",
+    "투표하려면 로그인해 주세요. 로그인 후 원하는 표를 다시 눌러 확인합니다."
+  ],
+  "voteSettingsLoading": [
+    "Checking your votes…",
+    "내 투표 확인 중…"
+  ],
+  "votingWaiting": [
+    "Voting is not open for a round yet.",
+    "아직 투표할 수 있는 회차가 열리지 않았습니다."
+  ],
+  "votingClosed": [
+    "Voting closed",
+    "투표 마감"
+  ],
+  "yourIdea": [
+    "Your idea",
+    "내 제안"
+  ],
+  "upvote": [
+    "Upvote",
+    "찬성"
+  ],
+  "downvote": [
+    "Downvote",
+    "반대"
+  ],
+  "removeUpvote": [
+    "Remove upvote",
+    "찬성 취소"
+  ],
+  "removeDownvote": [
+    "Remove downvote",
+    "반대 취소"
+  ],
+  "voteCountAria": [
+    "{action}: {count} votes",
+    "{action}: {count}표"
+  ],
+  "voteChanged": [
+    "This idea or its publication changed. Refresh and read the current text before voting.",
+    "제안 원문이나 공개 상태가 바뀌었습니다. 새로고침한 뒤 현재 내용을 읽고 투표해 주세요."
+  ],
+  "voteRecorded": [
+    "Your vote was recorded. Voting does not award contribution points immediately.",
+    "투표를 기록했습니다. 투표만으로 기여도가 즉시 지급되지는 않습니다."
+  ],
+  "voteRemoved": [
+    "Your vote was removed.",
+    "투표를 취소했습니다."
+  ],
+  "communityLoginTitle": [
+    "Log in to join the discussion.",
+    "투표로 의견을 더해주세요."
+  ],
+  "communityLoginDescription": [
+    "Use your Google account to vote on shared ideas.\nAfter login, read the current text and choose your vote again.",
+    "Google 계정으로 로그인하고 공개 제안에 투표해 주세요.\n로그인 후 현재 원문을 확인하고 원하는 표를 다시 눌러주세요."
+  ],
+  "communityLoginNote": [
+    "Login won't cast a vote or send your draft. Both require your explicit action.",
+    "로그인만으로 표를 던지거나 초안을 전송하지 않습니다. 각각 직접 선택해야 합니다."
+  ],
+  "communityLoginDone": [
+    "You're logged in. Review the current idea and choose a vote. Nothing was voted on or submitted automatically.",
+    "로그인했습니다. 현재 제안 내용을 확인하고 원하는 표를 눌러주세요. 자동 투표나 제안 전송은 하지 않았습니다."
+  ],
+  "communityLoginChecking": [
+    "Verifying your Google account. No vote will be cast automatically.",
+    "Google 계정을 확인하고 있어요. 자동으로 투표하지 않습니다."
+  ],
+  "communityLoginPreparationFailed": [
+    "You're logged in, but participation details couldn't be loaded. Your draft is kept and no vote was cast. Refresh the community before choosing your vote again.",
+    "로그인은 완료했지만 참여 정보를 불러오지 못했습니다. 초안을 보관했고 투표하지 않았습니다. 커뮤니티를 새로고침한 뒤 원하는 표를 다시 눌러 주세요."
+  ],
+  "sharingPrivate": [
+    "Private",
+    "비공개"
+  ],
+  "sharingPublic": [
+    "Shared publicly",
+    "공개 중"
+  ],
+  "sharingPending": [
+    "Sharing requested · awaiting publication checks",
+    "공개 동의 완료 · 공개 요건 확인 대기"
+  ],
+  "sharingChanged": [
+    "Edited text needs new sharing consent",
+    "수정된 원문은 새 공개 동의가 필요합니다"
+  ],
+  "shareIdea": [
+    "Share after safety review",
+    "안전 심사 후 공개"
+  ],
+  "hideIdea": [
+    "Make private",
+    "비공개로 전환"
+  ],
+  "sharingLoading": [
+    "Checking sharing settings",
+    "공개 설정 확인 중"
+  ],
+  "shareTitle": [
+    "Share this exact idea?",
+    "이 원문을 공개할까요?"
+  ],
+  "shareDescription": [
+    "The text below can appear publicly under your generated alias after safety approval. Your Google name and email will not be shared. Editing the idea requires fresh consent; previous votes won't carry over.",
+    "아래 원문은 안전 승인 후 공개 별명으로 표시될 수 있습니다. Google 이름과 이메일은 공개하지 않습니다. 원문을 수정하면 다시 동의해야 하며 이전 표는 이어지지 않습니다."
+  ],
+  "hideTitle": [
+    "Make this idea private?",
+    "이 제안을 비공개로 전환할까요?"
+  ],
+  "hideDescription": [
+    "The idea will leave public feeds and stop accepting votes. Your original submission and private history are kept. This cannot recall copies other people already made.",
+    "공개 목록에서 제외하고 새 투표를 받지 않습니다. 접수 원문과 본인의 기록은 보존합니다. 다른 사람이 이미 복사한 내용까지 회수할 수는 없습니다."
+  ],
+  "aliasPreview": [
+    "Public alias: {alias}",
+    "공개 별명: {alias}"
+  ],
+  "shareConsent": [
+    "I agree to share this exact text under this alias after safety approval. Safety approval does not guarantee that it will be included in the game.",
+    "이 원문을 위 별명으로 안전 승인 후 공개하는 데 동의합니다. 안전 승인이 게임 반영을 보장하지는 않습니다."
+  ],
+  "confirmShare": [
+    "Agree and request sharing",
+    "동의하고 공개 요청"
+  ],
+  "confirmHide": [
+    "Make private",
+    "비공개로 전환"
+  ],
+  "shareSaved": [
+    "Your sharing choice was saved. This exact text will appear only while its safety approval and other eligibility checks remain valid.",
+    "공개 선택을 저장했습니다. 이 원문에 대한 안전 승인과 공개 조건이 유효할 때만 표시합니다."
+  ],
+  "hideSaved": [
+    "This idea is now private. Your original submission is preserved.",
+    "제안을 비공개로 전환했습니다. 접수 원문은 보존됩니다."
+  ],
+  "publicationStale": [
+    "The text or sharing settings changed while this dialog was open. Close it and review the latest version before confirming.",
+    "창을 연 뒤 원문이나 공개 설정이 바뀌었습니다. 창을 닫고 최신 내용을 다시 확인한 후 선택해 주세요."
+  ],
+  "publicationNotReady": [
+    "Sharing settings aren't ready. Refresh the community and try again. Nothing has been shared.",
+    "공개 설정을 확인하지 못했습니다. 커뮤니티를 새로고침한 뒤 다시 시도해 주세요. 공개하지 않았습니다."
+  ],
+  "yourContribution": [
+    "Your contribution: {points} points · {count} verified adoptions",
+    "내 기여도: {points}점 · 검증된 반영 {count}건"
+  ],
+  "showLeaderboard": [
+    "Join the public board",
+    "리더보드 공개하기"
+  ],
+  "hideLeaderboard": [
+    "Leave the public board",
+    "리더보드 비공개로"
+  ],
+  "boardShareTitle": [
+    "Show your contribution score?",
+    "내 기여도를 공개할까요?"
+  ],
+  "boardShareDescription": [
+    "Only your generated alias, verified points, and adoption count will appear on the public board. Your Google name, email, and private ideas stay private.",
+    "공개 별명과 검증된 기여도·반영 건수만 리더보드에 표시합니다. Google 이름·이메일과 비공개 제안은 공개하지 않습니다."
+  ],
+  "boardConsent": [
+    "I agree to show this alias and my verified contribution record on the public leaderboard.",
+    "위 별명과 검증된 기여 기록을 공개 리더보드에 표시하는 데 동의합니다."
+  ],
+  "boardHideTitle": [
+    "Hide your contribution score?",
+    "내 기여도를 비공개로 전환할까요?"
+  ],
+  "boardHideDescription": [
+    "You will leave the public board. Your points and private contribution record are preserved.",
+    "공개 리더보드에서 제외합니다. 내 점수와 개인 기여 기록은 보존합니다."
+  ],
+  "boardConfirmShow": [
+    "Agree and join",
+    "동의하고 공개"
+  ],
+  "boardConfirmHide": [
+    "Make private",
+    "비공개로 전환"
+  ],
+  "boardVisibleSaved": [
+    "Your leaderboard visibility was updated. Only your public alias and verified record can appear.",
+    "리더보드 공개 설정을 변경했습니다. 공개 별명과 검증된 기여 기록만 표시할 수 있습니다."
+  ],
+  "communitySaving": [
+    "Saving your choice…",
+    "선택을 저장하는 중…"
+  ],
+  "communityUnknown": [
+    "Couldn't confirm whether the change was saved. Don't start another change yet. Use “Check the same request again” to retry safely without creating a duplicate.",
+    "변경이 저장됐는지 확인하지 못했습니다. 다른 변경은 잠시 멈추고 ‘같은 요청 결과 다시 확인’을 눌러 중복 없이 확인해 주세요."
+  ],
+  "communityRetryFirst": [
+    "A previous change still needs confirmation. Check that same request before starting another change.",
+    "이전 변경 결과를 확인해야 합니다. 다른 작업 전에 같은 요청 결과를 다시 확인해 주세요."
+  ],
+  "communityRetryThrottled": [
+    "Too many requests to confirm the earlier result right now. The original request is kept. Wait a little, then use “Check the same request again”. No new change will be sent automatically.",
+    "요청이 너무 잦아 이전 결과를 아직 확인하지 못했습니다. 원래 요청은 보관 중입니다. 잠시 후 ‘같은 요청 결과 다시 확인’을 눌러 주세요. 자동으로 다시 보내지 않습니다."
+  ],
+  "communityResultInvalid": [
+    "Couldn't verify the result of this change. Check the same request again.",
+    "변경 결과를 확인하지 못했습니다. 같은 요청 결과를 다시 확인해 주세요."
+  ],
+  "pointsAria": [
+    "{points} contribution points",
+    "기여도 {points}점"
+  ],
+  "scoringPending": [
+    "Scoring rules are still being confirmed. No contribution points are being issued yet.",
+    "배점 규칙을 확인 중입니다. 아직 기여도를 발행하지 않습니다."
+  ],
+  "scoringClosed": [
+    "Contribution points are issued only after a verified game release. Safety approval or casting a vote alone does not earn points.",
+    "기여도는 검증된 게임 공개 후에만 발행합니다. 안전 승인이나 투표만으로 점수를 받지는 않습니다."
+  ],
+  "scoringProposer": [
+    "Idea contribution: {formula}",
+    "제안 기여도: {formula}"
+  ],
+  "scoringVoter": [
+    "Vote contribution: {formula}",
+    "투표 기여도: {formula}"
+  ],
+  "formulaUp": [
+    "upvotes",
+    "찬성표"
+  ],
+  "formulaDown": [
+    "downvotes",
+    "반대표"
+  ],
+  "formulaPower": [
+    "{term}^{value}",
+    "{term}^{value}"
+  ],
+  "formulaMultiply": [
+    "{term} × {value}",
+    "{term} × {value}"
   ]
 };
 

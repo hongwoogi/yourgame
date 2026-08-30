@@ -65,6 +65,13 @@
       <section class="service-notice" id="service-notice" role="status" aria-live="polite" aria-labelledby="service-title" hidden>
         <h2 id="service-title">Service notice</h2><p id="service-message" hidden></p><p id="service-detail"></p>
       </section>
+      <div class="play-workspace">
+        <section class="game-preview" aria-labelledby="preview-title">
+          <div class="preview-heading"><div><p class="index-label" data-i18n="public.previewEyebrow">THE GAME SPACE</p><h2 id="preview-title" data-i18n="public.previewTitle">Room for the first adventure.</h2></div><span class="preview-ratio" aria-label="9 to 16 aspect ratio" data-i18n-aria-label="public.previewAspect">9:16</span></div>
+          <div class="preview-surface"><canvas id="game-preview-canvas" width="720" height="1280" role="img" aria-label="Empty white game preview. No playable game is available." data-i18n-aria-label="public.previewAria" aria-describedby="preview-note"><span data-i18n="public.previewFallback">This is a blank preview, not a playable game.</span></canvas></div>
+          <p class="preview-state" data-i18n="public.previewBadge">PREVIEW ONLY · NOT PLAYABLE</p>
+          <p id="preview-note" class="preview-note" data-i18n="public.previewNote">A blank 9:16 canvas marks the future game area. The first game is still being prepared; this is not a game screen or a live build.</p>
+        </section>
       <section class="submission-section" aria-labelledby="submission-title">
         <div class="collection-line">
           <p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">Checking submissions</span></p>
@@ -92,6 +99,23 @@
         </form>
         <details class="my-proposals" id="my-proposals" hidden><summary><span><span data-i18n="public.myProposals">Your submissions</span> <span id="proposal-count" class="proposal-count">0</span></span><span class="summary-note"><span data-i18n="public.reviewEdit">View and edit</span> <span class="summary-chevron" aria-hidden="true">⌄</span></span></summary><div id="proposal-list" class="proposal-list"></div></details>
         <p class="collection-footnote" id="collection-footnote" data-i18n="public.collectionFootnote">Ideas help shape the next version. Not every submission will be included as written.</p>
+      </section>
+      </div>
+      <section class="community-section" aria-labelledby="community-title">
+        <div class="community-heading"><div><p class="index-label" data-i18n="public.communityEyebrow">IDEAS FROM THE COMMUNITY</p><h2 id="community-title" data-i18n="public.communityTitle">See what others have in mind.</h2></div><p class="community-intro" data-i18n="public.communityIntro">Only ideas shared with the author's consent and approved for safety appear here. Public aliases are separate from Google profiles.</p></div>
+        <div class="community-grid">
+          <div class="community-feed">
+            <div class="community-feed-top"><div class="community-tabs" role="tablist" aria-label="Community feed order" data-i18n-aria-label="public.feedOrder"><button id="feed-recent-tab" class="community-tab" type="button" role="tab" aria-selected="true" aria-controls="community-feed-panel" data-feed-sort="recent" data-i18n="public.recentIdeas">Recent ideas</button><button id="feed-popular-tab" class="community-tab" type="button" role="tab" aria-selected="false" aria-controls="community-feed-panel" data-feed-sort="popular" tabindex="-1" data-i18n="public.popularIdeas">Popular ideas</button></div><button id="community-refresh" class="text-button" type="button" data-i18n="public.refreshCommunity">Refresh</button></div>
+            <p id="community-vote-note" class="community-vote-note" hidden></p>
+            <div id="community-feed-panel" role="tabpanel" aria-labelledby="feed-recent-tab" aria-busy="true"><p id="community-feed-status" class="community-empty" role="status">Loading shared ideas…</p><div id="community-feed-list" class="community-feed-list"></div></div>
+          </div>
+          <aside class="contribution-board" aria-labelledby="leaderboard-title">
+            <p class="index-label" data-i18n="public.leaderboardEyebrow">CONTRIBUTIONS THAT MADE IT IN</p><h3 id="leaderboard-title" data-i18n="public.leaderboardTitle">Contribution board</h3><p class="leaderboard-note" data-i18n="public.leaderboardNote">Points reflect verified contributions to released game versions. No test scores or sample players are shown.</p>
+            <p id="leaderboard-status" class="community-empty" role="status">Loading contributions…</p><ol id="leaderboard-list" class="leaderboard-list"></ol>
+            <div id="my-contribution" class="my-contribution" hidden><p id="my-contribution-summary"></p><button id="leaderboard-privacy" class="text-button" type="button"></button></div><p id="community-scoring" class="community-scoring" hidden></p>
+          </aside>
+        </div>
+        <div id="community-feedback" class="community-feedback" role="status" aria-live="polite" hidden><p id="community-feedback-message"></p><button id="community-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button></div>
       </section>
       <section class="process-section" aria-labelledby="process-title">
         <div class="process-heading"><div><p class="index-label" data-i18n="public.processEyebrow">FROM YOUR PROMPT TO THE NEXT VERSION</p><h2 id="process-title" data-i18n="public.processTitle">An idea today. A new version next.</h2></div><p class="process-intro" data-i18n="public.processIntro">Different ideas, one shared game. The combat, progression, and rules are ours to figure out together.</p></div>
@@ -123,6 +147,15 @@
     <p id="login-description">Log in with Google to share an idea.<br>You can submit up to 3 ideas in any 60-minute period.</p>
     <div class="google-button-area" id="google-button-area"><div id="google-signin"></div></div><p class="login-message" id="login-message" role="status" aria-live="polite">Preparing Google login.</p>
     <button id="retry-google" class="text-button" type="button" hidden data-i18n="public.retryGoogle">Try preparing login again</button><p class="login-draft-note" id="login-draft-note">Your draft stays in this browser.</p>
+  </dialog>
+  <dialog id="publication-dialog" class="publication-dialog" aria-labelledby="publication-title" aria-describedby="publication-description">
+    <div class="publication-dialog-heading"><p class="index-label" data-i18n="public.publicationEyebrow">YOUR CHOICE TO SHARE</p><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="publication-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-publication" class="dialog-close" type="button" aria-label="Close sharing dialog" data-i18n-aria-label="public.closePublication">×</button></div>
+    <h2 id="publication-title"></h2><p id="publication-description"></p><p id="publication-alias" class="publication-alias"></p>
+    <div id="publication-source-wrap" class="publication-source-wrap"><p class="index-label" data-i18n="public.publicationSourceLabel">THE EXACT TEXT YOU WILL SHARE</p><p id="publication-source" class="publication-source"></p></div>
+    <label id="publication-consent-label" class="publication-consent"><input id="publication-consent" type="checkbox"><span id="publication-consent-copy"></span></label>
+    <p id="publication-message" class="publication-message" role="status" aria-live="polite" hidden></p>
+    <button id="publication-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button>
+    <div class="publication-actions"><button id="cancel-publication" class="button button-quiet" type="button" data-i18n="public.cancelSharing">Cancel</button><button id="confirm-publication" class="button button-primary" type="button" disabled></button></div>
   </dialog>
   <noscript><div class="noscript-notice">Enable JavaScript to submit ideas and log in with Google.</div></noscript>
 </body>

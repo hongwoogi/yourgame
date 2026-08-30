@@ -70,6 +70,17 @@ async function fixture(page, options = {}) {
         ...(state.service !== undefined ? { service: state.service } : {}),
       });
     }
+    if (pathname === '/api/community' && new URL(request.url()).searchParams.get('view') === 'me') {
+      return reply({ ownerId: state.session.user?.id || null,
+        profile: { id: 'public-browser-profile', alias: 'Player-000000000001', leaderboardVisible: false, revision: 1 },
+        contribution: { points: '0', adoptedCount: 0 },
+        voteQuota: { roundId: 'initial', limit: 3, used: 0, remaining: 3, closesAt: CUTOFF },
+        votes: [], publications: [] });
+    }
+    if (pathname === '/api/community') return reply({ recent: [], popular: [], leaderboard: { items: [] },
+      round: { id: 'initial', status: 'open', closesAt: CUTOFF, limit: 3 },
+      scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null },
+      serverTime: new Date(state.serverTime).toISOString() });
     if (pathname === '/api/session') return reply(state.session);
     if (pathname === '/api/login') {
       state.loginCalls += 1;
