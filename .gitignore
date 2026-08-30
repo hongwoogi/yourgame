@@ -10,5 +10,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-.vercel
-.env*
+# Local skill files installed automatically by the Vercel integration CLI.
+/.agents/skills/turso-cloud/
+/skills-lock.json

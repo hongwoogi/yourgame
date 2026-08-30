@@ -6,7 +6,7 @@
 
 Turso Free에 제안과 회차 상태를 보관한다. 개인 PC가 확정된 회차를 가져와 Codex로 게임을 변경하고 로컬 검증을 수행한다. 검증된 코드를 연결된 GitHub 저장소의 운영 브랜치에 push하면 Vercel이 빌드와 배포를 시작한다.
 
-GitHub의 hongwoogi/yourgame 비공개 저장소와 Vercel의 yourgame 프로젝트를 연결했다. main push에서 production 배포가 생성되고 기본 운영 주소에서 준비 페이지가 응답하는 것을 확인했다. yourga.me는 Vercel에 등록했지만 Cloudflare DNS 승인이 남아 있다. Turso DB 생성은 Marketplace 약관 승인 대기 중이다.
+GitHub의 hongwoogi/yourgame 비공개 저장소와 Vercel의 yourgame 프로젝트를 연결했다. main push에서 production 배포가 생성되고 yourga.me에서 준비 페이지가 HTTPS로 응답하는 것을 확인했다. Turso Starter DB yourgame을 만들고 production 환경에 연결했다. 받은 운영 환경변수로 로컬에서 SELECT 1 쿼리가 성공했으며, 게임 API와 데이터 스키마는 아직 구현하지 않았다.
 
 Vercel Cron은 사용하지 않는다. 기존에 합의한 주기는 PC 측 작업자가 관리하는 방향이며, 매 회차 사람이 배포 버튼을 누르는 절차를 새로 요구하지 않는다. 로컬 작업자의 실제 실행 방식은 아직 구현하지 않았다.
 
