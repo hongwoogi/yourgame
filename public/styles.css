@@ -80,6 +80,30 @@ textarea[aria-invalid="true"]{outline:1px solid var(--error);outline-offset:9px}
 .button-primary:hover:not(:disabled){background:var(--lime-hover);border-color:var(--lime-hover)}
 .button-primary:disabled{opacity:1;background:#34412b;border-color:#45513e;color:#a0ad92}
 .collection-footnote{margin:15px 0 0;font-size:10px;color:var(--faint);line-height:1.8}
+.process-section{--flow-gap:30px;margin-top:43px;padding-top:32px;border-top:1px solid var(--line)}
+.process-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:28px}
+.process-heading h2{font-size:25px;line-height:1.5;letter-spacing:-.9px;font-weight:550;margin:6px 0 0;word-break:keep-all}
+.process-intro{margin:0;color:var(--muted);font-size:12px;line-height:1.9;letter-spacing:-.1px;word-break:keep-all}
+.process-status-note{display:flex;align-items:baseline;gap:14px;margin:19px 0 0;color:var(--faint);font-size:11px;line-height:1.8;word-break:keep-all}
+.process-status-note>span{flex:none;color:var(--muted);padding-right:14px;border-right:1px solid var(--line);font-size:11px}
+.process-diagram{margin:28px 0 0}
+.process-flow{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--flow-gap);padding:0;margin:0;list-style:none}
+.process-step{position:relative;min-width:0}
+.process-step:not(:last-child)::before{content:"";position:absolute;right:calc(12px - var(--flow-gap));top:10px;width:6px;height:6px;border-top:1px solid var(--faint);border-right:1px solid var(--faint);transform:rotate(45deg)}
+.process-step:not(:last-child)::after{content:"";position:absolute;left:39px;right:calc(12px - var(--flow-gap));top:13px;border-top:1px solid var(--line)}
+.flow-number{display:grid;place-items:center;width:27px;height:27px;border:1px solid var(--line);color:var(--muted);font-family:"SFMono-Regular",Consolas,monospace;font-size:10px;line-height:1;font-variant-numeric:tabular-nums}
+.process-step h3{position:relative;font-size:14px;font-weight:550;line-height:1.6;letter-spacing:-.25px;word-break:keep-all;margin:16px 0 7px}
+.codex-label{color:var(--lime);letter-spacing:0}
+.process-step p{font-size:12px;line-height:1.8;color:var(--muted);margin:0;word-break:keep-all;letter-spacing:-.18px}
+.process-loop{position:relative;height:20px;margin:20px calc((100% - 5 * var(--flow-gap)) / 6 - 13px) 0 13px;border:1px solid var(--line);border-top:0;text-align:center}
+.process-loop::before{content:"";position:absolute;left:-4px;top:0;width:6px;height:6px;border-top:1px solid var(--faint);border-right:1px solid var(--faint);transform:rotate(-45deg)}
+.process-loop>span{position:relative;top:10px;padding:0 14px;background:var(--bg);color:var(--faint);font-size:11px;line-height:1.8}
+.process-policies{display:grid;grid-template-columns:1fr 1fr;gap:18px 30px;margin-top:31px}
+.process-policies p{display:flex;align-items:baseline;gap:9px;margin:0;color:var(--muted);font-size:12px;line-height:1.9;word-break:keep-all}
+.policy-branch{flex:none;font-size:16px;line-height:1;color:var(--faint)}
+.process-policies strong{color:var(--ink);font-weight:500;white-space:nowrap}
+.policy-arrow{display:inline-block;margin:0 9px;color:var(--faint)}
+.process-diagram figcaption{font-size:11px;line-height:1.9;color:var(--faint);margin-top:13px;word-break:keep-all}
 .footer{display:flex;align-items:center;justify-content:space-between;padding:26px 0 25px;margin-top:36px;border-top:1px solid var(--line);font-size:9px;color:var(--faint);letter-spacing:1px}
 .footer>span:last-child{display:flex;align-items:center;gap:21px;letter-spacing:0;font-size:10px}
 .footer-cross{color:var(--lime);font-size:22px;line-height:1}
@@ -128,5 +152,7 @@ textarea[aria-invalid="true"]{outline:1px solid var(--error);outline-offset:9px}
 @media(min-width:1500px){.hero{padding-top:94px;padding-bottom:80px}.hero h1{font-size:63px}.hero-description{font-size:14px}.prompt-form{padding-top:34px;padding-bottom:29px}.prompt-form textarea{min-height:154px}.release-panel{padding-left:64px}.footer{margin-top:42px}}
 @media(max-width:1190px){.wrap{width:calc(100% - 80px)}.hero{gap:35px;padding:65px 0 55px;grid-template-columns:1.25fr 1fr}.hero h1{font-size:clamp(38px,4.1vw,49px);letter-spacing:-2.7px}.hero-description{font-size:12px}.release-panel{padding-left:30px}.time-unit>span{font-size:44px;letter-spacing:-2.5px}.time-separator{font-size:21px;line-height:2}.release-date{gap:10px}.release-date time{font-size:10px}.date-divider{padding:0 2px}.experiment-label{font-size:9px}.masthead-right{gap:24px}}
 @media(max-width:980px){.wrap{width:calc(100% - 64px)}.hero{gap:27px;grid-template-columns:1.14fr 1fr}.hero h1{font-size:36px;letter-spacing:-2px}.hero-description br{display:none}.hero-description{max-width:330px}.release-panel{padding-left:25px}.time-unit>span{font-size:38px;letter-spacing:-2px}.time-separator{font-size:18px}.release-date>span{font-size:9px}.experiment-label{display:none}.prompt-form{padding:26px}.countdown-title{margin-top:23px}.release-note{font-size:9px}}
+@media(max-width:1190px){.process-section{--flow-gap:23px}.process-heading h2{font-size:23px}.process-step h3{font-size:13px;min-height:42px;margin-bottom:5px}.process-step p{font-size:11px}.process-intro{font-size:11px}.process-policies{column-gap:23px}.process-policies p{font-size:11px}}
+@media(max-width:980px){.process-section{--flow-gap:17px;margin-top:36px;padding-top:27px}.process-heading{align-items:flex-start;gap:22px}.process-heading h2{font-size:21px}.process-intro{max-width:285px;font-size:11px}.process-status-note{gap:10px}.process-status-note>span{padding-right:10px}.process-step h3{font-size:12px;line-height:1.7;min-height:41px}.process-step p{font-size:11px;line-height:1.85}.process-loop>span{padding:0 10px}.process-policies{column-gap:18px}.policy-arrow{margin:0 5px}}
 @media(max-width:799px){.desktop-app,.skip-link{display:none}.desktop-notice{display:flex;min-height:100svh;flex-direction:column;padding:34px 28px 32px;align-items:flex-start;justify-content:center}.desktop-notice .wordmark{position:absolute;top:35px;left:28px;font-size:26px;gap:0}.desktop-notice-icon{color:var(--lime);margin:45px 0 30px}.desktop-notice h1{font-size:39px;line-height:1.35;letter-spacing:-1.7px}.desktop-notice p{font-size:13px;line-height:1.9;color:var(--muted);margin-top:23px;word-break:keep-all}.desktop-notice small{font-size:10px;color:var(--faint);margin-top:54px}.login-dialog[open]{display:none}.login-dialog::backdrop{background:transparent;backdrop-filter:none}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
