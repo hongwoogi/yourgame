@@ -1,0 +1,11 @@
+node_modules/
+.vercel/
+.wrangler/
+.local/
+.env
+.env.*
+!.env.example
+*.log
+dist/
+.DS_Store
+Thumbs.db
