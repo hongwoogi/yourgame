@@ -6,19 +6,19 @@
   "regions": ["hnd1"],
   "redirects": [
     {
-      "source": "/:path*",
+      "source": "/:path(.*)",
       "has": [{ "type": "host", "value": "yourgame-eosin.vercel.app" }],
       "destination": "https://yourga.me/:path*",
       "permanent": true
     },
     {
-      "source": "/:path*",
+      "source": "/:path(.*)",
       "has": [{ "type": "host", "value": "yourgame-hso1025-2820s-projects.vercel.app" }],
       "destination": "https://yourga.me/:path*",
       "permanent": true
     },
     {
-      "source": "/:path*",
+      "source": "/:path(.*)",
       "has": [{ "type": "host", "value": "yourgame-git-main-hso1025-2820s-projects.vercel.app" }],
       "destination": "https://yourga.me/:path*",
       "permanent": true

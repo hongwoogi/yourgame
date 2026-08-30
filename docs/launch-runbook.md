@@ -17,9 +17,11 @@
 
 ## 정기 점검
 
-이 작업에 연결한 Codex 후속 실행을 사용한다. 별도 Vercel Cron이나 운영자 클릭을 매번 요구하지 않는다. 실제 등록 주기·자동화 ID는 등록 성공 후 구현 상태 문서에 기록한다.
+이 작업에 연결한 Codex 후속 실행을 사용한다. 2026-08-31에 자동화 `yourga-me`를 5분 간격으로 ACTIVE 등록했다. 별도 Vercel Cron이나 운영자 클릭을 매번 요구하지 않는다. 등록 성공은 매 실행의 성공이나 정시 실행을 보장하지 않는다.
 
-각 실행은 저장소에서 `node scripts/check-health.mjs --once`를 먼저 실행한다. JSON의 `newIncidents`, `recoveries`, `notificationRecommended`, `applicationStatus`, `monitorErrors`를 읽고 서비스 장애와 모니터 저장 실패를 구분한다. `.local/monitor-state.json`에는 마지막 확인 상태, `.local/incidents.jsonl`에는 새 장애와 복구를 기록한다. 이 점검은 실제 사용자 Google 로그인이나 모든 제출 경로를 대신 검증하지 않는다.
+각 실행은 저장소에서 `node scripts/check-health.mjs --once`와 `node scripts/check-runtime-errors.mjs --once`를 각각 실행한다. JSON의 새 사건·복구·조회 실패·관측 한도를 읽고 서비스 장애와 모니터 장애를 구분한다. `.local/monitor-state.json`에는 마지막 상태, `.local/incidents.jsonl`에는 상태 장애와 복구, `.local/runtime-monitor-state.json`에는 API 5xx 로그의 중복 확인 정보를 기록한다. 로그 점검은 캐시된 Vercel CLI로 최근 10분·최대 50건을 25초 이내에 읽고 원문·개인정보는 남기지 않는다. 실제 사용자 Google 로그인이나 모든 제출 경로를 대신 검증하지 않는다.
+
+`.local/google-provider-status.json`과 [Google 로그인 기록](google-login-setup.md)의 제공자 차단도 별도로 본다. 2026-08-31 운영 검사에서 Google origin 미허용 403을 확인했으며, 공개 상태 API의 `authConfigured=true`는 이 차단의 해제를 뜻하지 않는다.
 
 새 실패는 이 작업에 발견 시각·실패 단계·영향·확인된 원인·진행할 조치를 알린다. 원인을 모르면 모른다고 적는다. 동일한 장애는 재통지로 도배하지 말고 원인 확인·증상 변경·복구 완료 때 갱신한다. 평상시에는 불필요하게 코드를 바꾸지 않는다. 수정 후 테스트와 해당 운영 검사를 다시 통과해야 복구 완료로 기록한다.
 

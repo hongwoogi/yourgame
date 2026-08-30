@@ -2,7 +2,7 @@
 
 참여자의 제안을 모아 하나의 솔로 로그라이크 게임을 함께 진화시키는 실험입니다.
 
-카운트다운과 제안 접수 화면을 구현했습니다. 운영 주소는 [yourga.me](https://yourga.me)이며, 실제 배포·로그인 검증 상태는 [인프라 기록](docs/infrastructure-status.md)과 [Google 로그인 기록](docs/google-login-setup.md)에서 구분합니다. 게임은 아직 공개하지 않았습니다.
+카운트다운과 제안 접수 화면·API를 [yourga.me](https://yourga.me)에 배포했습니다. 현재 실제 Google 로그인은 운영 도메인의 origin 허용 설정이 필요합니다. 따라서 제안 접수 전체 흐름은 아직 운영 계정으로 확인하지 못했습니다. 자세한 검증 상태는 [인프라 기록](docs/infrastructure-status.md)과 [Google 로그인 기록](docs/google-login-setup.md)에서 구분합니다. 게임은 아직 공개하지 않았습니다.
 
 - 최초 제안 모집: 접수 기능 배포 즉시부터 2026-08-31 23:00 한국시간까지
 - 첫 게임 공개 목표: 2026-09-01 00:00 한국시간
@@ -22,7 +22,7 @@ npm run test:ui
 
 `npm run build`는 자산·구문·백엔드·장애 감지 검사를 실행합니다. 브라우저 검사는 별도의 Playwright Chromium이 필요하며, Google 응답을 대체하므로 실제 Google 계정 로그인을 증명하지 않습니다. 개발 origin은 `http://localhost:3000`입니다.
 
-운영 DB 초기화·마감 후 고정 입력·실패 복구는 [첫 공개 실행 절차](docs/launch-runbook.md)를 따릅니다. 상태 점검은 `node scripts/check-health.mjs --once`로 실행하며, 비공개 상태와 장애 기록은 `.local/`에 저장합니다.
+운영 DB 초기화·마감 후 고정 입력·실패 복구는 [첫 공개 실행 절차](docs/launch-runbook.md)를 따릅니다. `node scripts/check-health.mjs --once`와 `node scripts/check-runtime-errors.mjs --once`로 상태·API 5xx를 확인하고 비공개 기록은 `.local/`에 저장합니다. 이 작업에는 5분 간격 Codex 후속 실행을 등록했습니다. PC와 Codex 앱이 실행 중이어야 하며 실행 지연이 발생할 수 있습니다.
 
 ## 구성
 

@@ -1,6 +1,6 @@
 # Google 로그인 준비 상태
 
-확인일: 2026-08-31, Asia/Seoul. 사용자가 제공한 웹용 OAuth 2.0 클라이언트로 Google 전용 로그인 화면과 서버 세션을 구현했다. 서버·브라우저 자동 검사는 통과했으며, 실제 Google 계정 로그인과 제공자 origin 확인은 별도로 남아 있다.
+확인일: 2026-08-31, Asia/Seoul. 사용자가 제공한 웹용 OAuth 2.0 클라이언트로 Google 전용 로그인 화면과 서버 세션을 구현·배포했다. 자동 검사는 통과했으나 운영 도메인의 실제 Google 버튼이 origin 미허용으로 차단되는 것을 확인했다. 이 설정을 해결하기 전에는 실제 Google 로그인과 제안 접수의 전체 성공을 확인한 상태가 아니다.
 
 ## 완료한 작업
 
@@ -16,7 +16,11 @@
 
 ## 제공자 설정 확인 상태
 
-제공 파일에는 `javascript_origins`와 `redirect_uris` 목록이 없다. 이것만으로 현재 Google 콘솔의 설정이 비어 있다고 단정하지 않는다. 브라우저 연결 도구가 초기화 단계에서 실패해 실제 클라이언트 화면을 확인하거나 변경하지 못했다.
+제공 파일에는 `javascript_origins`와 `redirect_uris` 목록이 없다. 이것만으로 Google 콘솔의 전체 설정이 비어 있다고 단정하지 않는다. 사용자 Chrome 연결 도구가 초기화 단계에서 실패해 콘솔 화면을 직접 변경하지 못했다.
+
+운영 배포 후 별도의 로그인되지 않은 Chromium으로 `https://yourga.me`를 열어 실제 Google 버튼을 검사했다. Google의 `/gsi/button`이 HTTP 403을 반환했고, 허용되지 않은 origin이라는 제공자 오류를 두 번 확인했다. 이는 테스트 대역이 아닌 실제 제공자 응답이다. 로컬 화면의 버튼 렌더링 성공과 구분한다.
+
+필요한 조치: [webug-504110 프로젝트의 OAuth 클라이언트](https://console.cloud.google.com/auth/clients?project=webug-504110)에서 사용자가 제공한 웹 클라이언트의 **승인된 JavaScript 원본**에 `https://yourga.me`를 추가한다. origin에는 경로나 마지막 슬래시를 붙이지 않는다. 이 callback 방식 때문에 임의의 redirect URI나 새 클라이언트를 만들 필요는 없다. 설정 반영 뒤 실제 도메인의 Google 로그인, 잔여 횟수 조회, 명시한 초안의 단일 자동 접수를 재검증한다.
 
 Google의 일반 Web OAuth 클라이언트 설정은 [Google Auth Platform의 Clients](https://console.cloud.google.com/auth/clients)에서 관리한다. 일반 클라이언트를 임의의 관리 API나 `gcloud iam oauth-clients`로 수정하지 않는다. Google은 일반 OAuth 클라이언트의 프로그램 방식 생성·수정을 지원하지 않는다고 설명하며, IAM OAuth 클라이언트는 Workforce Identity Federation용 별도 리소스다. [공식 설정 원칙](https://developers.google.com/identity/protocols/oauth2/resources/best-practices), [IAM OAuth 애플리케이션](https://docs.cloud.google.com/iam/docs/workforce-manage-oauth-app)
 
@@ -28,4 +32,4 @@ Google의 일반 Web OAuth 클라이언트 설정은 [Google Auth Platform의 Cl
 - Google API 데이터 접근 없이 로그인에 필요한 기본 신원 정보만 요청한다. 전송하려던 초안의 자동 접수와 시간당 제한은 Google이 아니라 앱 서버가 처리한다.
 - 기본 Vercel 별칭 `yourgame-eosin.vercel.app`에서는 로그인 origin이 갈라지지 않도록 대표 주소 `https://yourga.me`로 이동시킨다. 운영 변경 요청은 대표 origin만 허용한다. [Vercel 호스트 조건 리다이렉트](https://vercel.com/docs/project-configuration/vercel-json)
 
-로그인 UI·서버 세션·세션 유지·로그아웃·초안 복원·중복 접수 방지는 자동 검사와 로컬 화면으로 확인했다. 운영 허용 origin과 실제 Google 계정 로그인은 아직 확인하지 않았다. 환경변수 존재와 테스트 통과만으로 실제 Google 로그인 완료라고 표시하지 않는다.
+로그인 UI·서버 세션·세션 유지·로그아웃·초안 복원·중복 접수 방지는 자동 검사로 확인했다. 운영 화면·DB·익명 세션·CSRF와 잘못된 자격증명 거부도 확인했다. 허용 origin 오류는 아직 해결되지 않았고 실제 Google 계정 로그인은 완료하지 않았다. `authConfigured=true`와 테스트 통과만으로 실제 Google 로그인 완료라고 표시하지 않는다. 현재 제공자 차단 기록은 `.local/google-provider-status.json`에 남긴다.
