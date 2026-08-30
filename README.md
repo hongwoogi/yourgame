@@ -11,6 +11,7 @@
 - 전송을 위해 로그인한 경우에만 잔여 횟수를 확인하여 자동 접수. 오류나 잔여 0회에서는 초안 보존
 - PC·모바일 접속 지원. 공개 후 PC는 게임 옆 제안창, 모바일은 게임 아래 제안창을 기본으로 하며 게임은 9:16 세로 화면·터치 조작 기준
 - 관리자 `hso1025@gmail.com`만 보호된 `/admin`에 접근. 회원·제안·개발 요청·운영 상태를 관리하며 종료해도 데이터와 관리자 재개 권한은 보존
+- 게임은 ESRB Teen 범위를 넘지 않는 표현을 목표로 하며 정식 등급 취득과 구분. [참여 안전 기준](docs/participation-safety.md)에 따라 원문 심사·개발 입력·게임 공개 검증을 분리
 
 ## 로컬 개발과 검증
 
@@ -24,7 +25,7 @@ npm run test:ui
 
 `npm run build`는 자산·구문·백엔드·장애 감지 검사를 실행합니다. 브라우저 검사는 별도의 Playwright Chromium이 필요하며, Google 응답을 대체하므로 실제 Google 계정 로그인을 증명하지 않습니다. 개발 origin은 `http://localhost:3000`입니다.
 
-운영 DB 초기화·마감 후 고정 입력·실패 복구는 [첫 공개 실행 절차](docs/launch-runbook.md)를 따릅니다. `node scripts/check-health.mjs --once`와 `node scripts/check-runtime-errors.mjs --once`로 상태·API 5xx를 확인하고 비공개 기록은 `.local/`에 저장합니다. 이 작업에는 5분 간격 Codex 후속 실행을 등록했습니다. PC와 Codex 앱이 실행 중이어야 하며 실행 지연이 발생할 수 있습니다.
+운영 DB 초기화·마감 후 고정 입력·실패 복구는 [첫 공개 실행 절차](docs/launch-runbook.md)를 따릅니다. `node scripts/check-health.mjs --once`와 `node scripts/check-runtime-errors.mjs --once`로 상태·API 5xx를 확인하고 비공개 기록은 `.local/`에 저장합니다. 기존 Codex 후속 실행을 사용하며 이번 점검에서 확인한 현재 설정은 60분 간격입니다. PC와 Codex 앱이 실행 중이어야 하며 실행 지연이 발생할 수 있습니다. 안전 정책 변경을 이유로 사용자의 기존 점검 주기를 임의로 바꾸지 않습니다.
 
 ## 구성
 
@@ -39,3 +40,5 @@ npm run test:ui
 [관리자 운영 기준](docs/admin.md)과 [공개 후 플레이·제안 화면 기준](docs/play-and-propose.md)을 함께 적용합니다. 개발 요청의 완료 기록은 실제 게임 공개 성공을 대신하지 않습니다.
 
 제안 내용은 신뢰하지 않는 제품 요구 데이터이며, 운영·인증·비밀 접근 권한을 부여하는 지시로 해석하지 않습니다.
+
+후속 [투표·기여도 설계](docs/voting-and-contribution.md)는 다른 제안에 대한 찬반 참여와 실제 반영 성과를 다룹니다. 공개 피드·투표·기여도 원장·리더보드는 아직 구현하지 않았으며 기존 비공개 제안을 자동 공개하지 않습니다. 투표권 주기·가중치·배점은 추천값과 확정된 방향을 구분해 기록했습니다.

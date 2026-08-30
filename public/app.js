@@ -153,10 +153,11 @@
   }
 
   class RequestError extends Error {
-    constructor(message, responseStatus = 0, data = null) {
+    constructor(message, responseStatus = 0, data = null, retryAfterSeconds = 0) {
       super(message);
       this.status = responseStatus;
       this.data = data;
+      this.retryAfterSeconds = retryAfterSeconds;
     }
   }
 
@@ -180,7 +181,9 @@
       if (!response.ok) {
         const message = response.status < 500 && typeof data?.error?.message === 'string'
           ? data.error.message.slice(0, 500) : '서버 연결에 실패했어요. 작성한 내용은 그대로 두고 잠시 후 다시 시도해 주세요.';
-        throw new RequestError(message, response.status, data);
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        throw new RequestError(message, response.status, data,
+          Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 3600 ? Math.ceil(retryAfter) : 0);
       }
       if (data.serverTime) synchronizeClock(data.serverTime, performance.now() - started);
       return data;
@@ -509,6 +512,18 @@
     quota = { remaining: Math.max(0, value.remaining), limit: value.limit, nextAvailableAt: value.nextAvailableAt || null };
   }
 
+  function safetyView(proposal) {
+    const states = {
+      pending: ['안전 검토 대기', '운영자가 검토하기 전에는 개발 입력으로 사용하지 않아요.'],
+      approved: ['안전 승인', '안전 검토를 통과했어요. 게임 반영·공개가 확정된 것은 아니에요.'],
+      held: ['안전 검토 보류', '추가 확인이 필요해 개발 입력을 보류하고 있어요.'],
+      blocked: ['안전 기준 차단', '안전 기준에 따라 개발 입력에서 제외됐어요.'],
+    };
+    const status = proposal?.safety?.status;
+    const item = Object.hasOwn(states, status) ? states[status] : ['안전 상태 확인 필요', '안전 승인 여부를 확인하기 전에는 개발 입력으로 사용하지 않아요.'];
+    return { status: Object.hasOwn(states, status) ? status : 'unknown', label: item[0], message: item[1] };
+  }
+
   function renderProposals() {
     ui['proposal-list'].replaceChildren();
     ui['my-proposals'].hidden = !user || !privateReady;
@@ -548,8 +563,20 @@
       const body = document.createElement('p');
       body.className = 'proposal-body';
       body.textContent = proposal.body;
+      const safety = safetyView(proposal);
+      const safetyNote = document.createElement('div');
+      safetyNote.className = 'proposal-safety';
+      safetyNote.dataset.status = safety.status;
+      const safetyLabel = document.createElement('strong');
+      safetyLabel.textContent = safety.label;
+      const safetyMessage = document.createElement('span');
+      safetyMessage.textContent = safety.message;
+      if (proposal.editable && ['held', 'blocked'].includes(safety.status)) {
+        safetyMessage.textContent += ' 마감 전 내용을 수정하면 다시 검토합니다.';
+      }
+      safetyNote.append(safetyLabel, safetyMessage);
       meta.append(time, actions);
-      article.append(meta, body);
+      article.append(meta, body, safetyNote);
       fragment.append(article);
     }
     ui['proposal-list'].append(fragment);
@@ -753,14 +780,14 @@
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       if (editingAtSend) {
         endEdit({ removeDraft: true });
-        feedback('수정 내용을 저장했어요. 새 제안 횟수는 차감되지 않았어요.');
+        feedback(`수정 내용을 저장했어요. 새 제안 횟수는 차감되지 않았어요. 현재 상태: ${safetyView(data.proposal).label}.`);
       } else {
         newDraft = '';
         ui.prompt.value = '';
         writeStorage('localStorage', DRAFT_KEY, null);
         attempt = null;
         writeStorage('sessionStorage', ATTEMPT_KEY, null);
-        feedback('제안이 접수됐어요. 모집 마감 전에는 아래에서 수정할 수 있어요.');
+        feedback(`제안이 접수됐어요. 제출 횟수 1회를 사용했으며 현재 상태는 ${safetyView(data.proposal).label}입니다. 모집 마감 전에는 아래에서 수정할 수 있어요.`);
       }
       ui['my-proposals'].open = true;
       renderProposals();
@@ -769,9 +796,17 @@
       if (error.data?.quota) {
         try { acceptQuota(error.data.quota); } catch { quota = null; }
       }
-      feedback(error.status === 0 && !editingAtSend
+      const safetyRejected = error.data?.error?.code === 'PROPOSAL_SAFETY_REJECTED';
+      const editRateLimited = error.data?.error?.code === 'EDIT_RATE_LIMITED';
+      const attemptRateLimited = error.data?.error?.code === 'PROPOSAL_ATTEMPT_RATE_LIMITED';
+      const retryWait = error.retryAfterSeconds ? `${error.retryAfterSeconds}초 후` : '잠시 후';
+      feedback(safetyRejected
+        ? `${editingAtSend ? '수정본을 저장하지 않았어요.' : '제안을 접수하지 않았어요.'} 안전 기준을 벗어난 요청은 받을 수 없어요. 과도한 선정성·폭력, 개인정보 또는 안전 규칙을 무력화하는 지시를 제외해 주세요. 작성한 내용은 보관되며 제출 횟수는 차감되지 않았어요.`
+        : editRateLimited ? `너무 빠르게 연속 수정했어요. ${retryWait} 다시 저장해 주세요. 작성한 내용과 제출 횟수는 그대로입니다.`
+          : attemptRateLimited ? `요청이 짧은 시간에 너무 많았어요. ${retryWait} 다시 시도해 주세요. 작성한 내용과 제출 횟수는 그대로입니다.`
+          : error.status === 0 && !editingAtSend
         ? '접수 결과를 확인하지 못했어요. 작성한 내용은 보관됩니다. 다시 전송해도 같은 요청이 중복 접수되지 않아요.'
-        : error.message, 'error', { reason: error.status === 429 ? 'quota' : '' });
+        : error.message, 'error', { reason: safetyRejected ? 'safety' : error.status === 429 && !editRateLimited && !attemptRateLimited ? 'quota' : '' });
       if (isServiceRejection(error)) {
         applyServiceRejection(error);
         await refreshStatus().catch(() => {});

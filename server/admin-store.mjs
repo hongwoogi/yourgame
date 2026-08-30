@@ -4,6 +4,8 @@ import { writeBatch } from './database.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { ADMIN_AUTH_MAX_AGE_MS, ADMIN_EMAIL, SERVICE_MODES, serviceView } from './admin-policy.mjs';
 import { INITIAL_CUTOFF } from './config.mjs';
+import { SAFETY_POLICY_VERSION, SAFETY_STATUSES, assertScreenedBody, validateDevelopmentBrief } from './safety-policy.mjs';
+import { SAFETY_COLUMNS, SAFETY_JOINS, approvedSafetySql, bodyDigest, safetyBindingsSql, safetyView } from './safety-store.mjs';
 
 export const INITIAL_RUN_ID = 'initial-round-2026-09-01';
 
@@ -19,6 +21,7 @@ const FIELDS = {
   retry_version: ['versionId', 'revision'],
   cancel_version: ['versionId', 'revision'],
   set_service: ['mode', 'proposalsEnabled', 'developmentEnabled', 'message', 'revision', 'confirmation'],
+  review_proposal_safety: ['proposalId', 'proposalRevision', 'bodyHash', 'policyVersion', 'revision', 'status', 'checklistConfirmed', 'developmentBrief'],
 };
 
 function invalid(message = '관리 요청의 입력 값을 확인해 주세요.') {
@@ -70,7 +73,8 @@ function auditView(row) {
 export function eligibleProposalSql(alias = 'p') {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(alias)) throw new TypeError('Invalid SQL alias');
   return `NOT EXISTS (SELECT 1 FROM proposal_moderation em WHERE em.proposal_id = ${alias}.id AND em.moderation = 'excluded')
-    AND NOT EXISTS (SELECT 1 FROM member_access ea WHERE ea.user_id = ${alias}.user_id AND ea.status = 'suspended')`;
+    AND NOT EXISTS (SELECT 1 FROM member_access ea WHERE ea.user_id = ${alias}.user_id AND ea.status = 'suspended')
+    AND ${approvedSafetySql(alias)}`;
 }
 
 function validateProposalIds(value) {
@@ -78,6 +82,23 @@ function validateProposalIds(value) {
   value.forEach(identifier);
   if (new Set(value).size !== value.length) throw invalid('스냅샷 식별자는 중복될 수 없습니다.');
   return value;
+}
+
+function validateBindings(bindings, proposalIds) {
+  if (!Array.isArray(bindings) || bindings.length > 100000) throw invalid('안전 승인 바인딩을 확인해 주세요.');
+  for (const binding of bindings) {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) throw invalid();
+    identifier(binding.id); identifier(binding.safetyReviewId);
+    revision(binding.revision); revision(binding.safetyRevision);
+    if (!/^[a-f0-9]{64}$/.test(binding.bodyHash || '') || !/^[a-f0-9]{64}$/.test(binding.developmentBriefHash || '')
+        || typeof binding.policyVersion !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(binding.policyVersion)) throw invalid();
+  }
+  const bindingIds = bindings.map(binding => binding.id);
+  validateProposalIds(bindingIds);
+  const boundIds = new Set(bindingIds);
+  if (proposalIds !== undefined && (proposalIds.length !== bindings.length
+      || proposalIds.some(id => !boundIds.has(id)))) throw invalid('스냅샷 식별자와 바인딩이 일치하지 않습니다.');
+  return bindings;
 }
 
 function workerBlock(service, run, runRequested, snapshot) {
@@ -139,13 +160,18 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     const status = input.status || '';
     const round = input.round || '';
     const userId = input.userId || '';
+    const safetyStatus = input.safetyStatus || '';
     const rawLimit = input.limit === undefined ? 25 : Number(input.limit);
     if (!Number.isSafeInteger(rawLimit) || rawLimit < 1) throw invalid('페이지 크기를 확인해 주세요.');
     const limit = Math.min(rawLimit, 50);
     if (status) oneOf(status, section === 'users' ? ['active', 'suspended'] : section === 'proposals' ? MODERATION : section === 'versions' ? RUN_STATUSES : []);
     if (round) oneOf(round, ['initial', 'pending']);
     if (userId) identifier(userId);
-    const binding = hash(canonical({ section, q, status, round, userId }));
+    if (safetyStatus) {
+      if (section !== 'proposals') throw invalid();
+      oneOf(safetyStatus, SAFETY_STATUSES);
+    }
+    const binding = hash(canonical({ section, q, status, round, userId, safetyStatus }));
     let cursor = null;
     if (input.cursor) {
       try {
@@ -154,7 +180,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
         if (cursor.binding !== binding || !Number.isSafeInteger(cursor.time) || cursor.time < 0 || !ID.test(cursor.id)) throw Error();
       } catch { throw invalid('목록 커서가 올바르지 않습니다. 처음부터 다시 조회해 주세요.'); }
     }
-    return { q, status, round, userId, limit, cursor, binding };
+    return { q, status, round, userId, safetyStatus, limit, cursor, binding };
   }
 
   async function list(section, input = {}) {
@@ -183,19 +209,21 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
         isAdmin: Number(row.is_admin) === 1, proposalCount: Number(row.proposal_count), revision: Number(row.member_revision) });
     } else if (section === 'proposals') {
       alias = 'p';
-      sql = `SELECT p.*, u.name AS user_name, a.email,
+      sql = `SELECT p.*, ${SAFETY_COLUMNS}, u.name AS user_name, a.email,
         COALESCE(m.moderation, 'pending') AS moderation, COALESCE(m.revision, 1) AS moderation_revision,
         COALESCE(m.reason, '') AS moderation_reason
         FROM proposals p JOIN users u ON u.id = p.user_id
         LEFT JOIN member_access a ON a.user_id = u.id
-        LEFT JOIN proposal_moderation m ON m.proposal_id = p.id`;
+        LEFT JOIN proposal_moderation m ON m.proposal_id = p.id ${SAFETY_JOINS}`;
       search("(p.body || ' ' || u.name || ' ' || COALESCE(a.email, ''))");
       if (page.status) { filters.push("COALESCE(m.moderation, 'pending') = ?"); args.push(page.status); }
       if (page.round) { filters.push('p.round_id = ?'); args.push(page.round); }
       if (page.userId) { filters.push('p.user_id = ?'); args.push(page.userId); }
+      if (page.safetyStatus) { filters.push("COALESCE(sr.status, 'pending') = ?"); args.push(page.safetyStatus); }
       view = row => ({ id: row.id, user: { id: row.user_id, name: row.user_name, email: row.email ?? null },
         body: row.body, roundId: row.round_id, createdAt: iso(row.created_at), revision: Number(row.revision),
-        moderation: row.moderation, moderationRevision: Number(row.moderation_revision), moderationReason: row.moderation_reason });
+        moderation: row.moderation, moderationRevision: Number(row.moderation_revision), moderationReason: row.moderation_reason,
+        safety: safetyView(row, { admin: true }) });
     } else if (section === 'versions') {
       alias = 'v';
       sql = 'SELECT v.* FROM development_runs v';
@@ -257,9 +285,11 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     let targetId;
     let targetStatement;
     let primary;
+    const beforePrimary = [];
     const afterPrimary = [];
     const afterAudit = [];
     let expectedRevision;
+    let safetyPreparationError;
     if (action !== 'create_version') expectedRevision = revision(input.revision);
 
     if (action === 'set_user_status') {
@@ -328,6 +358,49 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
           args: [sourceId, expectedRevision, ...command.args],
         };
       }
+    } else if (action === 'review_proposal_safety') {
+      targetId = identifier(input.proposalId);
+      const proposalRevision = revision(input.proposalRevision);
+      const status = oneOf(input.status, SAFETY_STATUSES);
+      if (typeof input.bodyHash !== 'string' || !/^[a-f0-9]{64}$/.test(input.bodyHash)) throw invalid();
+      const current = (await client.execute({ sql: 'SELECT * FROM proposals WHERE id = ?', args: [targetId] })).rows[0];
+      let brief = '';
+      try {
+        if (!current || Number(current.revision) !== proposalRevision || bodyDigest(current.body) !== input.bodyHash
+            || input.policyVersion !== SAFETY_POLICY_VERSION) {
+          throw new ApiError(409, 'SAFETY_REVIEW_CONFLICT', '본문 또는 안전 정책이 변경되었습니다. 최신 내용을 다시 확인해 주세요.');
+        }
+        if (status === 'approved') {
+          if (input.checklistConfirmed !== true) throw new ApiError(422, 'SAFETY_CHECKLIST_REQUIRED', '안전 점검 항목을 모두 확인해 주세요.');
+          assertScreenedBody(current.body);
+          brief = validateDevelopmentBrief(input.developmentBrief);
+        }
+      } catch (error) { safetyPreparationError = error; }
+      const prepared = Number(!safetyPreparationError);
+      targetStatement = { sql: `SELECT p.id, p.revision AS proposal_revision, COALESCE(sr.revision, 1) AS revision
+        FROM proposals p ${SAFETY_JOINS} WHERE p.id = ?`, args: [targetId] };
+      beforePrimary.push({
+        sql: `INSERT INTO proposal_body_revisions(proposal_id, body_revision, body_hash, body, created_at)
+          SELECT id, revision, ?, body, updated_at FROM proposals WHERE id = ? AND revision = ? AND body = ?
+            AND ? = 1 AND ${common} ON CONFLICT(proposal_id, body_revision) DO NOTHING`,
+        args: [input.bodyHash, targetId, proposalRevision, current?.body || '', prepared, ...command.args],
+      });
+      primary = {
+        sql: `INSERT INTO proposal_safety_reviews(id, proposal_id, body_revision, body_hash, policy_version,
+          status, revision, reason, development_brief, development_brief_hash, checklist_confirmed, reviewer_id, reviewed_at, created_at)
+          SELECT ?, p.id, p.revision, ?, ?, ?, COALESCE(sr.revision, 1) + 1, ?, ?, ?, ?, ?, ${databaseClockSql}, ${databaseClockSql}
+          FROM proposals p ${SAFETY_JOINS}
+          WHERE p.id = ? AND p.revision = ? AND p.body = ? AND sh.body_hash = ? AND COALESCE(sr.revision, 1) = ?
+            AND ? = 1 AND ${common}
+            AND EXISTS (SELECT 1 FROM safety_meta WHERE key = 'policy_version' AND value = ?)
+          ON CONFLICT(proposal_id, body_revision, policy_version) DO UPDATE SET
+            status = excluded.status, revision = excluded.revision, reason = excluded.reason,
+            development_brief = excluded.development_brief, development_brief_hash = excluded.development_brief_hash,
+            checklist_confirmed = excluded.checklist_confirmed, reviewer_id = excluded.reviewer_id, reviewed_at = excluded.reviewed_at`,
+        args: [randomUUID(), input.bodyHash, SAFETY_POLICY_VERSION, status, reason, brief, brief ? bodyDigest(brief) : '',
+          Number(status === 'approved'), session?.user?.id || '', targetId, proposalRevision, current?.body || '', input.bodyHash,
+          expectedRevision, prepared, ...command.args, SAFETY_POLICY_VERSION],
+      };
     } else {
       targetId = 'service';
       const mode = oneOf(input.mode, SERVICE_MODES);
@@ -357,7 +430,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     const lookup = { sql: 'SELECT * FROM admin_requests WHERE actor_user_id = ? AND request_id = ?',
       args: [session?.user?.id || '', requestId] };
     const results = await writeBatch(client, [
-      actorStatement(session), lookup, targetStatement, primary, ...afterPrimary,
+      actorStatement(session), lookup, targetStatement, ...beforePrimary, primary, ...afterPrimary,
       {
         sql: `INSERT INTO admin_audit(id, created_at, action, target_id, reason, actor_user_id, actor_name)
           SELECT ?, ${databaseClockSql}, ?, ?, ?, s.user_id, u.name
@@ -379,6 +452,10 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     if (stored) {
       if (stored.payload_hash !== payloadHash) throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '같은 요청 식별자로 다른 작업을 실행할 수 없습니다.');
       return JSON.parse(stored.response_json);
+    }
+    if (action === 'review_proposal_safety') {
+      if (safetyPreparationError) throw safetyPreparationError;
+      throw new ApiError(409, 'SAFETY_REVIEW_CONFLICT', '본문 또는 안전 심사가 변경되었습니다. 최신 내용을 다시 확인해 주세요.');
     }
     const target = results[2].rows[0];
     if (action === 'set_user_status' && input.status === 'suspended' && Number(target?.is_admin) === 1) {
@@ -405,19 +482,41 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     oneOf(roundId, ['initial', 'pending']);
     if (proposalIds !== undefined) validateProposalIds(proposalIds);
     const result = await client.execute({
-      sql: `SELECT p.* FROM proposals p WHERE p.round_id = ? AND ${eligibleProposalSql()}
+      sql: `SELECT p.*, ${SAFETY_COLUMNS} FROM proposals p ${SAFETY_JOINS} WHERE p.round_id = ? AND ${eligibleProposalSql()}
         ${proposalIds !== undefined ? 'AND p.id IN (SELECT value FROM json_each(?))' : ''}
         ORDER BY p.created_at ASC, p.id ASC`,
       args: [roundId, ...(proposalIds !== undefined ? [JSON.stringify(proposalIds)] : [])],
     });
-    return result.rows.map(row => ({ id: row.id, userId: row.user_id, body: row.body, roundId: row.round_id,
-      createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), revision: Number(row.revision) }));
+    return result.rows.map(row => ({ id: row.id, userId: row.user_id, roundId: row.round_id,
+      createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), revision: Number(row.revision),
+      bodyHash: row.safe_body_hash, policyVersion: row.safe_policy_version, safetyReviewId: row.safe_id,
+      safetyRevision: Number(row.safe_revision), developmentBrief: row.safe_development_brief,
+      developmentBriefHash: row.safe_development_brief_hash }));
   }
 
-  async function readWorkerState({ runId, proposalIds, roundId } = {}) {
+  async function getProposalSafetyCounts({ roundId } = {}) {
+    oneOf(roundId, ['initial', 'pending']);
+    const result = await client.execute({
+      sql: `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN ${eligibleProposalSql()} THEN 1 ELSE 0 END), 0) AS eligible,
+        COALESCE(SUM(CASE WHEN COALESCE(sr.status, 'pending') = 'pending' THEN 1 ELSE 0 END), 0) AS pending_safety,
+        COALESCE(SUM(CASE WHEN sr.status = 'held' THEN 1 ELSE 0 END), 0) AS held_safety,
+        COALESCE(SUM(CASE WHEN sr.status = 'blocked' THEN 1 ELSE 0 END), 0) AS blocked_safety,
+        COALESCE(SUM(CASE WHEN sr.status = 'approved' THEN 1 ELSE 0 END), 0) AS approved_safety
+        FROM proposals p ${SAFETY_JOINS} WHERE p.round_id = ?`, args: [roundId],
+    });
+    const row = result.rows[0];
+    return { total: Number(row.total), eligible: Number(row.eligible), pendingSafety: Number(row.pending_safety),
+      heldSafety: Number(row.held_safety), blockedSafety: Number(row.blocked_safety), approvedSafety: Number(row.approved_safety) };
+  }
+
+  async function readWorkerState({ runId, proposalIds, roundId, bindings } = {}) {
     if (runId !== undefined) identifier(runId);
     if (roundId !== undefined) oneOf(roundId, ['initial', 'pending']);
     if (proposalIds !== undefined) validateProposalIds(proposalIds);
+    if (bindings !== undefined) {
+      validateBindings(bindings, proposalIds);
+      proposalIds = bindings.map(binding => binding.id);
+    }
     const statements = [
       'SELECT * FROM service_control WHERE id = 1',
       { sql: 'SELECT * FROM development_runs WHERE id = ?', args: [runId || ''] },
@@ -427,14 +526,22 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
         AND ${eligibleProposalSql()} ${roundId === undefined ? '' : 'AND p.round_id = ?'}`,
       args: [JSON.stringify(proposalIds), ...(roundId === undefined ? [] : [roundId])],
     });
+    if (bindings !== undefined) statements.push({
+      sql: `SELECT COUNT(*) AS matching FROM proposals p JOIN json_each(?) binding ON p.id = json_extract(binding.value, '$.id')
+        WHERE ${eligibleProposalSql()} AND ${safetyBindingsSql()} ${roundId === undefined ? '' : 'AND p.round_id = ?'}`,
+      args: [JSON.stringify(bindings), ...(roundId === undefined ? [] : [roundId])],
+    });
     const results = await client.batch(statements, 'read');
     const service = serviceView(results[0].rows[0]);
     const run = versionView(results[1].rows[0]);
     const requestedCount = proposalIds?.length || 0;
     const eligibleCount = proposalIds === undefined ? 0 : Number(results[2].rows[0].eligible);
-    const snapshot = { checked: proposalIds !== undefined, allEligible: requestedCount === eligibleCount, requestedCount, eligibleCount };
-    const blockedReason = workerBlock(service, run, runId !== undefined, snapshot);
-    return { service, run, allowed: blockedReason === null, blockedReason, snapshot };
+    const snapshot = { checked: proposalIds !== undefined, allEligible: requestedCount === eligibleCount, requestedCount, eligibleCount,
+      bindingsChecked: bindings !== undefined, allBindingsMatch: bindings !== undefined && Number(results[3].rows[0].matching) === bindings.length };
+    let blockedReason = workerBlock(service, run, runId !== undefined, snapshot);
+    if (!blockedReason && bindings !== undefined && !snapshot.allBindingsMatch) blockedReason = 'safety_binding_changed';
+    const intake = roundId === undefined ? undefined : await getProposalSafetyCounts({ roundId });
+    return { service, run, allowed: blockedReason === null, blockedReason, snapshot, ...(intake ? { intake } : {}) };
   }
 
   async function claimRun({ id, revision: expectedRevision, workerId }) {
@@ -464,19 +571,33 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
   }
 
   async function updateRun({ id, revision: expectedRevision, workerId, status, summary, commitSha,
-    proposalIds, roundId, serviceRevision }) {
+    proposalIds, roundId, serviceRevision, bindings }) {
     identifier(id); revision(expectedRevision); identifier(workerId);
     oneOf(status, ['running', 'failed', 'completed', 'cancelled']);
+    // This service has no trusted artifact-review issuer or isolated runner yet.
+    // Approved proposal bindings are necessary inputs, not a game safety review.
+    // Keep the service boundary closed too; CLI-only checks are insufficient.
+    if (status === 'completed') {
+      throw new ApiError(409, 'RELEASE_REVIEW_UNAVAILABLE', '게임 산출물의 안전 검증 경로가 준비되지 않아 완료를 기록할 수 없습니다.');
+    }
     if (summary !== undefined) summary = textValue(summary, 2000);
     if (commitSha !== undefined && commitSha !== null && (typeof commitSha !== 'string' || !/^[a-f0-9]{7,64}$/i.test(commitSha))) throw invalid('커밋 식별자를 확인해 주세요.');
     const terminalStop = ['failed', 'cancelled'].includes(status);
     if (proposalIds !== undefined) validateProposalIds(proposalIds);
+    if (bindings !== undefined) {
+      validateBindings(bindings, proposalIds);
+      proposalIds = bindings.map(binding => binding.id);
+    }
     if (roundId !== undefined) oneOf(roundId, ['initial', 'pending']);
     if (serviceRevision !== undefined) revision(serviceRevision);
     const snapshotCheck = proposalIds === undefined ? '' : `AND (SELECT COUNT(*) FROM proposals p
       WHERE p.id IN (SELECT value FROM json_each(?)) AND ${eligibleProposalSql()}
       ${roundId === undefined ? '' : 'AND p.round_id = ?'}) = ?`;
     const snapshotArgs = proposalIds === undefined ? [] : [JSON.stringify(proposalIds), ...(roundId === undefined ? [] : [roundId]), proposalIds.length];
+    const bindingsCheck = bindings === undefined ? '' : `AND (SELECT COUNT(*) FROM proposals p
+      JOIN json_each(?) binding ON p.id = json_extract(binding.value, '$.id')
+      WHERE ${eligibleProposalSql()} AND ${safetyBindingsSql()} ${roundId === undefined ? '' : 'AND p.round_id = ?'}) = ?`;
+    const bindingsArgs = bindings === undefined ? [] : [JSON.stringify(bindings), ...(roundId === undefined ? [] : [roundId]), bindings.length];
     const auditId = randomUUID();
     const results = await writeBatch(client, [
       'SELECT * FROM service_control WHERE id = 1',
@@ -487,9 +608,9 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
           WHERE id = ? AND revision = ? AND worker_id = ? AND status = 'running'
             ${terminalStop ? '' : `AND cancel_requested = 0 AND EXISTS
               (SELECT 1 FROM service_control WHERE id = 1 AND mode = 'active' AND development_enabled = 1
-                ${serviceRevision === undefined ? '' : 'AND revision = ?'}) ${snapshotCheck}`}`,
+                ${serviceRevision === undefined ? '' : 'AND revision = ?'}) ${snapshotCheck} ${bindingsCheck}`}`,
         args: [status, summary ?? null, commitSha ?? null, id, expectedRevision, workerId,
-          ...(!terminalStop && serviceRevision !== undefined ? [serviceRevision] : []), ...(!terminalStop ? snapshotArgs : [])],
+          ...(!terminalStop && serviceRevision !== undefined ? [serviceRevision] : []), ...(!terminalStop ? [...snapshotArgs, ...bindingsArgs] : [])],
       },
       {
         sql: `INSERT INTO admin_audit(id, created_at, action, target_id, reason, actor_name)
@@ -576,5 +697,5 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
   }
 
   return { getService, requireAdmin, query, mutate, readWorkerState, claimRun, updateRun, listEligibleProposals,
-    ensureInitialRun, listWorkerRuns, retryFailedRun };
+    ensureInitialRun, listWorkerRuns, retryFailedRun, getProposalSafetyCounts };
 }

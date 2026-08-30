@@ -15,17 +15,20 @@
   const MODE_LABELS = { active: '활성', maintenance: '점검', ended: '종료' };
   const USER_LABELS = { active: '활성', suspended: '이용 정지' };
   const MODERATION_LABELS = { pending: '검토 대기', reviewed: '검토 완료', excluded: '개발 대상 제외' };
+  const SAFETY_LABELS = { pending: '안전 대기', approved: '안전 승인', held: '안전 보류', blocked: '안전 차단' };
+  const SAFETY_CHECK_IDS = ['safety-check-content', 'safety-check-instructions', 'safety-check-brief'];
+  const encoder = new TextEncoder();
   const VERSION_LABELS = { queued: '대기', running: '실행 중', failed: '실패', completed: '작업 완료', cancelled: '취소' };
   const ACTION_LABELS = {
     set_user_status: '회원 상태 변경', moderate_proposal: '프롬프트 검토 변경',
     create_version: '개발 요청 등록', retry_version: '개발 재시도 요청',
-    cancel_version: '개발 취소·중단 요청', set_service: '서비스 설정 변경',
+    cancel_version: '개발 취소·중단 요청', set_service: '서비스 설정 변경', review_proposal_safety: '제안 안전 심사',
   };
   const state = {
     authorized: false, sessionReady: false, epoch: 0, sessionSequence: 0, csrfToken: null, user: null, admin: null,
     section: 'overview', overview: null, service: null, serviceReady: false, serviceDirty: false,
     busy: false, attempt: null, dialogAction: null, dialogConflict: false, returnFocus: null,
-    reasons: new Map(), heartbeat: null, overviewSequence: 0,
+    reasons: new Map(), safetyDrafts: new Map(), heartbeat: null, overviewSequence: 0,
     lists: Object.fromEntries(LIST_SECTIONS.map((name) => [name, {
       items: [], filters: {}, cursor: null, previous: [], nextCursor: null, page: 1, ready: false, loading: false, sequence: 0,
     }])),
@@ -43,6 +46,8 @@
     'action-dialog', 'action-title', 'action-description', 'action-target', 'action-form', 'action-reason',
     'confirmation-field', 'confirmation-phrase', 'action-confirmation', 'action-feedback', 'action-submit',
     'action-close', 'action-cancel', 'action-retry', 'action-reauth-link',
+    'safety-review-fields', 'safety-review-body', 'safety-review-binding', 'safety-hard-block',
+    'safety-decision', 'safety-approval-fields', 'safety-development-brief', 'safety-brief-bytes', ...SAFETY_CHECK_IDS,
   ].map((id) => [id, $(id)]));
 
   class ApiError extends Error {
@@ -91,6 +96,9 @@
     state.dialogAction = null;
     state.attempt = null;
     state.reasons.clear();
+    state.safetyDrafts.clear();
+    ui['safety-review-body'].textContent = '';
+    ui['safety-review-binding'].textContent = '';
     for (const list of Object.values(state.lists)) { list.items = []; list.ready = false; list.sequence += 1; }
     clearInterval(state.heartbeat);
     clearReauthDraft();
@@ -334,6 +342,25 @@
     $('users-rows').replaceChildren(fragment);
   }
 
+  function safetyBindingValid(proposal) {
+    const safety = proposal?.safety;
+    return Boolean(safety && Object.hasOwn(SAFETY_LABELS, safety.status) && revisionValid(safety.revision)
+      && revisionValid(proposal.revision) && safety.proposalRevision === proposal.revision
+      && typeof safety.bodyHash === 'string' && /^[a-f0-9]{64}$/.test(safety.bodyHash)
+      && typeof safety.policyVersion === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(safety.policyVersion)
+      && typeof safety.hardBlocked === 'boolean');
+  }
+
+  function safetySourceKey(value) { return `${value.proposalRevision}:${value.bodyHash}:${value.policyVersion}`; }
+
+  function saveSafetyDraft() {
+    const config = state.dialogAction;
+    if (config?.action !== 'review_proposal_safety') return;
+    state.safetyDrafts.set(config.proposalId, { brief: ui['safety-development-brief'].value, source: safetySourceKey(config) });
+  }
+
+  function resetSafetyChecks() { for (const id of SAFETY_CHECK_IDS) ui[id].checked = false; }
+
   function renderProposals(items) {
     if (!items.length) { emptyRows('proposals-rows', '조회된 프롬프트가 없습니다.', '회원·회차·검토 상태 필터를 확인해 주세요.'); return; }
     const fragment = document.createDocumentFragment();
@@ -352,9 +379,22 @@
       const moderation = element('td');
       moderation.append(badge(proposal.moderation, MODERATION_LABELS, proposal.moderation === 'excluded' ? 'warning' : ''));
       if (proposal.moderationReason) moderation.append(element('p', 'proposal-reason', proposal.moderationReason));
+      const safetyCell = element('div', 'safety-cell');
+      safetyCell.append(element('span', 'field-caption', '독립 안전 심사'));
+      const safety = proposal.safety;
+      if (safety && Object.hasOwn(SAFETY_LABELS, safety.status)) {
+        safetyCell.append(badge(safety.status, SAFETY_LABELS, safety.status === 'approved' ? 'positive' : ['held', 'blocked'].includes(safety.status) ? 'warning' : ''),
+          element('small', '', `본문 r${text(safety.proposalRevision)} · 심사 r${text(safety.revision)} · ${text(safety.policyVersion)}`));
+        if (safety.reason) safetyCell.append(element('p', 'proposal-reason', safety.reason));
+        if (safety.reviewedAt) safetyCell.append(element('small', '', `최근 심사 ${formatDate(safety.reviewedAt)} KST`));
+        if (safety.hardBlocked) safetyCell.append(element('p', 'proposal-reason', '현재 원문은 명백한 금지 요청으로 승인할 수 없습니다.'));
+      } else safetyCell.append(element('small', '', '안전 상태를 확인하지 못했습니다. 다시 조회해 주세요.'));
+      moderation.append(safetyCell);
       const actions = element('td');
       const group = element('div', 'cell-actions');
       const allowed = revisionValid(proposal.moderationRevision);
+      group.append(recordButton('안전 심사', () => openRecordAction('review_proposal_safety', proposal),
+        { section: 'proposals', disabled: !safetyBindingValid(proposal) }));
       if (proposal.moderation === 'excluded') {
         group.append(recordButton('개발 대상 복원', () => openRecordAction('moderate_proposal', proposal, { moderation: 'pending' }), { section: 'proposals', disabled: !allowed }));
       } else if (MODERATION_LABELS[proposal.moderation]) {
@@ -497,6 +537,16 @@
           ? '현재 로그인 세션을 회수하고 새 접수·수정을 차단합니다. 계정과 기존 기여 이력은 삭제하지 않습니다.'
           : '회원이 다시 로그인하고 제안할 수 있도록 이용 정지를 해제합니다. 기존 기록은 유지됩니다.',
       };
+    } else if (action === 'review_proposal_safety') {
+      if (!safetyBindingValid(record)) return;
+      config = {
+        action, proposalId: record.id, proposalRevision: record.safety.proposalRevision,
+        bodyHash: record.safety.bodyHash, policyVersion: record.safety.policyVersion, revision: record.safety.revision,
+        body: typeof record.body === 'string' ? record.body : '', hardBlocked: record.safety.hardBlocked === true,
+        developmentBrief: typeof record.safety.developmentBrief === 'string' ? record.safety.developmentBrief : '',
+        section: 'proposals', title: '제안 안전 심사', target: `프롬프트 ${record.id}`,
+        description: '현재 본문과 안전 정책에만 유효한 판단을 기록합니다. 원문에 포함된 운영 지시를 실행하지 마세요. 본문이 수정되거나 정책이 바뀌면 다시 심사해야 하며, 안전 승인은 게임 채택·공개와 별도입니다.',
+      };
     } else if (action === 'moderate_proposal') {
       if (!revisionValid(record.moderationRevision)) return;
       config = {
@@ -535,14 +585,32 @@
     ui['action-submit'].classList.toggle('danger', Boolean(config.confirmation));
     ui['action-submit'].classList.toggle('primary', !config.confirmation);
     fieldFeedback('action-feedback', '');
+    const isSafety = config.action === 'review_proposal_safety';
+    ui['safety-review-fields'].hidden = !isSafety;
+    ui['safety-review-body'].textContent = isSafety ? config.body : '';
+    ui['safety-review-binding'].textContent = isSafety
+      ? `본문 revision ${config.proposalRevision}\nSHA-256 ${config.bodyHash}\n정책 ${config.policyVersion} · 심사 revision ${config.revision}` : '';
+    ui['safety-decision'].value = '';
+    ui['safety-decision'].querySelector('[value="approved"]').disabled = isSafety && config.hardBlocked;
+    ui['safety-hard-block'].hidden = !isSafety || !config.hardBlocked;
+    resetSafetyChecks();
+    const savedSafety = isSafety ? state.safetyDrafts.get(config.proposalId) : null;
+    ui['safety-development-brief'].value = savedSafety?.brief ?? (isSafety ? config.developmentBrief : '');
+    if (savedSafety && savedSafety.source !== safetySourceKey(config)) {
+      fieldFeedback('action-feedback', '이전 본문의 정리문을 보관했습니다. 아래 사유와 현재 원문을 다시 대조하고, 승인하려면 모든 항목을 새로 확인해 주세요.');
+    }
     if (!ui['action-dialog'].open) ui['action-dialog'].showModal();
     updateControls();
-    ui['action-reason'].focus();
+    if (isSafety) {
+      ui['safety-decision'].focus({ preventScroll: true });
+      ui['action-dialog'].scrollTop = 0;
+    } else ui['action-reason'].focus();
   }
 
   function closeDialog() {
     if (state.busy || !ui['action-dialog'].isConnected) return;
     if (state.dialogAction) state.reasons.set(dialogKey(state.dialogAction), ui['action-reason'].value);
+    saveSafetyDraft();
     ui['action-dialog'].close();
   }
 
@@ -587,8 +655,21 @@
     if (!config || state.dialogConflict) throw new Error('최신 상태를 다시 확인하고 작업을 열어 주세요.');
     const reason = validateText(ui['action-reason'].value, '변경 사유', 500);
     const payload = { action: config.action, reason };
-    for (const key of ['userId', 'status', 'proposalId', 'moderation', 'versionId', 'revision', 'mode', 'proposalsEnabled', 'developmentEnabled', 'message']) {
+    for (const key of ['userId', 'status', 'proposalId', 'moderation', 'versionId', 'revision', 'mode', 'proposalsEnabled', 'developmentEnabled', 'message', 'proposalRevision', 'bodyHash', 'policyVersion']) {
       if (Object.hasOwn(config, key)) payload[key] = config[key];
+    }
+    if (config.action === 'review_proposal_safety') {
+      const status = ui['safety-decision'].value;
+      if (!Object.hasOwn(SAFETY_LABELS, status)) throw new Error('안전 심사 결과를 선택해 주세요.');
+      const approved = status === 'approved';
+      if (approved && config.hardBlocked) throw new Error('현재 원문은 명백한 금지 요청으로 승인할 수 없습니다.');
+      const brief = approved ? ui['safety-development-brief'].value.trim() : '';
+      const confirmed = approved && SAFETY_CHECK_IDS.every((id) => ui[id].checked);
+      if (approved && (!brief || encoder.encode(brief).length > 2000 || !confirmed)) {
+        throw new Error('승인하려면 2,000바이트 이내의 안전한 게임 요구 정리문과 세 가지 확인 항목이 모두 필요합니다.');
+      }
+      Object.assign(payload, { status, checklistConfirmed: confirmed, developmentBrief: brief });
+      saveSafetyDraft();
     }
     if (config.confirmation) {
       if (ui['action-confirmation'].value !== config.confirmation) throw new Error(`확인 문구 '${config.confirmation}'를 정확히 입력해 주세요.`);
@@ -616,12 +697,21 @@
     const config = state.dialogAction;
     const validReason = ui['action-reason'].value.trim().length > 0 && codePoints(ui['action-reason'].value.trim()) <= 500;
     const validConfirmation = !config?.confirmation || ui['action-confirmation'].value === config.confirmation;
+    const isSafety = config?.action === 'review_proposal_safety';
+    const safetyDecision = ui['safety-decision'].value;
+    const approving = isSafety && safetyDecision === 'approved';
+    const briefBytes = encoder.encode(ui['safety-development-brief'].value.trim()).length;
+    ui['safety-approval-fields'].hidden = !approving;
+    ui['safety-brief-bytes'].textContent = `${briefBytes.toLocaleString('ko-KR')} / 2,000 bytes`;
+    ui['safety-brief-bytes'].dataset.invalid = String(briefBytes > 2000);
+    const validSafety = !isSafety || (Object.hasOwn(SAFETY_LABELS, safetyDecision)
+      && (!approving || (!config.hardBlocked && briefBytes > 0 && briefBytes <= 2000 && SAFETY_CHECK_IDS.every((id) => ui[id].checked))));
     const dialogRetry = state.attempt?.unknown === true && state.attempt.channel === 'dialog';
     ui['action-submit'].hidden = dialogRetry;
     ui['action-retry'].hidden = !dialogRetry;
     ui['action-retry'].disabled = state.busy || !state.sessionReady;
-    ui['action-submit'].disabled = state.busy || !state.sessionReady || state.dialogConflict || !config || !validReason || !validConfirmation || state.attempt?.unknown === true;
-    ui['action-submit'].textContent = state.busy && state.attempt?.channel === 'dialog' ? '처리 중…' : '확인하고 실행';
+    ui['action-submit'].disabled = state.busy || !state.sessionReady || state.dialogConflict || !config || !validReason || !validConfirmation || !validSafety || state.attempt?.unknown === true;
+    ui['action-submit'].textContent = state.busy && state.attempt?.channel === 'dialog' ? '처리 중…' : isSafety ? '안전 심사 저장' : '확인하고 실행';
     ui['action-close'].disabled = state.busy;
     ui['action-cancel'].disabled = state.busy;
     ui['admin-logout'].disabled = state.busy;
@@ -639,7 +729,7 @@
 
   function operationSection(action) {
     if (action === 'set_user_status') return 'users';
-    if (action === 'moderate_proposal') return 'proposals';
+    if (action === 'moderate_proposal' || action === 'review_proposal_safety') return 'proposals';
     if (action === 'set_service') return 'service';
     return 'versions';
   }
@@ -653,6 +743,14 @@
     const results = await Promise.allSettled(tasks);
     if (!state.authorized) return;
     if (conflict && state.dialogAction?.action === payload.action) {
+      if (payload.action === 'review_proposal_safety') {
+        saveSafetyDraft();
+        resetSafetyChecks();
+        state.dialogConflict = true;
+        fieldFeedback('action-feedback', '심사 대상 본문·정책 또는 이전 판단이 변경되었습니다. 정리문과 사유는 보관했습니다. 이 창을 닫고 목록에서 최신 원문을 다시 열어 직접 심사해 주세요.');
+        updateControls();
+        return results.every((result) => result.status === 'fulfilled');
+      }
       let nextRevision;
       if (payload.action === 'set_service') nextRevision = state.service?.revision;
       else {
@@ -693,6 +791,7 @@
       state.attempt = null;
       if (attempt.channel === 'dialog') {
         if (state.dialogAction) state.reasons.delete(dialogKey(state.dialogAction));
+        if (attempt.payload.action === 'review_proposal_safety') state.safetyDrafts.delete(attempt.payload.proposalId);
         ui['action-dialog'].close();
         state.dialogAction = null;
         ui['action-reason'].value = '';
@@ -707,7 +806,9 @@
         ui['service-reason'].value = '';
       }
       clearReauthDraft();
-      const successMessage = attempt.payload.action === 'create_version' || attempt.payload.action === 'retry_version'
+      const successMessage = attempt.payload.action === 'review_proposal_safety'
+        ? '안전 심사와 사유를 기록했습니다. 운영 허용과 게임 채택·검증·공개는 각각 별도입니다.'
+        : attempt.payload.action === 'create_version' || attempt.payload.action === 'retry_version'
         ? '개발 요청을 등록했습니다. 실행·검증·게임 공개는 별도 절차로 진행됩니다.'
         : attempt.payload.action === 'cancel_version' ? '취소·중단 요청을 기록했습니다. 실행 중인 작업은 다음 안전 확인 지점에서 확인합니다.'
           : '변경을 저장하고 감사 기록을 남겼습니다.';
@@ -719,6 +820,7 @@
       if (error.code === 'ADMIN_REAUTH_REQUIRED') {
         state.attempt = null;
         ui['action-confirmation'].value = '';
+        resetSafetyChecks();
         fieldFeedback(feedbackId, '민감 작업에는 최근 Google 로그인이 필요합니다. 사유와 설정은 보존되며, 다시 인증한 뒤 직접 작업을 확인해야 합니다.');
         notice('민감 작업 인증이 만료되었습니다. Google로 다시 인증해 주세요. 작성한 사유와 설정을 보관하며 자동 실행하지 않습니다.', 'error', { reauth: true });
         saveReauthDraft();
@@ -748,12 +850,14 @@
   function saveReauthDraft() {
     if (!state.authorized || !state.admin) return;
     if (state.dialogAction) state.reasons.set(dialogKey(state.dialogAction), ui['action-reason'].value);
+    saveSafetyDraft();
     try {
       sessionStorage.setItem(REAUTH_DRAFT_KEY, JSON.stringify({
         actorId: state.admin.id, createdAt: Date.now(), section: state.section,
         service: serviceDraft(), serviceDirty: state.serviceDirty,
         version: { label: ui['version-label'].value, summary: ui['version-summary'].value, reason: ui['version-reason'].value },
         reasons: [...state.reasons.entries()],
+        safetyDrafts: [...state.safetyDrafts.entries()],
       }));
     } catch {
       notice('이 브라우저에서 재인증 전 임시 저장을 사용할 수 없습니다. 사유와 설정을 복사한 뒤 다시 인증해 주세요.', 'error', { reauth: true });
@@ -775,6 +879,13 @@
     }
     if (Array.isArray(draft.reasons)) {
       for (const entry of draft.reasons.slice(0, 100)) if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string') state.reasons.set(entry[0], entry[1]);
+    }
+    if (Array.isArray(draft.safetyDrafts)) {
+      for (const entry of draft.safetyDrafts.slice(0, 100)) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1]?.brief === 'string' && typeof entry[1]?.source === 'string') {
+          state.safetyDrafts.set(entry[0], { brief: entry[1].brief, source: entry[1].source });
+        }
+      }
     }
     if (SECTIONS[draft.section]) state.section = draft.section;
     notice('재인증 전 작성한 내용을 복원했습니다. 같은 대상의 작업을 열면 사유를 다시 확인할 수 있습니다. 자동 실행하지 않으며 확인 문구는 새로 입력해야 합니다.');
@@ -876,11 +987,17 @@
     updateControls();
   });
   ui['action-confirmation'].addEventListener('input', updateControls);
+  ui['safety-decision'].addEventListener('change', () => { resetSafetyChecks(); updateControls(); });
+  ui['safety-development-brief'].addEventListener('input', () => { resetSafetyChecks(); saveSafetyDraft(); updateControls(); });
+  for (const id of SAFETY_CHECK_IDS) ui[id].addEventListener('change', updateControls);
   ui['action-close'].addEventListener('click', closeDialog);
   ui['action-cancel'].addEventListener('click', closeDialog);
   ui['action-dialog'].addEventListener('cancel', (event) => {
     if (state.busy) event.preventDefault();
-    else if (state.dialogAction) state.reasons.set(dialogKey(state.dialogAction), ui['action-reason'].value);
+    else if (state.dialogAction) {
+      state.reasons.set(dialogKey(state.dialogAction), ui['action-reason'].value);
+      saveSafetyDraft();
+    }
   });
   ui['action-dialog'].addEventListener('close', () => {
     if (state.returnFocus?.isConnected) state.returnFocus.focus();

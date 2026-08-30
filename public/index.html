@@ -68,8 +68,10 @@
             <div class="quota" id="quota-container"><span id="quota-status">로그인 후 제안할 수 있어요</span><small id="quota-note">최근 60분 동안 최대 3개</small></div>
           </div>
           <div id="edit-banner" class="edit-banner" hidden><span>내 제안 수정 중 <span class="muted">· 제출 횟수를 사용하지 않아요</span></span><button id="cancel-edit" class="text-button" type="button">수정 취소 <span aria-hidden="true">×</span></button></div>
-          <textarea id="prompt" name="prompt" rows="4" placeholder="예: 탐험할 때마다 지형이 달라지고, 주운 재료로 무기를 만들 수 있으면 좋겠어요." aria-describedby="prompt-hint byte-count" spellcheck="false" autocomplete="off"></textarea>
+          <textarea id="prompt" name="prompt" rows="4" placeholder="예: 탐험할 때마다 지형이 달라지고, 주운 재료로 무기를 만들 수 있으면 좋겠어요." aria-describedby="prompt-hint byte-count prompt-safety-note" spellcheck="false" autocomplete="off"></textarea>
           <div class="prompt-bottom-line"><p id="prompt-hint">작은 아이디어도 좋아요. 구체적일수록 도움이 됩니다.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
+          <p class="prompt-safety-note" id="prompt-safety-note">접수한 제안은 안전 검토 후 개발 후보가 됩니다. 신규 제안은 검토 대기 중에도 제출 횟수 1회를 사용하며, 수정본은 다시 검토합니다.</p>
+          <details class="safety-guidance" id="safety-guidance"><summary>제안 안전 기준 · Teen 수준 목표 <span aria-hidden="true">＋</span></summary><div><p>ESRB Teen 수준 이하를 개발 목표로 삼습니다. 공식 등급을 취득했다는 뜻은 아닙니다.</p><ul><li>일반적인 판타지 전투 요구는 제안할 수 있어요. 과도한 선정성, 성적 행위·대상화·착취, 고어·신체 훼손과 잔혹하거나 과도하게 사실적인 폭력 묘사는 받지 않습니다.</li><li>현실의 위험 행동을 조장하는 안내, 혐오·괴롭힘·협박과 개인정보 공개는 받지 않습니다.</li><li>안전 규칙 무력화, 시스템 권한 변경, 개인정보·비밀값을 요구하는 지시는 받지 않습니다.</li></ul><p>현재는 기초 검사와 운영자 검토를 사용합니다. 접수나 안전 승인은 게임 반영·공개를 뜻하지 않으며, 위험한 입력을 완벽하게 판별한다고 보장하지 않습니다.</p></div></details>
           <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden>최신 내용 불러오기</button><button id="copy-edit" type="button" class="text-button" hidden>새 제안으로 가져오기</button></div></div>
           <div class="prompt-actions"><p class="submission-rules">한 번에 2,000바이트까지<br><span>모집 마감 전 수정 가능 · 삭제 불가</span></p><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">제안 보내기</span><svg id="submit-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div>
         </form>
@@ -95,7 +97,7 @@
             <li class="process-step">
               <span class="flow-number" aria-hidden="true">02</span>
               <h3>요구 정리</h3>
-              <p>유사한 요구를 묶고<br>충돌·장르 범위를 검토해요.</p>
+              <p>안전 기준을 확인하고<br>유사 요구·충돌·장르를 검토해요.</p>
             </li>
             <li class="process-step">
               <span class="flow-number" aria-hidden="true">03</span>

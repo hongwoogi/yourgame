@@ -5,19 +5,29 @@ import { readConfig } from '../server/config.mjs';
 import { openDatabase } from '../server/database.mjs';
 import { createAdminStore } from '../server/admin-store.mjs';
 import { checkAdminSchema } from '../server/admin-schema.mjs';
-import { checkSnapshot, readSnapshot } from './export-initial-round.mjs';
+import { checkSnapshot, readSnapshot, safeIntakeCounts, snapshotBindings } from './export-initial-round.mjs';
+import { checkGameRelease } from './check-game-release.mjs';
 import { preparePrivateFile, resolvePrivateFile } from './private-records.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const ID = /^[A-Za-z0-9_-]{8,128}$/;
 const COMMANDS = {
-  status: ['run-id', 'snapshot'], queue: ['cursor', 'status'], details: ['run-id'],
+  status: ['run-id', 'snapshot', 'round'], queue: ['cursor', 'status'], details: ['run-id'],
   'ensure-initial': ['worker-id'], claim: ['run-id', 'revision', 'worker-id'],
   'retry-failed': ['run-id', 'revision', 'worker-id'],
   gate: ['run-id', 'snapshot', 'service-revision'],
-  update: ['run-id', 'revision', 'worker-id', 'status', 'summary-file', 'commit-sha', 'snapshot'],
+  'input-gate': ['run-id', 'snapshot', 'service-revision'],
+  'release-gate': ['run-id', 'snapshot', 'service-revision', 'candidate'],
+  update: ['run-id', 'revision', 'worker-id', 'status', 'summary-file', 'commit-sha', 'snapshot', 'candidate'],
 };
 const workerError = code => Object.assign(new Error(code), { workerCode: code });
+
+function checkRoundOption(options) {
+  // Aggregate intake has no run/snapshot binding. Keep the two query purposes
+  // separate so an explicit round cannot silently contradict frozen inputs.
+  if (options.round !== undefined && (options.command !== 'status' || !['initial', 'pending'].includes(options.round)
+    || options.snapshot !== undefined || options['run-id'] !== undefined)) throw workerError('INVALID_ARGUMENTS');
+}
 
 export function parseWorkerArguments(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
@@ -46,11 +56,13 @@ export function parseWorkerArguments(args) {
     && (!result['run-id'] || !result.revision || !result['worker-id'])) throw workerError('INVALID_ARGUMENTS');
   if (command === 'ensure-initial' && !result['worker-id']) throw workerError('INVALID_ARGUMENTS');
   if (command === 'details' && !result['run-id']) throw workerError('INVALID_ARGUMENTS');
-  if (command === 'gate' && (!result['run-id'] || !result.snapshot)) throw workerError('SNAPSHOT_REQUIRED');
+  if (['gate', 'input-gate', 'release-gate'].includes(command)
+    && (!result['run-id'] || !result.snapshot)) throw workerError('SNAPSHOT_REQUIRED');
   if (command === 'update' && !['running', 'failed', 'completed', 'cancelled'].includes(result.status)) throw workerError('INVALID_ARGUMENTS');
   if (command === 'queue' && result.status !== undefined && !['queued', 'running', 'failed', 'completed', 'cancelled', 'all'].includes(result.status)) throw workerError('INVALID_ARGUMENTS');
   if (result['commit-sha'] && !/^[a-f0-9]{7,64}$/i.test(result['commit-sha'])) throw workerError('INVALID_ARGUMENTS');
   if (command === 'update' && result.status === 'completed' && !result.snapshot) throw workerError('SNAPSHOT_REQUIRED');
+  checkRoundOption(result);
   return result;
 }
 
@@ -69,13 +81,25 @@ export function safeRun(run) {
 export function safeWorkerState(state) {
   if (!state || typeof state.allowed !== 'boolean' || !state.service
     || !['active', 'maintenance', 'ended'].includes(state.service.mode)
-    || typeof state.service.developmentEnabled !== 'boolean' || !Number.isSafeInteger(state.service.revision)) {
+    || typeof state.service.proposalsEnabled !== 'boolean' || typeof state.service.developmentEnabled !== 'boolean'
+    || !Number.isSafeInteger(state.service.revision)) {
     throw workerError('STATE_UNAVAILABLE');
   }
+  const snapshot = state.snapshot ? Object.fromEntries(['checked', 'allEligible', 'requestedCount', 'eligibleCount',
+    'bindingsChecked', 'allBindingsMatch'].filter(key => typeof state.snapshot[key] === 'boolean'
+      || Number.isSafeInteger(state.snapshot[key])).map(key => [key, state.snapshot[key]])) : undefined;
+  const intake = state.intake === undefined ? undefined : safeIntakeCounts(state.intake);
   return { allowed: state.allowed === true, blockedReason: state.blockedReason,
     service: { mode: state.service.mode, proposalsEnabled: state.service.proposalsEnabled,
       developmentEnabled: state.service.developmentEnabled, revision: state.service.revision },
-    run: safeRun(state.run), snapshot: state.snapshot };
+    run: safeRun(state.run), snapshot, ...(intake ? { intake } : {}) };
+}
+
+function legacyGateReport() {
+  return { ok: false, command: 'gate', allowed: false, releaseAllowed: false,
+    error: 'LEGACY_GATE_REQUIRES_EXPLICIT_STAGE', blockedReason: 'explicit_gate_stage_required',
+    migration: 'Use input-gate for approved input checks. Use release-gate for generated game publication checks. Input readiness never authorizes publication.',
+    gamePublishedByThisCommand: false };
 }
 
 export async function runWorkerCommand(options, { store, loadSnapshot = async name => readSnapshot(await privateFile(name, '.json')),
@@ -84,17 +108,33 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
     if ((await stat(file)).size > 8000) throw workerError('INVALID_PRIVATE_FILE');
     return readFile(file, 'utf8');
   } } = {}) {
-  const readState = async () => options.snapshot
-    ? checkSnapshot(store, await loadSnapshot(options.snapshot), { runId: options['run-id'] })
-    : store.readWorkerState({ runId: options['run-id'] });
-  if (options.command === 'gate' && (!options['run-id'] || !options.snapshot)) throw workerError('SNAPSHOT_REQUIRED');
+  checkRoundOption(options);
+  let checkedSnapshot;
+  const readState = async () => {
+    if (!options.snapshot) return store.readWorkerState({ runId: options['run-id'], roundId: options.round });
+    checkedSnapshot = await loadSnapshot(options.snapshot);
+    return checkSnapshot(store, checkedSnapshot, { runId: options['run-id'] });
+  };
+  if (['gate', 'input-gate', 'release-gate'].includes(options.command)
+    && (!options['run-id'] || !options.snapshot)) throw workerError('SNAPSHOT_REQUIRED');
   if (options.command === 'update' && options.status === 'completed' && !options.snapshot) throw workerError('SNAPSHOT_REQUIRED');
-  if (options.command === 'status' || options.command === 'gate') {
+  if (options.command === 'gate') return legacyGateReport();
+  if (['status', 'input-gate', 'release-gate'].includes(options.command)) {
     const state = safeWorkerState(await readState());
+    if (options.round && !state.intake) throw workerError('STATE_UNAVAILABLE');
     if (options['service-revision'] !== undefined && state.service.revision !== options['service-revision']) {
       state.allowed = false; state.blockedReason = 'service_changed';
     }
-    return { ok: true, command: options.command, ...state };
+    if (options.command === 'release-gate' && state.allowed) {
+      const release = await checkGameRelease({ snapshot: checkedSnapshot, runId: options['run-id'],
+        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined });
+      return { command: options.command, ...state, ...release, inputReady: true };
+    }
+    return { ok: true, command: options.command, ...state,
+      ...(options.round ? { roundId: options.round } : {}),
+      scope: options.command === 'release-gate' ? 'generated_game_release'
+        : options.snapshot ? 'approved_inputs_only' : 'operational_state_only',
+      inputReady: Boolean(options.snapshot) && state.allowed, releaseAllowed: false, gamePublishedByThisCommand: false };
   }
   if (options.command === 'queue') {
     const result = await store.listWorkerRuns({ status: options.status === 'all' ? '' : options.status || 'queued', limit: 50, cursor: options.cursor });
@@ -136,15 +176,23 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
     state = safeWorkerState(snapshot
       ? await checkSnapshot(store, snapshot, { runId: options['run-id'] })
       : await store.readWorkerState({ runId: options['run-id'] }));
-    if (!state.allowed) return { ok: true, command: options.command, ...state, updated: false };
+    if (!state.allowed) return { ok: true, command: options.command, ...state, updated: false,
+      inputReady: false, releaseAllowed: false, gamePublishedByThisCommand: false };
+    if (options.status === 'completed') {
+      const release = await checkGameRelease({ snapshot, runId: options['run-id'],
+        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined });
+      if (!release.allowed) return { command: options.command, ...state, ...release, inputReady: true, updated: false };
+    }
   }
   const summary = options['summary-file'] ? await loadSummary(options['summary-file']) : undefined;
   const run = await store.updateRun({
     id: options['run-id'], revision: options.revision, workerId: options['worker-id'], status: options.status,
     summary, commitSha: options['commit-sha'], serviceRevision: state?.service.revision,
     proposalIds: snapshot?.proposals.map(row => row.id), roundId: snapshot?.roundId,
+    bindings: snapshot ? snapshotBindings(snapshot) : undefined,
   });
-  return { ok: true, command: 'update', updated: true, run: safeRun(run), gamePublishedByThisCommand: false };
+  return { ok: true, command: 'update', scope: 'work_status_only', updated: true, run: safeRun(run),
+    inputReady: Boolean(snapshot), releaseAllowed: false, gamePublishedByThisCommand: false };
 }
 
 async function main() {
@@ -152,7 +200,12 @@ async function main() {
   try {
     const options = parseWorkerArguments(process.argv.slice(2));
     if (options.help) {
-      console.log('Usage: node --env-file=.env.production.local scripts/admin-worker.mjs <status|queue|details|ensure-initial|claim|retry-failed|gate|update> [options]\nRead docs/admin.md for required arguments. This tool never publishes code, changes service controls, or grants administrator access. Exit 0: read/write succeeded; 2: intentionally blocked; 1: unavailable/invalid.');
+      console.log('Usage: node --env-file=.env.production.local scripts/admin-worker.mjs <status|queue|details|ensure-initial|claim|retry-failed|input-gate|release-gate|update> [options]\nstatus --round initial|pending includes safe intake counts; do not combine --round with --run-id or --snapshot.\nThe old gate command is closed; choose an explicit stage. input-gate checks approved summaries only and never authorizes publication. release-gate and completed require independent artifact review/runner verification, which is not implemented yet. This tool never publishes code, changes service controls, or grants administrator access. Exit 0: read/write succeeded; 2: intentionally blocked; 1: unavailable/invalid.');
+      return;
+    }
+    if (options.command === 'gate') {
+      console.log(JSON.stringify(legacyGateReport()));
+      process.exitCode = 2;
       return;
     }
     client = await openDatabase(readConfig(), { initialize: false });
@@ -162,10 +215,12 @@ async function main() {
     process.exitCode = report.allowed === false ? 2 : 0;
   } catch (error) {
     const allowedCodes = ['INVALID_ARGUMENTS', 'SNAPSHOT_REQUIRED', 'INVALID_PRIVATE_FILE', 'INVALID_SNAPSHOT',
+      'UNREVIEWED_SNAPSHOT', 'SNAPSHOT_POLICY_CHANGED', 'INVALID_GAME_CANDIDATE', 'INVALID_CANDIDATE_PATH',
+      'UNDECLARED_CANDIDATE_FILE', 'CANDIDATE_BYTES_CHANGED', 'RELEASE_REVIEW_UNAVAILABLE',
       'STATE_UNAVAILABLE', 'ADMIN_SCHEMA_UNAVAILABLE', 'INVALID_ADMIN_INPUT', 'WORKER_BLOCKED',
       'RUN_NOT_FOUND', 'WORKER_NOT_OWNER', 'REVISION_CONFLICT', 'INITIAL_COLLECTION_OPEN', 'ROUND_NOT_CLOSED', 'PRIVATE_RECORD_CONFLICT'];
     const code = [error.workerCode, error.code].find(value => allowedCodes.includes(value)) || 'STATE_UNAVAILABLE';
-    console.error(JSON.stringify({ ok: false, allowed: false, error: code }));
+    console.error(JSON.stringify({ ok: false, allowed: false, releaseAllowed: false, error: code }));
     process.exitCode = ['WORKER_BLOCKED', 'INITIAL_COLLECTION_OPEN', 'ROUND_NOT_CLOSED'].includes(code) ? 2 : 1;
   } finally { client?.close(); }
 }

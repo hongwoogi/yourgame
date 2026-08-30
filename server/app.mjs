@@ -11,6 +11,7 @@ import { createGoogleVerifier, secureEqual } from './google.mjs';
 import { createStore, hashValue } from './store.mjs';
 import { withNetworkDeadline } from './network.mjs';
 import { publicService, proposalsAllowed } from './admin-policy.mjs';
+import { SAFETY_POLICY_VERSION } from './safety-policy.mjs';
 
 const BODY_LIMIT = 16 * 1024;
 const METHODS = {
@@ -170,6 +171,7 @@ export function createApiHandler({
             // Publication requires an actual verified game artifact. Time alone
             // never changes this value to true.
             game: { published: false },
+            rating: { target: 'Teen', official: false, policyVersion: SAFETY_POLICY_VERSION },
           });
         }
 
@@ -258,6 +260,7 @@ export function createApiHandler({
           const result = await db.listProposals(session.user.id);
           return respond(res, 200, { ...result, ownerId: session.user.id });
         }
+        await db.recordProposalAttempt(session.user.id, session.tokenHash);
         const body = await readJson(req);
         if (method === 'POST') {
           const result = await db.createProposal(session.user.id, body);
@@ -270,10 +273,10 @@ export function createApiHandler({
           safeLog(log, 'api_error', route, requestId, error);
           res.setHeader('Retry-After', '3');
         }
-        if (failure.status === 429 && failure.details.quota?.nextAvailableAt) {
-          res.setHeader('Retry-After', String(Math.max(1, Math.ceil((Date.parse(failure.details.quota.nextAvailableAt) - now()) / 1000))));
-        } else if (failure.status === 429 && failure.details.retryAfterSeconds) {
+        if (failure.status === 429 && failure.details.retryAfterSeconds) {
           res.setHeader('Retry-After', String(failure.details.retryAfterSeconds));
+        } else if (failure.status === 429 && failure.details.quota?.nextAvailableAt) {
+          res.setHeader('Retry-After', String(Math.max(1, Math.ceil((Date.parse(failure.details.quota.nextAvailableAt) - now()) / 1000))));
         }
         return respond(res, failure.status, {
           error: { code: failure.code, message: failure.message }, ...failure.details, requestId,

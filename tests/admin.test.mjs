@@ -35,6 +35,18 @@ async function changeService(f, changes = {}) {
   }));
 }
 
+async function approveProposal(f, proposalId) {
+  const row = (await f.management.query(f.admin.session, { section: 'proposals' })).items.find(item => item.id === proposalId);
+  await f.management.mutate(f.admin.session, operation('review_proposal_safety', {
+    proposalId, proposalRevision: row.revision, bodyHash: row.safety.bodyHash,
+    policyVersion: row.safety.policyVersion, revision: row.safety.revision, status: 'approved',
+    checklistConfirmed: true, developmentBrief: '검토한 게임 요구사항을 입력으로 사용합니다.',
+  }));
+  const input = (await f.management.listEligibleProposals({ roundId: row.roundId, proposalIds: [proposalId] }))[0];
+  return { id: input.id, revision: input.revision, bodyHash: input.bodyHash, policyVersion: input.policyVersion,
+    safetyReviewId: input.safetyReviewId, safetyRevision: input.safetyRevision, developmentBriefHash: input.developmentBriefHash };
+}
+
 async function pageRequest(handler, login) {
   const req = Readable.from([]);
   req.method = 'GET'; req.url = '/api/admin-page';
@@ -124,7 +136,7 @@ test('every administrator read/write action rejects guests and ordinary users an
     assert.equal((await request(f.handler, `/api/admin?section=${section}`)).status, 401);
     assert.equal((await request(f.handler, `/api/admin?section=${section}`, memberAuth)).status, 403);
   }
-  for (const action of ['set_user_status', 'moderate_proposal', 'create_version', 'retry_version', 'cancel_version', 'set_service']) {
+  for (const action of ['set_user_status', 'moderate_proposal', 'create_version', 'retry_version', 'cancel_version', 'set_service', 'review_proposal_safety']) {
     const body = operation(action);
     assert.equal((await request(f.handler, '/api/admin', { method: 'POST', body })).status, 401);
     assert.equal((await request(f.handler, '/api/admin', { method: 'POST', body, ...memberAuth })).status, 403);
@@ -211,6 +223,8 @@ test('moderation changes a separate revision and cannot edit/delete the original
   await assert.rejects(f.management.mutate(f.admin.session, operation('moderate_proposal', { proposalId, moderation: 'reviewed', revision: 1 })), errorCode('REVISION_CONFLICT'));
   await assert.rejects(f.management.mutate(f.admin.session, operation('moderate_proposal', { proposalId, moderation: 'pending', revision: 2, body: '덮어쓰기' })), errorCode('INVALID_ADMIN_INPUT'));
   await f.management.mutate(f.admin.session, operation('moderate_proposal', { proposalId, moderation: 'pending', revision: 2 }));
+  assert.equal((await f.management.readWorkerState({ proposalIds: [proposalId], roundId: 'initial' })).snapshot.allEligible, false);
+  await approveProposal(f, proposalId);
   assert.equal((await f.management.readWorkerState({ proposalIds: [proposalId], roundId: 'initial' })).snapshot.allEligible, true);
 });
 
@@ -360,12 +374,12 @@ test('development requests are records only; cancel/retry preserve history and w
   const winningIndex = claims.findIndex(result => result.status === 'fulfilled');
   const workerId = ['worker-alpha', 'worker-bravo'][winningIndex];
   assert.equal((await f.management.query(f.admin.session, { section: 'versions' })).items[0].status, 'running');
-  await assert.rejects(f.management.updateRun({ id, revision: 2, workerId: 'worker-intruder', status: 'completed' }), errorCode('WORKER_NOT_OWNER'));
+  await assert.rejects(f.management.updateRun({ id, revision: 2, workerId: 'worker-intruder', status: 'running' }), errorCode('WORKER_NOT_OWNER'));
   await f.management.mutate(f.admin.session, operation('cancel_version', { versionId: id, revision: 2 }));
   const stopped = await f.management.readWorkerState({ runId: id });
   assert.equal(stopped.blockedReason, 'cancel_requested');
   assert.equal(stopped.run.status, 'running');
-  await assert.rejects(f.management.updateRun({ id, revision: 3, workerId, status: 'completed' }), errorCode('WORKER_BLOCKED'));
+  await assert.rejects(f.management.updateRun({ id, revision: 3, workerId, status: 'running' }), errorCode('WORKER_BLOCKED'));
   await f.management.updateRun({ id, revision: 3, workerId, status: 'cancelled' });
   const retry = await f.management.mutate(f.admin.session, operation('retry_version', { versionId: id, revision: 4 }));
   assert.notEqual(retry.targetId, id);
@@ -387,7 +401,7 @@ test('workers can record failure or cancellation after service stop but cannot c
   const state = await f.management.readWorkerState({ runId: created.targetId });
   assert.equal(state.allowed, false);
   assert.equal(state.run.cancelRequested, true);
-  await assert.rejects(f.management.updateRun({ id: created.targetId, revision: state.run.revision, workerId: 'worker-stopping', status: 'completed' }), errorCode('WORKER_BLOCKED'));
+  await assert.rejects(f.management.updateRun({ id: created.targetId, revision: state.run.revision, workerId: 'worker-stopping', status: 'running' }), errorCode('WORKER_BLOCKED'));
   const failed = await f.management.updateRun({ id: created.targetId, revision: state.run.revision, workerId: 'worker-stopping', status: 'failed' });
   assert.equal(failed.status, 'failed');
   const retry = await f.management.mutate(f.admin.session, operation('retry_version', { versionId: failed.id, revision: failed.revision }));
@@ -408,18 +422,19 @@ test('approved initial job is enqueued once only after cutoff, without creating 
   assert.equal((await f.store.admin.claimRun({ id: INITIAL_RUN_ID, revision: 1, workerId: 'worker-initial' })).status, 'running');
 });
 
-test('a completed worker record checks service revision and snapshot eligibility atomically and never publishes a game', async t => {
+test('worker progress checks service revision and snapshot eligibility atomically and never publishes a game', async t => {
   const f = await adminFixture(t, { time: INITIAL_CUTOFF - 1000 });
   const user = await f.login();
   const proposal = await f.store.createProposal(user.session.user.id, { body: '개발 입력', requestId: 'worker-source' });
+  const binding = await approveProposal(f, proposal.proposal.id);
   await f.setTime(INITIAL_CUTOFF);
   const job = await f.management.ensureInitialRun({ workerId: 'worker-snapshot' });
   const run = await f.management.claimRun({ id: job.id, revision: job.revision, workerId: 'worker-snapshot' });
-  const before = await f.management.readWorkerState({ runId: run.id, proposalIds: [proposal.proposal.id], roundId: 'initial' });
+  const before = await f.management.readWorkerState({ runId: run.id, proposalIds: [proposal.proposal.id], bindings: [binding], roundId: 'initial' });
   assert.equal(before.allowed, true);
   await changeService(f, { message: '동시 운영 변경' });
-  await assert.rejects(f.management.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'completed',
-    proposalIds: [proposal.proposal.id], roundId: 'initial', serviceRevision: before.service.revision }), errorCode('REVISION_CONFLICT'));
+  await assert.rejects(f.management.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'running',
+    proposalIds: [proposal.proposal.id], bindings: [binding], roundId: 'initial', serviceRevision: before.service.revision }), errorCode('REVISION_CONFLICT'));
   const service = await f.management.getService();
   let release;
   let entered;
@@ -427,17 +442,17 @@ test('a completed worker record checks service revision and snapshot eligibility
   const reached = new Promise(resolve => { entered = resolve; });
   const delayed = createAdminStore({ async batch(statements, mode) { entered(); await gate; return f.client.batch(statements, mode); } },
     { now: f.now, databaseClockSql: TEST_CLOCK_SQL });
-  const completion = assert.rejects(delayed.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'completed',
-    proposalIds: [proposal.proposal.id], roundId: 'initial', serviceRevision: service.revision }), errorCode('REVISION_CONFLICT'));
+  const progress = assert.rejects(delayed.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'running',
+    proposalIds: [proposal.proposal.id], bindings: [binding], roundId: 'initial', serviceRevision: service.revision }), errorCode('REVISION_CONFLICT'));
   await reached;
   await f.management.mutate(f.admin.session, operation('moderate_proposal', { proposalId: proposal.proposal.id, moderation: 'excluded', revision: 1 }));
   release();
-  await completion;
+  await progress;
   assert.equal((await f.management.readWorkerState({ runId: run.id })).run.status, 'running');
   await f.management.mutate(f.admin.session, operation('moderate_proposal', { proposalId: proposal.proposal.id, moderation: 'reviewed', revision: 2 }));
-  const completed = await f.management.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'completed',
-    proposalIds: [proposal.proposal.id], roundId: 'initial', serviceRevision: service.revision, commitSha: 'a'.repeat(40) });
-  assert.equal(completed.status, 'completed');
+  const updated = await f.management.updateRun({ id: run.id, revision: run.revision, workerId: 'worker-snapshot', status: 'running',
+    proposalIds: [proposal.proposal.id], bindings: [binding], roundId: 'initial', serviceRevision: service.revision, commitSha: 'a'.repeat(40) });
+  assert.equal(updated.status, 'running');
   assert.equal((await request(f.handler, '/api/status')).body.game.published, false);
 });
 
@@ -469,8 +484,11 @@ test('automatic failure retry preserves history, races to one child, and never r
   await assert.rejects(f.management.retryFailedRun({ id: failed.id, revision: parent.revision, workerId: 'worker-recovery' }), errorCode('WORKER_BLOCKED'));
 });
 
-test('automatic recovery follows failed leaves and cannot restart an ancestor after a successful child', async t => {
+test('automatic recovery follows failed leaves and cannot restart an ancestor after a terminal child', async t => {
   const f = await adminFixture(t, { time: INITIAL_CUTOFF });
+  const user = await f.login();
+  const proposal = await f.store.createProposal(user.session.user.id, { body: '후속 개발 입력', requestId: 'lineage-source' });
+  const binding = await approveProposal(f, proposal.proposal.id);
   const initial = await f.management.ensureInitialRun({ workerId: 'worker-lineage' });
   const firstRun = await f.management.claimRun({ id: initial.id, revision: initial.revision, workerId: 'worker-lineage' });
   const firstFailed = await f.management.updateRun({ id: firstRun.id, revision: firstRun.revision, workerId: 'worker-lineage', status: 'failed' });
@@ -481,8 +499,10 @@ test('automatic recovery follows failed leaves and cannot restart an ancestor af
   await assert.rejects(f.management.retryFailedRun({ id: firstCurrent.id, revision: firstCurrent.revision, workerId: 'worker-lineage' }), errorCode('REVISION_CONFLICT'));
   const third = await f.management.retryFailedRun({ id: secondFailed.id, revision: secondFailed.revision, workerId: 'worker-lineage' });
   const thirdRun = await f.management.claimRun({ id: third.id, revision: third.revision, workerId: 'worker-lineage' });
-  const completed = await f.management.updateRun({ id: thirdRun.id, revision: thirdRun.revision, workerId: 'worker-lineage', status: 'completed' });
-  assert.equal(completed.status, 'completed');
+  await assert.rejects(f.management.updateRun({ id: thirdRun.id, revision: thirdRun.revision, workerId: 'worker-lineage', status: 'completed',
+    bindings: [binding], roundId: 'pending', serviceRevision: (await f.management.getService()).revision }), errorCode('RELEASE_REVIEW_UNAVAILABLE'));
+  const cancelled = await f.management.updateRun({ id: thirdRun.id, revision: thirdRun.revision, workerId: 'worker-lineage', status: 'cancelled' });
+  assert.equal(cancelled.status, 'cancelled');
   const secondCurrent = (await f.management.readWorkerState({ runId: second.id })).run;
   await assert.rejects(f.management.retryFailedRun({ id: secondCurrent.id, revision: secondCurrent.revision, workerId: 'worker-lineage' }), errorCode('REVISION_CONFLICT'));
   assert.equal((await f.management.query(f.admin.session, { section: 'versions' })).items.length, 3);

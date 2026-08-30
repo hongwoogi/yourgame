@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 // These browser fixtures never call a real management API. Server authorization has separate tests.
 const html = readFileSync(new URL('../server/admin-page.html', import.meta.url), 'utf8');
@@ -12,6 +13,12 @@ const MEMBER = { id: 'member-fixture', name: '참여자 테스트', email: 'part
 const SELF = { ...ADMIN, status: 'active', proposalCount: 0, revision: 1, createdAt: NOW, updatedAt: NOW };
 const PROPOSAL = { id: 'proposal-fixture', user: MEMBER, body: '<img src=x onerror="window.__adminXss=true"> 원문\n줄바꿈을 보존합니다.',
   roundId: 'initial-fixture', createdAt: NOW, revision: 1, moderation: 'pending', moderationRevision: 1, moderationReason: '' };
+function safetyFor(proposal, overrides = {}) {
+  return { status: 'pending', revision: 1, proposalRevision: proposal.revision,
+    bodyHash: createHash('sha256').update(proposal.body).digest('hex'), policyVersion: 'teen-v1',
+    reason: '', developmentBrief: '', checklistConfirmed: false, reviewedAt: null, hardBlocked: false, ...overrides };
+}
+PROPOSAL.safety = safetyFor(PROPOSAL);
 
 async function fixture(page, options = {}) {
   const state = {
@@ -19,7 +26,7 @@ async function fixture(page, options = {}) {
     service: { mode: 'active', proposalsEnabled: true, developmentEnabled: true, message: '', revision: 1, updatedAt: NOW },
     users: [{ ...SELF }, { ...MEMBER }], proposals: [structuredClone(PROPOSAL)], versions: [], audit: [],
     reads: [], writes: [], receipts: new Map(), forbidden: false, recentAuthRequired: false,
-    conflictOnce: false, loseNextReceipt: false, readFailure: false, ...options,
+    conflictOnce: false, loseNextReceipt: false, readFailure: false, safetyConflictOnce: false, ...options,
   };
   const reply = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
   await page.route('http://localhost:3000/**', async (route) => {
@@ -51,6 +58,8 @@ async function fixture(page, options = {}) {
       if (q) items = items.filter((item) => JSON.stringify(item).toLowerCase().includes(q));
       const status = url.searchParams.get('status');
       if (status) items = items.filter((item) => (section === 'proposals' ? item.moderation : item.status) === status);
+      const safetyStatus = url.searchParams.get('safetyStatus');
+      if (safetyStatus) items = items.filter((item) => item.safety?.status === safetyStatus);
       const round = url.searchParams.get('round');
       if (round) items = items.filter((item) => item.roundId === round);
       const userId = url.searchParams.get('userId');
@@ -70,6 +79,14 @@ async function fixture(page, options = {}) {
       return reply(route, receipt.result);
     }
     if (state.recentAuthRequired && payload.action === 'set_service') return reply(route, { error: { code: 'ADMIN_REAUTH_REQUIRED', message: '최근 Google 로그인이 필요합니다.' } }, 403);
+    if (state.safetyConflictOnce && payload.action === 'review_proposal_safety') {
+      state.safetyConflictOnce = false;
+      const proposal = state.proposals.find((item) => item.id === payload.proposalId);
+      proposal.revision += 1;
+      proposal.body = '다른 창에서 바뀐 최신 제안 원문';
+      proposal.safety = safetyFor(proposal);
+      return reply(route, { error: { code: 'SAFETY_REVIEW_CONFLICT', message: '심사하던 제안 본문이 바뀌었습니다.' } }, 409);
+    }
     if (state.conflictOnce) {
       state.conflictOnce = false;
       if (payload.action === 'set_service') state.service.revision += 1;
@@ -94,6 +111,21 @@ async function fixture(page, options = {}) {
       const proposal = state.proposals.find((item) => item.id === payload.proposalId);
       expect(payload.revision).toBe(proposal.moderationRevision);
       Object.assign(proposal, { moderation: payload.moderation, moderationReason: payload.reason, moderationRevision: proposal.moderationRevision + 1 });
+      targetId = proposal.id;
+    } else if (payload.action === 'review_proposal_safety') {
+      const proposal = state.proposals.find((item) => item.id === payload.proposalId);
+      expect(payload.proposalRevision).toBe(proposal.revision);
+      expect(payload.bodyHash).toBe(proposal.safety.bodyHash);
+      expect(payload.policyVersion).toBe(proposal.safety.policyVersion);
+      expect(payload.revision).toBe(proposal.safety.revision);
+      if (payload.status === 'approved') {
+        expect(proposal.safety.hardBlocked).toBe(false);
+        expect(payload.checklistConfirmed).toBe(true);
+        expect(payload.developmentBrief.trim()).not.toBe('');
+        expect(Buffer.byteLength(payload.developmentBrief, 'utf8')).toBeLessThanOrEqual(2000);
+      }
+      Object.assign(proposal.safety, { status: payload.status, revision: proposal.safety.revision + 1,
+        reason: payload.reason, developmentBrief: payload.developmentBrief, checklistConfirmed: payload.checklistConfirmed, reviewedAt: NOW });
       targetId = proposal.id;
     } else if (payload.action === 'create_version') {
       targetId = `version-${state.versions.length + 1}`;
@@ -124,6 +156,16 @@ async function fixture(page, options = {}) {
 }
 
 async function section(page, name) { await page.locator(`.admin-nav [data-section="${name}"]`).click(); }
+
+async function openSafetyReview(page) {
+  await section(page, 'proposals');
+  await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).first().click();
+  await expect(page.locator('#safety-review-fields')).toBeVisible();
+}
+
+async function confirmSafetyChecks(page) {
+  for (const id of ['safety-check-content', 'safety-check-instructions', 'safety-check-brief']) await page.locator(`#${id}`).check();
+}
 
 test('admin client refuses ordinary accounts without fetching management data', async ({ page }) => {
   const state = await fixture(page, { session: { user: { ...MEMBER, isAdmin: false }, csrfToken: 'ordinary-fixture', googleNonce: 'ordinary-fixture' } });
@@ -177,6 +219,151 @@ test('raw proposals stay text and moderation preserves their content', async ({ 
   expect(state.proposals[0].revision).toBe(PROPOSAL.revision);
   expect(state.proposals[0].moderation).toBe('excluded');
   expect(state.writes[0]).not.toHaveProperty('body');
+});
+
+test('safety approval needs a byte-limited game brief and every fresh check, bound to the displayed body', async ({ page }, testInfo) => {
+  const state = await fixture(page);
+  const original = structuredClone(state.proposals[0]);
+  await openSafetyReview(page);
+  await expect(page.locator('#safety-review-body')).toHaveText(original.body);
+  await expect(page.locator('#safety-review-body img')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('admin-safety-review-desktop.png') });
+  await expect(page.locator('#safety-review-binding')).toContainText(original.safety.bodyHash);
+  await page.locator('#action-reason').fill('정상 게임 요구로 한정한 안전 검토');
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill('가'.repeat(667));
+  await confirmSafetyChecks(page);
+  await expect(page.locator('#safety-brief-bytes')).toHaveAttribute('data-invalid', 'true');
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#safety-development-brief').fill('판타지 전투의 회피 조작 안내를 쉽게 확인하도록 개선한다.');
+  await expect(page.locator('#safety-check-content')).not.toBeChecked();
+  await page.locator('#safety-check-content').check();
+  await page.locator('#safety-check-instructions').check();
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#safety-check-brief').check();
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  await expect(page.locator('#proposals-rows')).toContainText('안전 승인');
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0]).toMatchObject({ action: 'review_proposal_safety', proposalId: original.id,
+    proposalRevision: original.revision, bodyHash: original.safety.bodyHash, policyVersion: 'teen-v1',
+    revision: original.safety.revision, status: 'approved', checklistConfirmed: true });
+  expect(state.proposals[0].body).toBe(original.body);
+  expect(state.proposals[0].moderation).toBe('pending');
+  expect(state.proposals[0].safety.revision).toBe(2);
+  expect(await page.evaluate(() => window.__adminXss)).toBeUndefined();
+});
+
+test('hard-blocked content cannot be approved and a reasoned hold is independently filterable', async ({ page }) => {
+  const proposal = structuredClone(PROPOSAL);
+  proposal.safety.hardBlocked = true;
+  const state = await fixture(page, { proposals: [proposal] });
+  await openSafetyReview(page);
+  await expect(page.locator('#safety-hard-block')).toBeVisible();
+  await expect(page.locator('#safety-decision option[value="approved"]')).toHaveJSProperty('disabled', true);
+  await page.locator('#safety-decision').evaluate((select) => {
+    select.value = 'approved';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.locator('#safety-development-brief').fill('선택 항목을 조작해도 승인할 수 없는 테스트 정리문');
+  await page.locator('#action-reason').fill('차단된 본문은 승인할 수 없음');
+  await confirmSafetyChecks(page);
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#action-form').evaluate((form) => form.requestSubmit());
+  await expect(page.locator('#action-feedback')).toContainText('명백한 금지 요청으로 승인할 수 없습니다');
+  expect(state.writes).toHaveLength(0);
+  await page.locator('#action-reason').fill('');
+  await page.locator('#safety-decision').selectOption('held');
+  await expect(page.locator('#safety-approval-fields')).toBeHidden();
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#action-reason').fill('정상 문맥 확인이 필요하여 보류');
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  await expect(page.locator('#proposals-rows')).toContainText('안전 보류');
+  expect(state.writes[0]).toMatchObject({ status: 'held', checklistConfirmed: false, developmentBrief: '' });
+  expect(state.proposals[0].moderation).toBe('pending');
+  await page.locator('#proposals-filters [name="safetyStatus"]').selectOption('held');
+  await page.locator('#proposals-filters').getByRole('button', { name: '조회', exact: true }).click();
+  await expect(page.locator('#proposals-rows')).toContainText('안전 보류');
+  expect(state.reads.at(-1).safetyStatus).toBe('held');
+  await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).click();
+  await page.locator('#safety-decision').selectOption('blocked');
+  await page.locator('#action-reason').fill('검토 후 금지 내용 확인');
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.proposals[0].safety.status).toBe('blocked');
+  expect(state.audit.filter((entry) => entry.action === 'review_proposal_safety')).toHaveLength(2);
+});
+
+test('a changed safety-review target clears consent and preserves drafts until the new body is reopened', async ({ page }) => {
+  const state = await fixture(page, { safetyConflictOnce: true });
+  await openSafetyReview(page);
+  await page.locator('#safety-decision').selectOption('approved');
+  const brief = '검토 중인 게임 조작 개선 요구';
+  const reason = '본문 변경 후에도 확인할 심사 사유';
+  await page.locator('#safety-development-brief').fill(brief);
+  await page.locator('#action-reason').fill(reason);
+  await confirmSafetyChecks(page);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-feedback')).toContainText('최신 원문을 다시 열어');
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await expect(page.locator('#safety-check-content')).not.toBeChecked();
+  await expect(page.locator('#safety-development-brief')).toHaveValue(brief);
+  await expect(page.locator('#action-reason')).toHaveValue(reason);
+  expect(state.writes).toHaveLength(1);
+  await page.locator('#action-cancel').click();
+  await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).click();
+  await expect(page.locator('#safety-review-body')).toHaveText('다른 창에서 바뀐 최신 제안 원문');
+  await expect(page.locator('#safety-review-binding')).toContainText(state.proposals[0].safety.bodyHash);
+  await expect(page.locator('#action-reason')).toHaveValue(reason);
+  await page.locator('#safety-decision').selectOption('approved');
+  await expect(page.locator('#safety-development-brief')).toHaveValue(brief);
+  await expect(page.locator('#safety-check-content')).not.toBeChecked();
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#safety-development-brief').fill('새 원문의 게임 변경 요구를 다시 검토하고 정리했다.');
+  await confirmSafetyChecks(page);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes[1].proposalRevision).toBe(2);
+  expect(state.writes[1].bodyHash).not.toBe(state.writes[0].bodyHash);
+  expect(state.writes[1].requestId).not.toBe(state.writes[0].requestId);
+});
+
+test('an uncertain safety approval retries only its exact original bound decision', async ({ page }) => {
+  const state = await fixture(page, { loseNextReceipt: true });
+  await openSafetyReview(page);
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill('검증할 게임 조작 요구만 포함한 정리문');
+  await page.locator('#action-reason').fill('안전 검토 결과 기록');
+  await confirmSafetyChecks(page);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-retry')).toBeVisible();
+  await expect(page.locator('#safety-development-brief')).toBeDisabled();
+  await expect(page.locator('#safety-decision')).toBeDisabled();
+  expect(state.writes).toHaveLength(1);
+  await page.locator('#action-retry').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes).toHaveLength(2);
+  expect(state.writes[1]).toEqual(state.writes[0]);
+  expect(state.proposals[0].safety.revision).toBe(2);
+  expect(state.audit).toHaveLength(1);
+});
+
+test('admin API denial during safety review removes the original body and the private brief immediately', async ({ page }) => {
+  const state = await fixture(page);
+  await openSafetyReview(page);
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill('PRIVATE_REVIEW_DRAFT');
+  await page.locator('#action-reason').fill('검토 권한 확인 테스트');
+  await confirmSafetyChecks(page);
+  state.forbidden = true;
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#admin-gate')).toBeVisible();
+  await expect(page.locator('#admin-shell')).toBeEmpty();
+  await expect(page.locator('#safety-review-body')).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('PRIVATE_REVIEW_DRAFT');
+  expect(state.writes).toHaveLength(0);
 });
 
 test('empty development history does not invent a published game', async ({ page }) => {
@@ -406,5 +593,18 @@ test.describe('mobile touch', () => {
     const overflow = await page.locator('#panel-proposals .table-scroll').evaluate((node) => node.scrollWidth > node.clientWidth);
     expect(overflow).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).tap();
+    await expect(page.locator('#safety-review-body')).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('admin-safety-source-mobile.png') });
+    await page.locator('#safety-decision').selectOption('approved');
+    await page.locator('#safety-development-brief').fill('모바일에서 작성한 안전한 게임 요구 정리문');
+    await page.locator('#action-reason').fill('모바일 안전 심사 화면 확인');
+    await confirmSafetyChecks(page);
+    await expect(page.locator('#action-submit')).toBeEnabled();
+    await checkTouchTargets();
+    expect(await page.locator('#safety-development-brief').evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('admin-safety-review-mobile.png') });
+    await page.locator('#action-cancel').click();
   });
 });

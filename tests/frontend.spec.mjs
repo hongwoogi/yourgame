@@ -12,7 +12,8 @@ const activeService = { mode: 'active', proposalsEnabled: true, developmentEnabl
 
 function savedProposal(id = 'existing-proposal') {
   return { id, body: '원래 접수한 제안', createdAt: new Date(START).toISOString(),
-    updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true };
+    updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true,
+    safety: { status: 'pending', message: '안전 검토 대기' } };
 }
 
 async function fixture(page, options = {}) {
@@ -20,7 +21,7 @@ async function fixture(page, options = {}) {
     session: structuredClone(anonymous),
     quota: { remaining: 3, limit: 3, nextAvailableAt: null },
     proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0,
-    loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false,
+    loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false, safetyRejection: false,
     serverTime: START, ...options,
   };
   await page.clock.install({ time: new Date(START) });
@@ -46,7 +47,7 @@ async function fixture(page, options = {}) {
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
-    const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    const reply = (body, status = 200, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) });
     const operationCode = () => state.serviceRejection?.code || (state.service?.mode === 'ended' ? 'SERVICE_ENDED'
       : state.service?.mode === 'maintenance' ? 'SERVICE_MAINTENANCE'
         : state.service?.proposalsEnabled === false ? 'PROPOSALS_PAUSED' : null);
@@ -82,6 +83,8 @@ async function fixture(page, options = {}) {
       const payload = request.postDataJSON();
       state.posts.push(payload);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
+      if (state.safetyRejection) return reply({ error: { code: 'PROPOSAL_SAFETY_REJECTED', message: 'PRIVATE_FILTER_EVIDENCE_DO_NOT_DISPLAY' } }, 422);
+      if (state.attemptRejection) return reply({ error: { code: state.attemptRejection, message: 'PRIVATE_RATE_LIMIT_EVIDENCE' } }, 429, { 'Retry-After': '3' });
       if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       if (state.submissionFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '저장에 실패했습니다. 입력 내용은 유지됩니다.' } }, 503);
       if (state.quota.remaining === 0) return reply({ error: { code: 'QUOTA_EXCEEDED', message: '제출 가능 횟수를 모두 사용했습니다.' }, quota: state.quota }, 429);
@@ -89,7 +92,7 @@ async function fixture(page, options = {}) {
       if (existing) return reply({ proposal: existing, quota: state.quota });
       const proposal = { id: `proposal-${state.proposals.length + 1}`, requestId: payload.requestId,
         body: payload.body, createdAt: new Date(state.serverTime).toISOString(), updatedAt: new Date(state.serverTime).toISOString(),
-        roundId: 'initial', revision: 1, editable: true };
+        roundId: 'initial', revision: 1, editable: true, safety: { status: 'pending', message: '안전 검토 대기' } };
       state.proposals.unshift(proposal);
       state.quota = { ...state.quota, remaining: state.quota.remaining - 1,
         nextAvailableAt: new Date(state.serverTime + 3600000).toISOString() };
@@ -99,11 +102,13 @@ async function fixture(page, options = {}) {
       const payload = request.postDataJSON();
       state.patches.push(payload);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
+      if (state.safetyRejection) return reply({ error: { code: 'PROPOSAL_SAFETY_REJECTED', message: 'PRIVATE_FILTER_EVIDENCE_DO_NOT_DISPLAY' } }, 422);
+      if (state.attemptRejection) return reply({ error: { code: state.attemptRejection, message: 'PRIVATE_RATE_LIMIT_EVIDENCE' } }, 429, { 'Retry-After': '3' });
       if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       const proposal = state.proposals.find((p) => p.id === payload.id);
       if (!proposal?.editable) return reply({ error: { code: 'PROPOSAL_FROZEN', message: '마감된 제안은 수정할 수 없습니다.' } }, 409);
       if (payload.revision !== proposal.revision) return reply({ error: { code: 'REVISION_CONFLICT', message: '다른 창에서 제안이 변경되었습니다.' } }, 409);
-      Object.assign(proposal, { body: payload.body, revision: proposal.revision + 1 });
+      Object.assign(proposal, { body: payload.body, revision: proposal.revision + 1, safety: { status: 'pending', message: '안전 검토 대기' } });
       return reply({ proposal, quota: state.quota });
     }
     return reply({ error: { code: 'NOT_FOUND', message: 'Unknown fixture endpoint' } }, 404);
@@ -133,6 +138,106 @@ test('desktop entry renders and measures UTF-8 bytes without truncating the draf
   await expect(page.locator('#submit-button')).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('accepted proposals consume one slot while safety review and an edited revision stay pending', async ({ page }, testInfo) => {
+  const state = await fixture(page, { session: structuredClone(signedIn) });
+  await expect(page.locator('#prompt-safety-note')).toContainText('검토 대기 중에도 제출 횟수 1회');
+  await page.locator('#safety-guidance summary').click();
+  await expect(page.locator('#safety-guidance')).toContainText('공식 등급을 취득했다는 뜻은 아닙니다');
+  await expect(page.locator('#safety-guidance')).toContainText('일반적인 판타지 전투 요구');
+  await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath('public-safety-form-desktop.png') });
+  await page.locator('#prompt').fill('회피 동작을 더 쉽게 조작하고 싶어요.');
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('안전 검토 대기');
+  await expect(page.locator('#quota-status')).toContainText('2 / 3');
+  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'pending');
+  state.proposals[0].safety = { status: 'approved', message: 'PRIVATE_REVIEW_REASON' };
+  await page.reload();
+  await page.locator('#my-proposals summary').click();
+  await expect(page.locator('.proposal-safety')).toContainText('안전 승인');
+  await page.locator('.proposal-edit').click();
+  await page.locator('#prompt').fill('회피 동작의 터치 버튼 위치를 바꾸고 싶어요.');
+  await page.locator('#submit-button').click();
+  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'pending');
+  await expect(page.locator('#quota-status')).toContainText('2 / 3');
+  expect(state.proposals[0].revision).toBe(2);
+  expect(state.posts).toHaveLength(1);
+  expect(state.patches).toHaveLength(1);
+  await expect(page.locator('body')).not.toContainText('PRIVATE_REVIEW_REASON');
+});
+
+test('safety rejection keeps the new draft and quota without revealing internal evidence', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(signedIn), safetyRejection: true });
+  const draft = '이 입력은 서버의 안전 기준 검사에서 거절하는 테스트 초안입니다.';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('제출 횟수는 차감되지 않았어요');
+  await expect(page.locator('#form-feedback')).toHaveAttribute('data-reason', 'safety');
+  await expect(page.locator('#quota-status')).toContainText('3 / 3');
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('body')).not.toContainText('PRIVATE_FILTER_EVIDENCE');
+  expect(state.proposals).toHaveLength(0);
+  expect(state.posts).toHaveLength(1);
+  await page.reload();
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('#quota-status')).toContainText('3 / 3');
+  expect(state.posts).toHaveLength(1);
+});
+
+test('rejected edits retain the edit draft and the previously approved stored revision at zero quota', async ({ page }) => {
+  const proposal = { ...savedProposal(), safety: { status: 'approved', message: 'PRIVATE_REVIEW_REASON' } };
+  const state = await fixture(page, { session: structuredClone(signedIn), safetyRejection: true, proposals: [proposal],
+    quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 3600000).toISOString() } });
+  await page.locator('#my-proposals summary').click();
+  await page.locator('.proposal-edit').click();
+  const draft = '저장되지 않아야 하는 수정 테스트 초안';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('수정본을 저장하지 않았어요');
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'approved');
+  expect(state.proposals[0].body).toBe('원래 접수한 제안');
+  expect(state.proposals[0].revision).toBe(1);
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(1);
+  await page.reload();
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('#edit-banner')).toBeVisible();
+  await expect(page.locator('#quota-status')).toContainText('0 / 3');
+});
+
+test('private review states use safe labels and do not render supplied review messages or markup', async ({ page }) => {
+  const proposals = ['pending', 'approved', 'held', 'blocked'].map((status) => ({
+    ...savedProposal(`safety-${status}`), body: `${status}: <img src=x onerror="window.__safetyXss=true">`,
+    safety: { status, message: `PRIVATE_REVIEW_REASON_${status}`, reason: 'PRIVATE_INTERNAL_REASON' },
+  }));
+  await fixture(page, { session: structuredClone(signedIn), proposals });
+  await page.locator('#my-proposals summary').click();
+  for (const [status, label] of Object.entries({ pending: '안전 검토 대기', approved: '안전 승인', held: '안전 검토 보류', blocked: '안전 기준 차단' })) {
+    await expect(page.locator(`.proposal-safety[data-status="${status}"]`)).toContainText(label);
+  }
+  await expect(page.locator('body')).not.toContainText('PRIVATE_REVIEW_REASON');
+  await expect(page.locator('body')).not.toContainText('PRIVATE_INTERNAL_REASON');
+  await expect(page.locator('#proposal-list img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__safetyXss)).toBeUndefined();
+});
+
+for (const code of ['EDIT_RATE_LIMITED', 'PROPOSAL_ATTEMPT_RATE_LIMITED']) {
+  test(`${code} preserves an edit and does not masquerade as exhausted submission quota`, async ({ page }) => {
+    const state = await fixture(page, { session: structuredClone(signedIn), proposals: [savedProposal()], attemptRejection: code });
+    await page.locator('#my-proposals summary').click();
+    await page.locator('.proposal-edit').click();
+    await page.locator('#prompt').fill('잠시 후 직접 다시 저장할 수정 초안');
+    await page.locator('#submit-button').click();
+    await expect(page.locator('#form-message')).toContainText('3초 후');
+    await expect(page.locator('#form-feedback')).not.toHaveAttribute('data-reason', 'quota');
+    await expect(page.locator('#prompt')).toHaveValue('잠시 후 직접 다시 저장할 수정 초안');
+    await expect(page.locator('#quota-status')).toContainText('3 / 3');
+    await expect(page.locator('body')).not.toContainText('PRIVATE_RATE_LIMIT_EVIDENCE');
+    expect(state.posts).toHaveLength(0);
+    expect(state.patches).toHaveLength(1);
+  });
+}
 
 test('anonymous Send opens login then submits exactly once with the rotated CSRF token', async ({ page }) => {
   const state = await fixture(page);
@@ -211,7 +316,7 @@ test('editing is available at zero quota and does not become a new submission', 
 });
 
 for (const width of [360, 390]) {
-  test(`mobile ${width}px supports byte limits, Google auto-submit and editing without horizontal overflow`, async ({ page }) => {
+  test(`mobile ${width}px supports byte limits, Google auto-submit and editing without horizontal overflow`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     const state = await fixture(page);
     await expect(page.locator('#hero-title')).toBeVisible();
@@ -249,6 +354,8 @@ for (const width of [360, 390]) {
     await expect.poll(() => state.patches.length).toBe(1);
     expect(state.posts).toHaveLength(1);
     expect(state.patches[0].body).toBe('모바일에서도 터치로 수정하는 제안');
+    await page.locator('#safety-guidance summary').click();
+    await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath(`public-safety-form-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
