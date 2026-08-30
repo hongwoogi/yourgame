@@ -20,15 +20,17 @@ async function fixture(page, options = {}) {
   const state = {
     session: structuredClone(anonymous),
     quota: { remaining: 3, limit: 3, nextAvailableAt: null },
-    proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0, languages: [],
+    proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0, sessionCalls: 0, languages: [],
     localeResponse: { locale: 'ko', source: 'country' },
     loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false, safetyRejection: false,
     serverTime: START, ...options,
   };
   await page.clock.install({ time: new Date(START) });
-  await page.route('https://accounts.google.com/gsi/client*', async (route) => route.fulfill({
-    contentType: 'text/javascript',
-    body: `window.google = { accounts: { id: {
+  await page.route('https://accounts.google.com/gsi/client*', async (route) => {
+    if (state.googleScriptFailure) return route.abort('failed');
+    return route.fulfill({
+      contentType: 'text/javascript',
+      body: `window.google = { accounts: { id: {
       initialize(options) { window.testGoogleOptions = options; window.testGoogleInitializations = (window.testGoogleInitializations || 0) + 1; },
       renderButton(container, options) {
         window.testGoogleButtonOptions = options;
@@ -39,8 +41,9 @@ async function fixture(page, options = {}) {
         container.replaceChildren(button);
       },
       disableAutoSelect() {}, cancel() {}
-    } } };`,
-  }));
+      } } };`,
+    });
+  });
   await page.route('**/admin', (route) => {
     state.adminVisits += 1;
     return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Mock admin destination</title><h1>관리자 도착 테스트</h1>' });
@@ -60,6 +63,7 @@ async function fixture(page, options = {}) {
         : state.service?.proposalsEnabled === false ? 'PROPOSALS_PAUSED' : null);
     if (pathname === '/api/status') {
       state.statusCalls += 1;
+      if (state.statusGate) await state.statusGate;
       if (state.statusFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '운영 상태를 확인할 수 없습니다.' } }, 503);
       return reply({
         serverTime: new Date(state.serverTime).toISOString(),
@@ -81,7 +85,10 @@ async function fixture(page, options = {}) {
       round: { id: 'initial', status: 'open', closesAt: CUTOFF, limit: 3 },
       scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null },
       serverTime: new Date(state.serverTime).toISOString() });
-    if (pathname === '/api/session') return reply(state.session);
+    if (pathname === '/api/session') {
+      state.sessionCalls += 1;
+      return reply(state.session);
+    }
     if (pathname === '/api/login') {
       state.loginCalls += 1;
       if (state.loginGate) await state.loginGate;
@@ -279,6 +286,142 @@ test('header login keeps a draft and never implies Send', async ({ page }) => {
   await expect(page.locator('#logout-button')).toBeVisible();
   await expect(page.locator('#prompt')).toHaveValue('로그인만 하고 아직 전송하지 않을 내용');
   expect(state.posts).toHaveLength(0);
+});
+
+test('header login waits for delayed initial status without a false Google configuration error', async ({ page }, testInfo) => {
+  let releaseStatus;
+  const statusGate = new Promise(resolve => { releaseStatus = resolve; });
+  try {
+    // Session readiness must not imply that the parallel public settings read
+    // has completed. Keep every status request gated until login has begun.
+    const state = await fixture(page, { statusGate, locale: 'en' });
+    const draft = 'A draft kept while login settings are loading';
+    await page.locator('#prompt').fill(draft);
+    await expect(page.locator('#submit-button')).toBeDisabled();
+    const refreshedSession = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/session' && response.status() === 200);
+    await page.locator('#login-button').click();
+    await (await refreshedSession).finished();
+    // Let the session continuation run while /status is still guaranteed not
+    // to have returned. This advances only the fixture's browser clock.
+    await page.clock.runFor(50);
+    const snapshot = () => page.locator('#login-message').evaluate(element => ({
+      message: element.textContent, isError: element.classList.contains('is-error'),
+      googleInitializations: window.testGoogleInitializations || 0,
+    }));
+    const beforeStatus = await snapshot();
+    expect(state.sessionCalls).toBeGreaterThanOrEqual(2);
+    releaseStatus();
+    await expect(page.locator('#submit-button')).toBeEnabled();
+    await page.clock.runFor(50);
+    const afterStatus = await snapshot();
+    await testInfo.attach('delayed-status-login-state', {
+      contentType: 'application/json', body: JSON.stringify({ beforeStatus, afterStatus,
+        statusCalls: state.statusCalls, sessionCalls: state.sessionCalls, loginCalls: state.loginCalls,
+        proposalPosts: state.posts.length }, null, 2),
+    });
+    // A real status failure may need a retry. An unfinished successful read
+    // must not leave a false missing-configuration error or require a click.
+    expect(beforeStatus.isError).toBe(false);
+    await expect(page.getByRole('button', { name: 'Continue with Google (test)' })).toBeVisible();
+    await expect(page.locator('#login-message')).not.toHaveClass(/is-error/);
+    expect(await page.evaluate(() => window.testGoogleOptions.client_id)).toBe('browser-fixture.apps.googleusercontent.com');
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    expect(state.loginCalls).toBe(0);
+    expect(state.posts).toHaveLength(0);
+  } finally {
+    releaseStatus?.();
+  }
+});
+
+test('closing and reopening login while settings load preserves only the new Google preparation', async ({ page }, testInfo) => {
+  let releaseOldStatus;
+  const statusGate = new Promise(resolve => { releaseOldStatus = resolve; });
+  try {
+    const state = await fixture(page, { statusGate, locale: 'en' });
+    const draft = 'The reopened login must preserve this unsent idea';
+    await page.locator('#prompt').fill(draft);
+    await page.locator('#login-button').click();
+    // The initial page read and the old modal's explicit settings read remain
+    // unfinished while that modal is closed.
+    await expect.poll(() => state.statusCalls).toBeGreaterThanOrEqual(2);
+    await page.locator('#close-login').click();
+    await expect(page.locator('#login-dialog')).toBeHidden();
+    state.statusGate = null;
+    await page.locator('#login-button').click();
+    await expect(page.getByRole('button', { name: 'Continue with Google (test)' })).toBeVisible();
+    const beforeLateStatus = await page.evaluate(() => {
+      window.reopenedGoogleCallback = window.testGoogleOptions.callback;
+      return { initializations: window.testGoogleInitializations };
+    });
+    releaseOldStatus();
+    // All requests are local mocks. Waiting for them to settle observes the old
+    // continuations without assuming a particular number of implementation reads.
+    await page.waitForLoadState('networkidle');
+    const afterLateStatus = await page.evaluate(() => ({ initializations: window.testGoogleInitializations,
+      callbackUnchanged: window.testGoogleOptions.callback === window.reopenedGoogleCallback,
+      modalOpen: document.querySelector('#login-dialog').open }));
+    // A delayed synthetic popup result must still reach the current handler.
+    await page.evaluate(() => window.reopenedGoogleCallback({ credential: 'browser-fixture-only' }));
+    await testInfo.attach('reopened-login-old-settings-state', { contentType: 'application/json',
+      body: JSON.stringify({ beforeLateStatus, afterLateStatus, loginCalls: state.loginCalls,
+        proposalPosts: state.posts.length }, null, 2) });
+    expect(beforeLateStatus.initializations).toBe(1);
+    expect(afterLateStatus).toEqual({ initializations: 1, callbackUnchanged: true, modalOpen: true });
+    expect(state.loginCalls).toBe(1);
+    await expect(page.locator('#logout-button')).toBeVisible();
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    expect(state.posts).toHaveLength(0);
+  } finally {
+    releaseOldStatus?.();
+  }
+});
+
+test('a late Google retry from a closed modal cannot reset a reopened modal or invalidate its callback', async ({ page }, testInfo) => {
+  let releaseRetryStatus;
+  const retryStatusGate = new Promise(resolve => { releaseRetryStatus = resolve; });
+  try {
+    const state = await fixture(page, { locale: 'en', googleScriptFailure: true });
+    await expect(page.locator('#submit-button')).toBeEnabled();
+    const draft = 'Keep this draft while an old Google retry finishes';
+    await page.locator('#prompt').fill(draft);
+    await page.locator('#login-button').click();
+    await expect(page.locator('#retry-google')).toBeVisible();
+    await expect(page.locator('#login-message')).toHaveClass(/is-error/);
+    state.googleScriptFailure = false;
+    state.statusGate = retryStatusGate;
+    const retryStarted = page.waitForRequest(request => new URL(request.url()).pathname === '/api/status');
+    await page.locator('#retry-google').click();
+    await retryStarted;
+    await page.locator('#close-login').click();
+    await expect(page.locator('#login-dialog')).toBeHidden();
+    await page.locator('#login-button').click();
+    await expect(page.getByRole('button', { name: 'Continue with Google (test)' })).toBeVisible();
+    const beforeLateRetry = await page.evaluate(() => {
+      // This models a provider popup that retained the current callback before
+      // the old retry's HTTP response arrived; it never opens a real popup.
+      window.reopenedGoogleCallback = window.testGoogleOptions.callback;
+      return { initializations: window.testGoogleInitializations };
+    });
+    state.statusGate = null;
+    releaseRetryStatus();
+    await page.waitForLoadState('networkidle');
+    const afterLateRetry = await page.evaluate(() => ({ initializations: window.testGoogleInitializations,
+      callbackUnchanged: window.testGoogleOptions.callback === window.reopenedGoogleCallback,
+      modalOpen: document.querySelector('#login-dialog').open }));
+    await page.evaluate(() => window.reopenedGoogleCallback({ credential: 'browser-fixture-only' }));
+    await testInfo.attach('reopened-login-late-retry-state', { contentType: 'application/json',
+      body: JSON.stringify({ beforeLateRetry, afterLateRetry, loginCalls: state.loginCalls,
+        proposalPosts: state.posts.length }, null, 2) });
+    expect(beforeLateRetry.initializations).toBe(1);
+    expect(afterLateRetry).toEqual({ initializations: 1, callbackUnchanged: true, modalOpen: true });
+    expect(state.loginCalls).toBe(1);
+    await expect(page.locator('#logout-button')).toBeVisible();
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    expect(state.posts).toHaveLength(0);
+  } finally {
+    releaseRetryStatus?.();
+  }
 });
 
 test('zero quota after login preserves the draft, including after capacity returns and reload', async ({ page }) => {

@@ -1006,6 +1006,11 @@ import './public-messages.js';
         }
         return;
       }
+      // The parallel session read can finish before the initial settings read.
+      if (!status?.googleClientId) {
+        await refreshStatus();
+        if (generation !== googleGeneration || !ui['login-dialog'].open) return;
+      }
       if (!status?.googleClientId) throw new RequestError(m('googleConfig'));
       await loadGoogle();
       if (generation !== googleGeneration || !ui['login-dialog'].open) return;
@@ -1192,7 +1197,9 @@ import './public-messages.js';
   ui['logout-button'].addEventListener('click', logout);
   ui['close-login'].addEventListener('click', () => closeLogin());
   ui['retry-google'].addEventListener('click', async () => {
+    const generation = googleGeneration;
     try { await refreshStatus(); } catch { /* prepareGoogle explains unavailable configuration. */ }
+    if (generation !== googleGeneration || !ui['login-dialog'].open || authenticating) return;
     await prepareGoogle();
   });
   ui['retry-connection'].addEventListener('click', () => { synchronize(); });
