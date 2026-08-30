@@ -20,7 +20,8 @@ async function fixture(page, options = {}) {
   const state = {
     session: structuredClone(anonymous),
     quota: { remaining: 3, limit: 3, nextAvailableAt: null },
-    proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0,
+    proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0, languages: [],
+    localeResponse: { locale: 'ko', source: 'country' },
     loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false, safetyRejection: false,
     serverTime: START, ...options,
   };
@@ -28,11 +29,11 @@ async function fixture(page, options = {}) {
   await page.route('https://accounts.google.com/gsi/client*', async (route) => route.fulfill({
     contentType: 'text/javascript',
     body: `window.google = { accounts: { id: {
-      initialize(options) { window.testGoogleOptions = options; },
+      initialize(options) { window.testGoogleOptions = options; window.testGoogleInitializations = (window.testGoogleInitializations || 0) + 1; },
       renderButton(container, options) {
         window.testGoogleButtonOptions = options;
         const button = document.createElement('button');
-        button.type = 'button'; button.textContent = 'Google 테스트 로그인';
+        button.type = 'button'; button.textContent = options.locale === 'en' ? 'Continue with Google (test)' : 'Google 테스트 로그인';
         button.style.width = options.width + 'px'; button.style.minHeight = '44px'; button.style.flexShrink = '0';
         button.addEventListener('click', () => window.testGoogleOptions.callback({credential:'browser-fixture-only'}));
         container.replaceChildren(button);
@@ -48,6 +49,12 @@ async function fixture(page, options = {}) {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const reply = (body, status = 200, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) });
+    if (pathname === '/api/locale') {
+      if (state.localeFailure) return route.abort('failed');
+      if (state.localeGate) await state.localeGate;
+      return reply(state.localeResponse);
+    }
+    state.languages.push({ pathname, method: request.method(), value: request.headers()['x-yourgame-language'] });
     const operationCode = () => state.serviceRejection?.code || (state.service?.mode === 'ended' ? 'SERVICE_ENDED'
       : state.service?.mode === 'maintenance' ? 'SERVICE_MAINTENANCE'
         : state.service?.proposalsEnabled === false ? 'PROPOSALS_PAUSED' : null);
@@ -66,6 +73,7 @@ async function fixture(page, options = {}) {
     if (pathname === '/api/session') return reply(state.session);
     if (pathname === '/api/login') {
       state.loginCalls += 1;
+      if (state.loginGate) await state.loginGate;
       if (state.loginFailure) return reply({ error: { code: 'LOGIN_UNAVAILABLE', message: 'Google 로그인 연결에 실패했습니다. 다시 시도해 주세요.' } }, 503);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
       state.session = structuredClone(state.loginSession || signedIn);
@@ -113,7 +121,9 @@ async function fixture(page, options = {}) {
     }
     return reply({ error: { code: 'NOT_FOUND', message: 'Unknown fixture endpoint' } }, 404);
   });
-  await page.goto(options.path || '/');
+  const entry = new URL(options.path || '/', 'http://localhost:3000');
+  if (options.locale !== null && !entry.searchParams.has('lang')) entry.searchParams.set('lang', options.locale || 'ko');
+  await page.goto(entry.pathname + entry.search + entry.hash);
   if (options.expectAdminNavigation) await expect(page).toHaveURL('http://localhost:3000/admin');
   else await expect(page.locator(state.session.user ? '#logout-button' : '#login-button')).toBeEnabled();
   return state;
@@ -282,14 +292,14 @@ test('login and submission failures retain the original draft', async ({ page })
   await page.locator('#prompt').fill('오류가 나더라도 보존해야 하는 내용');
   await page.locator('#submit-button').click();
   await googleLogin(page);
-  await expect(page.locator('#login-message')).toContainText('실패');
+  await expect(page.locator('#login-message')).toContainText('Google 로그인 연결을 확인할 수 없습니다');
   await expect(page.locator('#prompt')).toHaveValue('오류가 나더라도 보존해야 하는 내용');
   state.loginFailure = false;
   state.submissionFailure = true;
   await page.locator('#retry-google').click();
   await page.getByRole('button', { name: 'Google 테스트 로그인' }).click();
   await expect.poll(() => state.posts.length).toBe(1);
-  await expect(page.locator('#form-message')).toContainText('실패');
+  await expect(page.locator('#form-message')).toContainText('잠시 서비스를 이용할 수 없습니다');
   await expect(page.locator('#prompt')).toHaveValue('오류가 나더라도 보존해야 하는 내용');
   state.submissionFailure = false;
   await page.locator('#submit-button').click();
@@ -498,7 +508,7 @@ test('admin reauthentication requires a successful new login and does not trust 
   await expect(page.locator('#login-dialog')).toBeVisible();
   expect(state.loginCalls).toBe(0);
   await googleLogin(page);
-  await expect(page.locator('#login-message')).toContainText('실패');
+  await expect(page.locator('#login-message')).toContainText('Google 로그인 연결을 확인할 수 없습니다');
   await expect(page.locator('#login-dialog')).toBeVisible();
   expect(state.adminVisits).toBe(0);
   state.loginFailure = false;
@@ -517,7 +527,7 @@ test('an ordinary account completing admin login stays on the public page withou
   await expect(page.locator('#login-dialog')).toBeHidden();
   await expect(page.locator('#form-message')).toContainText('관리자 권한이 없어요');
   await expect(page.locator('#prompt')).toHaveValue('권한이 없어도 보존할 초안');
-  await expect(page).toHaveURL('http://localhost:3000/');
+  await expect(page).toHaveURL('http://localhost:3000/?lang=ko');
   await page.clock.fastForward(46_000);
   await page.reload();
   await expect(page.locator('#logout-button')).toBeVisible();
@@ -674,3 +684,221 @@ test('a 423 blocks repeat Send even if refreshing status fails, without losing t
   await expect(page.locator('#submit-button')).toBeEnabled();
   expect(state.posts).toHaveLength(1);
 });
+
+test('English copy, metadata and KST target are complete without translating participant data', async ({ page }) => {
+  const original = '원문은 그대로: <img src=x onerror="window.translationXss=true">';
+  const announcement = '운영자가 작성한 한국어 공지를 번역하거나 변경하지 않습니다.';
+  const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn),
+    service: { ...activeService, message: announcement },
+    proposals: [{ ...savedProposal(), body: original, safety: { status: 'held', reason: 'PRIVATE_EVIDENCE' } }] });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page).toHaveTitle('yourga.me — One roguelike, shaped by your prompts');
+  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /first game is still in development/);
+  await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
+  await expect(page.locator('#hero-title')).toContainText('One evolving roguelike.');
+  await expect(page.locator('.hero-description')).toContainText('desktop and mobile');
+  await expect(page.locator('.release-date time')).toHaveAttribute('datetime', '2026-09-01T00:00:00+09:00');
+  await expect(page.locator('.release-date')).toContainText('Sep 1, 2026 / 00:00 KST');
+  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', /For example/);
+  await expect(page.locator('#user-name')).toHaveText(signedIn.user.name);
+  await expect(page.locator('#service-message')).toHaveText(announcement);
+  await page.locator('#my-proposals summary').click();
+  await expect(page.locator('.proposal-body')).toHaveText(original);
+  await expect(page.locator('.proposal-safety')).toContainText('Safety review on hold');
+  await expect(page.locator('#proposal-list img')).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('PRIVATE_EVIDENCE');
+  await page.locator('#safety-guidance summary').click();
+  await expect(page.locator('#safety-guidance')).toContainText('has not received an official ESRB rating');
+  await expect(page.locator('#safety-guidance')).toContainText('Ordinary fantasy combat ideas are welcome');
+  await expect(page.locator('.process-status-note')).toContainText('not a live progress tracker');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('.proposal-safety')).toContainText('안전 검토 보류');
+  await expect(page.locator('.proposal-body')).toHaveText(original);
+  await expect(page.locator('#service-message')).toHaveText(announcement);
+  await page.locator('#language-select').selectOption('en');
+  await expect(page.locator('.proposal-safety')).toContainText('Safety review on hold');
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+  expect(state.loginCalls).toBe(0);
+  expect(state.languages.every(entry => entry.value === 'en')).toBe(true);
+  expect(await page.evaluate(() => window.translationXss)).toBeUndefined();
+});
+
+test('changing language in a pending Google login preserves nonce and explicit Send exactly once', async ({ page }) => {
+  let completeLogin;
+  const loginGate = new Promise(resolve => { completeLogin = resolve; });
+  const state = await fixture(page, { locale: 'en', loginGate });
+  const draft = 'Different weapons, one shared roguelike. 한글도 그대로.';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#submit-button').click();
+  await expect(page.getByRole('button', { name: 'Continue with Google (test)' })).toBeVisible();
+  const nonce = await page.evaluate(() => window.testGoogleOptions.nonce);
+  const queued = await page.evaluate(() => JSON.parse(sessionStorage.getItem('yourgame.pending.v1')).requestId);
+  await page.locator('#login-language-select').selectOption('ko');
+  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+  await expect(page.locator('#login-description')).toContainText('Google 계정으로 로그인');
+  await page.locator('#login-language-select').selectOption('en');
+  await expect(page.locator('#login-description')).toContainText('Log in with Google');
+  expect(await page.evaluate(() => window.testGoogleOptions.nonce)).toBe(nonce);
+  expect(await page.evaluate(() => window.testGoogleInitializations)).toBe(1);
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('yourgame.pending.v1')).requestId)).toBe(queued);
+  expect(state.loginCalls).toBe(0);
+  expect(state.posts).toHaveLength(0);
+  await page.getByRole('button', { name: 'Continue with Google (test)' }).click();
+  await expect.poll(() => state.loginCalls).toBe(1);
+  await expect(page.locator('#login-message')).toContainText('Verifying your Google account');
+  await page.locator('#login-language-select').selectOption('ko');
+  await expect(page.locator('#login-message')).toContainText('Google 계정과 남은 제출 횟수');
+  expect(state.posts).toHaveLength(0);
+  completeLogin();
+  await expect.poll(() => state.posts.length).toBe(1);
+  expect(state.posts[0].body).toBe(draft);
+  expect(state.posts[0].requestId).toBe(queued);
+  await expect(page.locator('#prompt')).toHaveValue('');
+  await expect(page.locator('#form-message')).toContainText('안전 검토 대기');
+  await page.locator('#language-select').selectOption('en');
+  await expect(page.locator('#form-message')).toContainText('Safety review pending');
+  await expect(page.locator('#quota-status')).toHaveText('2 / 3 submissions left');
+  expect(state.languages.find(entry => entry.pathname === '/api/login').value).toBe('en');
+  expect(state.languages.find(entry => entry.pathname === '/api/proposals' && entry.method === 'POST').value).toBe('ko');
+  expect(state.posts).toHaveLength(1);
+});
+
+test('active safety and API errors switch language without retrying or losing a draft', async ({ page }) => {
+  const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn), safetyRejection: true });
+  const draft = 'An unchanged draft with enough detail to review.';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('no submission slot was used');
+  await expect(page.locator('#form-message')).not.toContainText('PRIVATE_FILTER');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('#form-message')).toContainText('제출 횟수는 차감되지 않았어요');
+  expect(state.posts).toHaveLength(1);
+  await page.locator('#language-select').selectOption('en');
+  state.safetyRejection = false;
+  state.submissionFailure = true;
+  await page.locator('#submit-button').click();
+  await expect(page.locator('#form-message')).toContainText('The service is temporarily unavailable');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('#form-message')).toContainText('잠시 서비스를 이용할 수 없습니다');
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('#quota-status')).toContainText('3 / 3');
+  expect(state.posts).toHaveLength(2);
+  expect(state.posts[0].requestId).toBe(state.posts[1].requestId);
+  await page.reload();
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ko');
+  expect(state.posts).toHaveLength(2);
+});
+
+test('English Google errors stay localized after switching and header login never sends', async ({ page }) => {
+  const state = await fixture(page, { locale: 'en', loginFailure: true });
+  await page.locator('#prompt').fill('Only logging in, not ready to submit.');
+  await page.locator('#login-button').click();
+  await page.getByRole('button', { name: 'Continue with Google (test)' }).click();
+  await expect(page.locator('#login-message')).toContainText('Google sign-in is temporarily unavailable');
+  await page.locator('#login-language-select').selectOption('ko');
+  await expect(page.locator('#login-message')).toContainText('Google 로그인 연결을 확인할 수 없습니다');
+  await page.locator('#login-language-select').selectOption('en');
+  await expect(page.locator('#login-message')).toContainText('Google sign-in is temporarily unavailable');
+  await expect(page.locator('#retry-google')).toBeVisible();
+  state.loginFailure = false;
+  await page.locator('#retry-google').click();
+  await page.getByRole('button', { name: 'Continue with Google (test)' }).click();
+  await expect(page.locator('#logout-button')).toBeVisible();
+  await expect(page.locator('#prompt')).toHaveValue('Only logging in, not ready to submit.');
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+});
+
+test('language changes preserve a zero-quota edit and active IME composition', async ({ page }) => {
+  const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn), proposals: [savedProposal()],
+    quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 3600000).toISOString() } });
+  await page.locator('#my-proposals summary').click();
+  await page.locator('.proposal-edit').click();
+  await expect(page.locator('#form-message')).toContainText("doesn't use a new submission slot");
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('#form-message')).toContainText('새 제안 횟수는 차감되지 않아요');
+  await page.locator('#language-select').selectOption('en');
+  await page.locator('#prompt').fill('계속 작성 중인 수정 원문 — keep this exact text.');
+  await page.locator('#prompt').dispatchEvent('compositionstart');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  await expect(page.locator('#edit-banner')).toContainText('내 제안 수정 중');
+  await page.locator('#language-select').selectOption('en');
+  await expect(page.locator('#edit-banner')).toContainText('No submission slot used');
+  await expect(page.locator('#form-feedback')).toBeHidden();
+  await expect(page.locator('#prompt')).toHaveValue('계속 작성 중인 수정 원문 — keep this exact text.');
+  expect(state.patches).toHaveLength(0);
+  expect(state.posts).toHaveLength(0);
+  await page.locator('#prompt').dispatchEvent('compositionend');
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await page.locator('#submit-button').click();
+  await expect.poll(() => state.patches.length).toBe(1);
+  await expect(page.locator('#form-message')).toContainText('without using a new slot');
+  await expect(page.locator('#quota-status')).toContainText('0 / 3');
+  expect(state.posts).toHaveLength(0);
+});
+
+for (const [name, response, expected] of [
+  ['Korean connection', { locale: 'ko', source: 'country' }, 'ko'],
+  ['non-Korean connection', { locale: 'en', source: 'default' }, 'en'],
+  ['unavailable country lookup', null, 'en'],
+]) {
+  test(`public locale initializes from ${name} without using the browser language`, async ({ page }) => {
+    const state = await fixture(page, { locale: null, localeResponse: response, localeFailure: response === null });
+    await expect(page.locator('html')).toHaveAttribute('lang', expected);
+    await expect(page.locator('#language-select')).toHaveValue(expected);
+    await expect(page.locator('#submit-button')).toBeEnabled();
+    expect(state.languages.every(entry => entry.value === expected)).toBe(true);
+    expect(await page.evaluate(() => localStorage.getItem('yourgame.language.v1'))).toBeNull();
+  });
+}
+
+test('manual English selection wins a late Korean lookup and survives reload without reloading the active draft', async ({ page }) => {
+  let resolveLocale;
+  const localeGate = new Promise(resolve => { resolveLocale = resolve; });
+  const prepared = fixture(page, { locale: null, localeGate });
+  await expect(page.locator('#language-select')).toBeVisible();
+  await page.locator('#prompt').fill('My draft exists before the country lookup finishes.');
+  await page.locator('#language-select').selectOption('en');
+  resolveLocale();
+  const state = await prepared;
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#prompt')).toHaveValue('My draft exists before the country lookup finishes.');
+  expect(await page.evaluate(() => localStorage.getItem('yourgame.language.v1'))).toBe('en');
+  expect(state.posts).toHaveLength(0);
+  await page.reload();
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#prompt')).toHaveValue('My draft exists before the country lookup finishes.');
+  expect(state.posts).toHaveLength(0);
+});
+
+for (const width of [320, 360, 390, 1440]) {
+  test(`English UI at ${width}px keeps its form and login dialog inside the viewport`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+    await fixture(page, { locale: 'en', loginFailure: true });
+    await page.locator('#safety-guidance summary').click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const language = await page.locator('#language-select').boundingBox();
+    expect(language.height).toBeGreaterThanOrEqual(44);
+    expect(language.x + language.width).toBeLessThanOrEqual(width);
+    expect(await page.locator('#prompt').evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+    if (width < 800) expect(await page.locator('#language-select').evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await page.screenshot({ path: testInfo.outputPath(`public-english-${width}.png`), fullPage: true });
+    await page.locator('#login-button').click();
+    await page.getByRole('button', { name: 'Continue with Google (test)' }).click();
+    await expect(page.locator('#login-message')).toContainText('temporarily unavailable');
+    await expect(page.locator('#retry-google')).toBeVisible();
+    const modal = await page.locator('#login-dialog').boundingBox();
+    expect(modal.x).toBeGreaterThanOrEqual(0);
+    expect(modal.x + modal.width).toBeLessThanOrEqual(width);
+    expect(await page.locator('#login-dialog').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.locator('#login-dialog').screenshot({ path: testInfo.outputPath(`public-login-english-${width}.png`) });
+    await page.locator('#login-language-select').selectOption('ko');
+    await expect(page.locator('#login-message')).toContainText('Google 로그인 연결을 확인할 수 없습니다');
+    expect(await page.locator('#login-dialog').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+}

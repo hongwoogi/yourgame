@@ -254,6 +254,27 @@ test('end/resume require actual recent Google login and exact confirmation; sess
   assert.equal(resumed.developmentEnabled, false);
 });
 
+test('canonical English confirmation tokens are exact, action-specific, and compatible with Korean tokens', async t => {
+  const f = await adminFixture(t);
+  for (const confirmation of ['END SERVICE ', ' END SERVICE', 'end service', 'END SERVICES', 'RESUME SERVICE', '서비스 재개']) {
+    await assert.rejects(changeService(f, { mode: 'ended', confirmation }), errorCode('CONFIRMATION_REQUIRED'));
+    assert.equal((await f.management.getService()).mode, 'active');
+  }
+  await changeService(f, { mode: 'ended', confirmation: 'END SERVICE' });
+  assert.equal((await f.management.getService()).mode, 'ended');
+  for (const confirmation of ['RESUME SERVICE ', ' RESUME SERVICE', 'resume service', 'RESUME SERVICES', 'END SERVICE', '서비스 종료']) {
+    await assert.rejects(changeService(f, { mode: 'active', proposalsEnabled: true, developmentEnabled: true, confirmation }), errorCode('CONFIRMATION_REQUIRED'));
+    assert.equal((await f.management.getService()).mode, 'ended');
+  }
+  await changeService(f, { mode: 'active', proposalsEnabled: true, developmentEnabled: true, confirmation: 'RESUME SERVICE' });
+  await changeService(f, { mode: 'ended', confirmation: '서비스 종료' });
+  await changeService(f, { mode: 'active', proposalsEnabled: true, developmentEnabled: true, confirmation: '서비스 재개' });
+  assert.equal((await f.management.query(f.admin.session, { section: 'audit' })).items.length, 4);
+  await f.setTime(f.now() + ADMIN_AUTH_MAX_AGE_MS);
+  await assert.rejects(changeService(f, { mode: 'ended', confirmation: 'END SERVICE' }), errorCode('ADMIN_REAUTH_REQUIRED'));
+  assert.equal((await f.management.getService()).mode, 'active');
+});
+
 test('intentional maintenance/ending pause public writes while login, administrator recovery and health stay available', async t => {
   const f = await adminFixture(t);
   const member = await f.login();

@@ -1,5 +1,23 @@
+import { i18n } from './i18n.js';
+import './public-messages.js';
+
 (() => {
   'use strict';
+
+  const t = (key, params) => i18n.t(`public.${key}`, params);
+  const m = (key, params = {}) => ({ key, params });
+  function localize(value) {
+    if (typeof value === 'function') return localize(value());
+    if (!value || typeof value === 'string') return value || '';
+    if (Object.hasOwn(value, 'api')) return i18n.apiError(value.api, t(value.fallback || 'requestFailed'));
+    return t(value.key, Object.fromEntries(Object.entries(value.params || {}).map(([key, item]) =>
+      [key, typeof item === 'function' || (item && typeof item === 'object') ? localize(item) : item])));
+  }
+  const errorMessage = (error) => error?.uiMessage || m('requestFailed');
+  let feedbackMessage = '';
+  let connectionMessage = '';
+  let currentLoginMessage = '';
+  let googleButtonLocale = null;
 
   const FIRST_RELEASE = '2026-09-01T00:00:00+09:00';
   const FIRST_CLOSE = '2026-08-31T23:00:00+09:00';
@@ -82,7 +100,7 @@
     } catch {
       if (kind === 'localStorage' && !storageWarningShown) {
         storageWarningShown = true;
-        feedback('이 브라우저에서 임시 저장을 사용할 수 없어요. 창을 닫기 전에 작성한 내용을 복사해 주세요.', 'error');
+        feedback(m('storageUnavailable'), 'error');
       }
       return false;
     }
@@ -154,7 +172,8 @@
 
   class RequestError extends Error {
     constructor(message, responseStatus = 0, data = null, retryAfterSeconds = 0) {
-      super(message);
+      super(localize(message));
+      this.uiMessage = message;
       this.status = responseStatus;
       this.data = data;
       this.retryAfterSeconds = retryAfterSeconds;
@@ -166,7 +185,7 @@
     const timeout = setTimeout(() => controller.abort(), 18000);
     const started = performance.now();
     try {
-      const headers = { Accept: 'application/json' };
+      const headers = { Accept: 'application/json', 'X-Yourgame-Language': i18n.locale };
       if (method !== 'GET') {
         headers['Content-Type'] = 'application/json';
         if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
@@ -177,10 +196,11 @@
       });
       let data;
       try { data = await response.json(); }
-      catch { throw new RequestError('서버 응답을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', response.status); }
+      catch { throw new RequestError(m('invalidResponse'), response.status); }
       if (!response.ok) {
-        const message = response.status < 500 && typeof data?.error?.message === 'string'
-          ? data.error.message.slice(0, 500) : '서버 연결에 실패했어요. 작성한 내용은 그대로 두고 잠시 후 다시 시도해 주세요.';
+        // Use a known error code, never raw server review evidence or foreign-language text.
+        const message = { api: typeof data?.error?.code === 'string' ? data.error.code : 'UNKNOWN',
+          fallback: response.status >= 500 ? 'serverFailed' : 'requestFailed' };
         const retryAfter = Number(response.headers.get('Retry-After'));
         throw new RequestError(message, response.status, data,
           Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 3600 ? Math.ceil(retryAfter) : 0);
@@ -190,8 +210,8 @@
     } catch (error) {
       if (error instanceof RequestError) throw error;
       throw new RequestError(error.name === 'AbortError'
-        ? '응답이 늦어 서버 연결을 확인하지 못했어요. 작성한 내용은 보관됩니다. 잠시 후 다시 시도해 주세요.'
-        : '인터넷 또는 서버 연결을 확인해 주세요. 작성한 내용은 그대로 보관됩니다.');
+        ? m('timeout')
+        : m('offlineRequest'));
     } finally { clearTimeout(timeout); }
   }
 
@@ -199,18 +219,21 @@
     ui['form-feedback'].hidden = !message;
     ui['form-feedback'].dataset.kind = kind;
     ui['form-feedback'].dataset.reason = reason;
-    ui['form-message'].textContent = message;
+    feedbackMessage = message;
+    ui['form-message'].textContent = localize(message);
     ui['reload-edit'].hidden = !reload;
     ui['copy-edit'].hidden = !copy;
   }
 
   function connectionError(message) {
-    ui['connection-message'].textContent = message;
+    connectionMessage = message;
+    ui['connection-message'].textContent = localize(message);
     ui['connection-notice'].hidden = false;
   }
 
   function loginMessage(message, isError = false) {
-    ui['login-message'].textContent = message;
+    currentLoginMessage = message;
+    ui['login-message'].textContent = localize(message);
     ui['login-message'].classList.toggle('is-error', isError);
   }
 
@@ -238,16 +261,14 @@
 
   function pausedSubmissionMessage() {
     const { mode } = operatingState();
-    const reason = mode === 'ended' ? '서비스가 종료되어'
-      : mode === 'maintenance' ? '서비스 점검 중이라' : '제안 접수가 일시정지되어';
-    return `${reason} 새 제안과 수정 내용을 접수하지 않아요. 작성한 내용은 보관되며 자동 전송하지 않습니다.`;
+    return m(mode === 'ended' ? 'pausedEnded' : mode === 'maintenance' ? 'pausedMaintenance' : 'pausedIntake');
   }
 
   function cancelPausedSend() {
     const wasPending = Boolean(pending);
     clearPending();
     if (ui['login-dialog'].open && loginPurpose === 'submission') {
-      ui['login-draft-note'].textContent = pausedSubmissionMessage();
+      ui['login-draft-note'].textContent = localize(pausedSubmissionMessage());
     }
     if (wasPending) feedback(pausedSubmissionMessage(), 'error', { reason: 'service' });
   }
@@ -258,13 +279,13 @@
     notice.hidden = !state.proposalsPaused && !state.developmentPaused && !state.message;
     notice.dataset.mode = state.mode;
     notice.dataset.paused = String(state.proposalsPaused);
-    const title = state.mode === 'ended' ? '서비스가 종료되었습니다'
-      : state.mode === 'maintenance' ? '서비스 점검 중입니다'
-        : state.proposalsPaused ? '제안 접수를 일시정지했습니다'
-          : state.developmentPaused ? '자동 개발을 일시정지했습니다' : '운영 공지';
+    const title = state.mode === 'ended' ? t('serviceEndedTitle')
+      : state.mode === 'maintenance' ? t('serviceMaintenanceTitle')
+        : state.proposalsPaused ? t('serviceIntakeTitle')
+          : state.developmentPaused ? t('serviceDevelopmentTitle') : t('serviceAnnouncement');
     const detail = state.proposalsPaused
-      ? '새 제안과 수정은 접수하지 않습니다. 작성한 초안과 기존 접수 내역은 보존되며, 로그인과 내 제안 조회는 계속 이용할 수 있어요.'
-      : state.developmentPaused ? '새 게임 개발·공개는 대기 중입니다. 제안 접수는 계속 이용할 수 있어요.' : '';
+      ? t('servicePausedDetail')
+      : state.developmentPaused ? t('developmentPausedDetail') : '';
     for (const [key, text] of [['service-title', title], ['service-message', state.message], ['service-detail', detail]]) {
       if (ui[key].textContent !== text) ui[key].textContent = text;
     }
@@ -290,8 +311,8 @@
 
   function shortTime(value, includeSeconds = false) {
     const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return '시각 확인 중';
-    return new Intl.DateTimeFormat('ko-KR', {
+    if (!Number.isFinite(date.getTime())) return t('timeChecking');
+    return new Intl.DateTimeFormat(i18n.intlLocale, {
       timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit',
       ...(includeSeconds ? { second: '2-digit' } : {}), hourCycle: 'h23',
     }).format(date);
@@ -300,8 +321,8 @@
   function proposalDate(value) {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return '';
-    return new Intl.DateTimeFormat('ko-KR', {
-      timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit',
+    return new Intl.DateTimeFormat(i18n.intlLocale, {
+      timeZone: 'Asia/Seoul', month: i18n.locale === 'ko' ? '2-digit' : 'short', day: '2-digit', hour: '2-digit',
       minute: '2-digit', hourCycle: 'h23',
     }).format(date) + ' KST';
   }
@@ -309,15 +330,15 @@
   function renderBytes() {
     const count = encoder.encode(ui.prompt.value).length;
     const max = limits().bytes;
-    ui['byte-count'].replaceChildren(document.createTextNode(count.toLocaleString('en-US') + ' '));
+    ui['byte-count'].replaceChildren(document.createTextNode(count.toLocaleString(i18n.intlLocale) + ' '));
     const suffix = document.createElement('span');
-    suffix.textContent = '/ ' + max.toLocaleString('en-US') + ' bytes';
+    suffix.textContent = '/ ' + max.toLocaleString(i18n.intlLocale) + ' bytes';
     ui['byte-count'].append(suffix);
     ui['byte-count'].classList.toggle('is-over', count > max);
     ui.prompt.setAttribute('aria-invalid', count > max ? 'true' : 'false');
     ui['prompt-hint'].textContent = count > max
-      ? `${(count - max).toLocaleString('ko-KR')}바이트를 줄여주세요. 한글과 이모지는 한 글자에 여러 바이트를 사용해요.`
-      : '작은 아이디어도 좋아요. 구체적일수록 도움이 됩니다.';
+      ? t('bytesOver', { bytes: (count - max).toLocaleString(i18n.intlLocale) })
+      : t('promptHint');
     return count;
   }
 
@@ -340,16 +361,16 @@
     ui['quota-container'].classList.toggle('is-authenticated', loggedIn);
     ui['quota-container'].classList.toggle('is-empty', loggedIn && quota?.remaining === 0);
     if (!loggedIn) {
-      ui['quota-status'].textContent = '로그인 후 제안할 수 있어요';
-      ui['quota-note'].textContent = '최근 60분 동안 최대 3개';
+      ui['quota-status'].textContent = t('quotaAnonymous');
+      ui['quota-note'].textContent = t('quotaLimit');
     } else if (!quota) {
-      ui['quota-status'].textContent = '남은 횟수 확인 중';
-      ui['quota-note'].textContent = '제출 기록을 확인하고 있어요';
+      ui['quota-status'].textContent = t('quotaChecking');
+      ui['quota-note'].textContent = t('quotaHistory');
     } else {
-      ui['quota-status'].textContent = `남은 제안 ${quota.remaining} / ${quota.limit}`;
+      ui['quota-status'].textContent = t('quotaRemaining', { remaining: quota.remaining, limit: quota.limit });
       ui['quota-note'].textContent = quota.remaining === 0 && quota.nextAvailableAt
-        ? `다음 제출 가능 ${shortTime(quota.nextAvailableAt, true)} KST`
-        : '제출한 지 60분이 지나면 횟수가 돌아와요';
+        ? t('quotaNext', { time: shortTime(quota.nextAvailableAt, true) })
+        : t('quotaRefill');
     }
     const editingLocked = editing && (!editing.editable || editing.conflict);
     const noQuota = loggedIn && (!quota || quota.remaining <= 0);
@@ -357,17 +378,17 @@
       || (loggedIn && !privateReady)
       || count > limits().bytes || Boolean(editingLocked) || (!editing && noQuota)
       || !proposalsOpen();
-    ui['submit-label'].textContent = submitting ? (editing ? '저장 중…' : '접수 중…')
-      : operations.proposalsPaused ? (operations.mode === 'ended' ? '접수 종료' : '접수 일시정지')
-      : editing ? (editingLocked ? '수정 상태 확인' : '수정 저장')
-        : loggedIn && quota?.remaining === 0 ? '횟수 충전 대기' : '제안 보내기';
+    ui['submit-label'].textContent = submitting ? (editing ? t('saving') : t('sending'))
+      : operations.proposalsPaused ? (operations.mode === 'ended' ? t('intakeEnded') : t('intakePaused'))
+      : editing ? (editingLocked ? t('editCheck') : t('saveEdit'))
+        : loggedIn && quota?.remaining === 0 ? t('quotaWaiting') : t('send');
     ui['submit-spinner'].hidden = !submitting;
     ui['submit-icon'].hidden = submitting;
     ui['prompt-form'].setAttribute('aria-busy', submitting ? 'true' : 'false');
     ui['my-proposals'].hidden = !loggedIn || !privateReady;
   }
 
-  function renderTime() {
+  function renderTime({ passive = false } = {}) {
     const now = serverNow();
     const target = Date.parse(status?.firstReleaseAt || FIRST_RELEASE);
     const remaining = Math.max(0, Math.ceil((target - now) / 1000));
@@ -377,42 +398,42 @@
     ui.countdown.hidden = remaining === 0 || published || releasePaused;
     ui['release-message'].hidden = remaining > 0 && !published && !releasePaused;
     if (releasePaused) {
-      ui['countdown-title'].textContent = operations.mode === 'ended' ? '서비스 종료'
-        : operations.mode === 'maintenance' ? '서비스 점검 중' : '자동 개발 일시정지';
-      ui['release-message'].textContent = operations.mode === 'ended' ? '서비스 운영이 종료되었습니다.'
-        : operations.mode === 'maintenance' ? '운영 점검을 진행하고 있어요.' : '다음 개발을 기다리고 있어요.';
+      ui['countdown-title'].textContent = operations.mode === 'ended' ? t('endedTitle')
+        : operations.mode === 'maintenance' ? t('maintenanceTitle') : t('developmentTitle');
+      ui['release-message'].textContent = operations.mode === 'ended' ? t('endedMessage')
+        : operations.mode === 'maintenance' ? t('maintenanceMessage') : t('developmentMessage');
     } else if (published) {
-      ui['countdown-title'].textContent = '첫 번째 게임';
-      ui['release-message'].textContent = '첫 게임이 공개되었습니다.';
+      ui['countdown-title'].textContent = t('firstGame');
+      ui['release-message'].textContent = t('gamePublished');
     } else if (remaining === 0) {
-      ui['countdown-title'].textContent = '첫 번째 게임 공개 준비 중';
-      ui['release-message'].textContent = '첫 게임을 준비하고 있어요.';
+      ui['countdown-title'].textContent = t('gamePreparingTitle');
+      ui['release-message'].textContent = t('gamePreparing');
     } else {
-      ui['countdown-title'].textContent = '첫 번째 게임 공개까지';
+      ui['countdown-title'].textContent = t('countdownDefault');
       const values = [Math.floor(remaining / 86400), Math.floor(remaining / 3600) % 24, Math.floor(remaining / 60) % 60, remaining % 60];
       ['count-days', 'count-hours', 'count-minutes', 'count-seconds'].forEach((key, index) => {
         ui[key].textContent = String(values[index]).padStart(2, '0');
       });
-      ui.countdown.setAttribute('aria-label', `공개 목표까지 ${values[0]}일 ${values[1]}시간 ${values[2]}분 ${values[3]}초`);
+      ui.countdown.setAttribute('aria-label', t('countdownTime', { days: values[0], hours: values[1], minutes: values[2], seconds: values[3] }));
     }
-    ui['release-note'].textContent = !statusReady ? (releasePaused ? '운영 상태를 다시 확인하고 있습니다.' : '서버 연결을 확인 중입니다. 기기 시간으로 표시합니다.')
-      : releasePaused ? '운영 재개와 새 공개가 확인되기 전에는 공개 완료로 표시하지 않습니다.'
-      : published ? '공개 상태는 서버에서 확인한 정보입니다.'
-        : remaining === 0 ? '공개 목표 시각이 지났습니다. 준비 상태를 확인하고 있어요.'
-          : '한국시간 기준 · 제작과 검증을 마친 뒤 공개합니다.';
+    ui['release-note'].textContent = !statusReady ? (releasePaused ? t('operationChecking') : t('deviceTime'))
+      : releasePaused ? t('pausedReleaseNote')
+      : published ? t('publishedNote')
+        : remaining === 0 ? t('delayedNote')
+          : t('releaseNote');
     const initialClosed = status?.collection?.initialClosed === true || now >= Date.parse(FIRST_CLOSE);
     const open = proposalsOpen();
     ui['collection-dot'].classList.toggle('is-open', open);
-    ui['collection-label'].textContent = !statusReady ? '제안 모집 상태 확인 중'
-      : operations.proposalsPaused ? (operations.mode === 'ended' ? '제안 접수가 종료되었습니다' : operations.mode === 'maintenance' ? '점검 중 · 제안 접수 일시정지' : '제안 접수 일시정지')
-      : open ? (initialClosed ? '다음 회차 제안을 모집하고 있어요' : '지금, 첫 제안을 모집하고 있어요') : '제안 모집을 준비하고 있어요';
-    ui['collection-deadline'].textContent = operations.proposalsPaused ? '새 제안·수정 접수 중단 · 작성한 내용과 기존 접수 내역은 보존됩니다' : initialClosed
-      ? '첫 회차 모집 마감 · 지금 보낸 제안은 다음 회차에 접수됩니다'
-      : '첫 제안 마감 · 08.31 23:00 KST';
+    ui['collection-label'].textContent = !statusReady ? t('collectionChecking')
+      : operations.proposalsPaused ? (operations.mode === 'ended' ? t('collectionEnded') : operations.mode === 'maintenance' ? t('collectionMaintenance') : t('collectionPaused'))
+      : open ? (initialClosed ? t('collectionNext') : t('collectionOpen')) : t('collectionPreparing');
+    ui['collection-deadline'].textContent = operations.proposalsPaused ? t('deadlinePaused') : initialClosed
+      ? t('deadlineNext')
+      : t('initialDeadline');
     const boundary = `${initialClosed}-${remaining === 0}`;
-    if (lastBoundary && lastBoundary !== boundary && statusReady) schedulePoll(0);
-    lastBoundary = boundary;
-    if (statusReady && sessionReady && user && !document.hidden && !submitting && !authenticating
+    if (!passive && lastBoundary && lastBoundary !== boundary && statusReady) schedulePoll(0);
+    if (!passive) lastBoundary = boundary;
+    if (!passive && statusReady && sessionReady && user && !document.hidden && !submitting && !authenticating
       && quota?.remaining === 0 && quota.nextAvailableAt
       && Date.parse(quota.nextAvailableAt) <= now && now - quotaWakeAttempt > 15000) {
       quotaWakeAttempt = now;
@@ -450,7 +471,7 @@
       const data = await request('/api/session');
       // Both stale successes and stale failures must leave the newer session untouched.
       if (epoch !== authEpoch || sequence !== sessionReadSequence) return { user, csrfToken, googleNonce };
-      if (!data || !data.csrfToken || !data.googleNonce) throw new RequestError('로그인 연결 정보를 확인하지 못했어요. 다시 연결해 주세요.');
+      if (!data || !data.csrfToken || !data.googleNonce) throw new RequestError(m('sessionUnavailable'));
       applySession(data);
       return data;
     } catch (error) {
@@ -481,17 +502,17 @@
     try {
       const data = await request('/api/status');
       if (sequence !== statusReadSequence) return status;
-      if (!data.collection || !data.firstReleaseAt || !data.serverTime) throw new RequestError('모집 상태를 확인하지 못했어요. 다시 연결해 주세요.');
+      if (!data.collection || !data.firstReleaseAt || !data.serverTime) throw new RequestError(m('collectionUnavailable'));
       if (data.service !== undefined && (!data.service || !['active', 'maintenance', 'ended'].includes(data.service.mode)
         || typeof data.service.proposalsEnabled !== 'boolean' || typeof data.service.developmentEnabled !== 'boolean'
-        || typeof data.service.message !== 'string')) throw new RequestError('운영 상태를 확인하지 못했어요. 작성한 내용은 보관됩니다.');
+        || typeof data.service.message !== 'string')) throw new RequestError(m('operationsUnavailable'));
       const wasPaused = operatingState().proposalsPaused;
       status = data;
       submissionBlock = null;
       statusReady = true;
       if (operatingState().proposalsPaused) cancelPausedSend();
       else if (wasPaused && ui['form-feedback'].dataset.reason === 'service') {
-        feedback('제안 접수가 재개됐어요. 작성한 내용을 확인한 뒤 전송 버튼을 눌러주세요. 자동 전송하지 않습니다.');
+        feedback(m('intakeResumed'));
       }
       renderTime();
       renderControls();
@@ -507,20 +528,20 @@
 
   function acceptQuota(value) {
     if (!value || !Number.isInteger(value.remaining) || !Number.isInteger(value.limit)) {
-      throw new RequestError('남은 제출 횟수를 확인하지 못했어요. 다시 연결해 주세요.');
+      throw new RequestError(m('quotaUnavailable'));
     }
     quota = { remaining: Math.max(0, value.remaining), limit: value.limit, nextAvailableAt: value.nextAvailableAt || null };
   }
 
   function safetyView(proposal) {
     const states = {
-      pending: ['안전 검토 대기', '운영자가 검토하기 전에는 개발 입력으로 사용하지 않아요.'],
-      approved: ['안전 승인', '안전 검토를 통과했어요. 게임 반영·공개가 확정된 것은 아니에요.'],
-      held: ['안전 검토 보류', '추가 확인이 필요해 개발 입력을 보류하고 있어요.'],
-      blocked: ['안전 기준 차단', '안전 기준에 따라 개발 입력에서 제외됐어요.'],
+      pending: [t('safetyPendingLabel'), t('safetyPendingMessage')],
+      approved: [t('safetyApprovedLabel'), t('safetyApprovedMessage')],
+      held: [t('safetyHeldLabel'), t('safetyHeldMessage')],
+      blocked: [t('safetyBlockedLabel'), t('safetyBlockedMessage')],
     };
     const status = proposal?.safety?.status;
-    const item = Object.hasOwn(states, status) ? states[status] : ['안전 상태 확인 필요', '안전 승인 여부를 확인하기 전에는 개발 입력으로 사용하지 않아요.'];
+    const item = Object.hasOwn(states, status) ? states[status] : [t('safetyUnknownLabel'), t('safetyUnknownMessage')];
     return { status: Object.hasOwn(states, status) ? status : 'unknown', label: item[0], message: item[1] };
   }
 
@@ -532,7 +553,7 @@
     if (!proposals.length) {
       const empty = document.createElement('p');
       empty.className = 'empty-proposals';
-      empty.textContent = '아직 보낸 제안이 없어요. 첫 아이디어를 남겨주세요.';
+      empty.textContent = t('noProposals');
       ui['proposal-list'].append(empty);
       return;
     }
@@ -548,15 +569,15 @@
       const actions = document.createElement('div');
       actions.className = 'proposal-meta-right';
       const state = document.createElement('span');
-      state.textContent = proposal.editable ? (operatingState().proposalsPaused ? '저장 일시정지' : '수정 가능') : '수정 마감';
+      state.textContent = proposal.editable ? (operatingState().proposalsPaused ? t('editPaused') : t('editable')) : t('editClosed');
       actions.append(state);
       if (proposal.editable) {
         const editButton = document.createElement('button');
         editButton.type = 'button';
         editButton.className = 'text-button proposal-edit';
-        editButton.textContent = '수정 ↗';
+        editButton.textContent = t('edit');
         editButton.disabled = submitting || authenticating;
-        editButton.setAttribute('aria-label', `${proposalDate(proposal.createdAt)}에 보낸 제안 수정`);
+        editButton.setAttribute('aria-label', t('editAria', { date: proposalDate(proposal.createdAt) }));
         editButton.addEventListener('click', () => beginEdit(proposal));
         actions.append(editButton);
       }
@@ -572,7 +593,7 @@
       const safetyMessage = document.createElement('span');
       safetyMessage.textContent = safety.message;
       if (proposal.editable && ['held', 'blocked'].includes(safety.status)) {
-        safetyMessage.textContent += ' 마감 전 내용을 수정하면 다시 검토합니다.';
+        safetyMessage.textContent += t('editReReview');
       }
       safetyNote.append(safetyLabel, safetyMessage);
       meta.append(time, actions);
@@ -595,25 +616,25 @@
         const data = await request('/api/proposals');
         if (authEpoch !== epoch || mutationVersion !== proposalMutationVersion || !user) return;
         if (typeof data.ownerId !== 'string' || !data.ownerId) {
-          throw new RequestError('제출 기록의 계정을 확인하지 못했어요. 연결을 다시 확인해 주세요.');
+          throw new RequestError(m('ownerUnavailable'));
         }
         if (data.ownerId !== expectedOwnerId || data.ownerId !== user.id) {
           // A shared cookie may change before another tab announces its login.
           // Never display this response, restore an edit, or carry its pending send into the new account.
           invalidatePrivate({ identityChanged: true });
-          if (!identityRetry) throw new RequestError('다른 창에서 로그인 상태가 바뀌었어요. 연결을 다시 확인해 주세요.');
+          if (!identityRetry) throw new RequestError(m('otherTabAccount'));
           authEpoch += 1;
           sessionReady = false;
           renderControls();
           try { await refreshSession(); }
           catch (error) {
-            connectionError('로그인 계정을 다시 확인하지 못했어요. 입력한 내용은 보관되며 자동 전송하지 않습니다.');
+            connectionError(m('recheckAccount'));
             throw error;
           }
-          if (!user || !sessionReady) throw new RequestError('로그인 상태가 바뀌었어요. 다시 로그인해 주세요.');
+          if (!user || !sessionReady) throw new RequestError(m('accountChanged'));
           return await loadPrivate({ restoreEdit: false, identityRetry: false });
         }
-        if (!Array.isArray(data.proposals)) throw new RequestError('내 제안 목록을 확인하지 못했어요. 다시 연결해 주세요.');
+        if (!Array.isArray(data.proposals)) throw new RequestError(m('proposalsUnavailable'));
         const hadNoQuota = quota?.remaining === 0;
         acceptQuota(data.quota);
         privateReady = true;
@@ -622,8 +643,8 @@
           const current = proposals.find((entry) => entry.id === editing.id);
           editing.editable = current?.editable === true;
           editing.conflict = Boolean(current && current.revision !== editing.revision);
-          if (!editing.editable) feedback('이 제안은 모집이 마감되어 더 이상 수정할 수 없어요. 작성 중인 내용은 새 제안으로 가져올 수 있습니다.', 'error', { copy: true });
-          else if (editing.conflict) feedback('다른 창에서 이 제안이 수정됐어요. 최신 내용을 확인한 뒤 다시 수정해 주세요. 작성 중인 내용은 그대로 남아 있어요.', 'error', { reload: true, copy: true });
+          if (!editing.editable) feedback(m('editRoundClosed'), 'error', { copy: true });
+          else if (editing.conflict) feedback(m('editChangedSaved'), 'error', { reload: true, copy: true });
         } else if (restoreEdit && editDrafts.activeId && !pending) {
           const previous = proposals.find((entry) => entry.id === editDrafts.activeId);
           if (previous) beginEdit(previous, { focus: false });
@@ -631,13 +652,13 @@
         renderProposals();
         renderControls();
         if (hadNoQuota && quota.remaining > 0 && !editing && ui['form-feedback'].dataset.reason === 'quota') {
-          feedback('제출 횟수가 돌아왔어요. 내용을 확인한 뒤 전송 버튼을 눌러주세요.');
+          feedback(m('quotaReturned'));
         }
         return data;
       } catch (error) {
         if (authEpoch === epoch && mutationVersion === proposalMutationVersion) {
           invalidatePrivate();
-          connectionError('제출 기록을 확인하지 못했어요. 입력한 내용은 그대로 두고 연결을 다시 확인해 주세요.');
+          connectionError(m('recordsUnavailable'));
           if (error.status === 401) {
             applySession({ user: null, csrfToken, googleNonce });
             sessionReady = false;
@@ -678,7 +699,7 @@
       return true;
     } catch (error) {
       pollFailures += 1;
-      connectionError(error.message || '서버 연결을 확인하지 못했어요. 작성한 내용은 보관됩니다.');
+      connectionError(errorMessage(error));
       return false;
     } finally {
       synchronizing = false;
@@ -701,7 +722,7 @@
         lastSyncAt = Date.now();
       } catch (error) {
         pollFailures += 1;
-        connectionError(error.message);
+        connectionError(errorMessage(error));
       } finally { schedulePoll(Math.min(180000, 45000 * 2 ** Math.min(pollFailures, 2))); }
     }, delay);
   }
@@ -717,9 +738,9 @@
     };
     ui.prompt.value = typeof saved?.body === 'string' ? saved.body : proposal.body;
     saveCurrentDraft();
-    feedback(!editing.editable ? '이 제안은 모집이 마감되어 수정할 수 없어요. 작성 중인 내용은 새 제안으로 가져올 수 있습니다.'
-      : editing.conflict ? '다른 창에서 이 제안이 수정됐어요. 최신 내용을 확인한 뒤 다시 수정해 주세요.'
-        : '수정 내용을 저장해도 새 제안 횟수는 차감되지 않아요.', editing.editable && !editing.conflict ? 'success' : 'error',
+    feedback(!editing.editable ? m('editClosedDraft')
+      : editing.conflict ? m('editChanged')
+        : m('editFree'), editing.editable && !editing.conflict ? 'success' : 'error',
     { reload: editing.conflict, copy: !editing.editable || editing.conflict });
     renderControls();
     if (focus) ui.prompt.focus();
@@ -739,12 +760,12 @@
 
   function validateBody(body) {
     if (!body.trim()) {
-      feedback('어떤 게임을 만들고 싶은지 한 문장을 남겨주세요.', 'error');
+      feedback(m('emptyBody'), 'error');
       ui.prompt.focus();
       return false;
     }
     if (encoder.encode(body).length > limits().bytes) {
-      feedback('제안은 UTF-8 기준 2,000바이트까지 보낼 수 있어요. 내용을 조금 줄여주세요.', 'error');
+      feedback(m('bodyTooLarge'), 'error');
       ui.prompt.focus();
       return false;
     }
@@ -756,7 +777,7 @@
     if (!proposalsOpen()) {
       clearPending();
       feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
-        : '지금은 제안을 접수할 수 없어요. 작성한 내용을 보관하고 모집 상태를 다시 확인해 주세요.', 'error',
+        : m('notOpen'), 'error',
       { reason: operatingState().proposalsPaused ? 'service' : '' });
       return;
     }
@@ -774,20 +795,20 @@
         body: editingAtSend ? { id: editingAtSend.id, body, revision: editingAtSend.revision } : { body, requestId },
       });
       if (epoch !== authEpoch || !user) return;
-      if (!data.proposal) throw new RequestError('접수 결과를 확인하지 못했어요. 작성한 내용은 그대로 남아 있습니다.');
+      if (!data.proposal) throw new RequestError(m('resultUnknown'));
       acceptQuota(data.quota);
       proposals = [data.proposal, ...proposals.filter((entry) => entry.id !== data.proposal.id)]
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       if (editingAtSend) {
         endEdit({ removeDraft: true });
-        feedback(`수정 내용을 저장했어요. 새 제안 횟수는 차감되지 않았어요. 현재 상태: ${safetyView(data.proposal).label}.`);
+        feedback(m('editSaved', { status: () => safetyView(data.proposal).label }));
       } else {
         newDraft = '';
         ui.prompt.value = '';
         writeStorage('localStorage', DRAFT_KEY, null);
         attempt = null;
         writeStorage('sessionStorage', ATTEMPT_KEY, null);
-        feedback(`제안이 접수됐어요. 제출 횟수 1회를 사용했으며 현재 상태는 ${safetyView(data.proposal).label}입니다. 모집 마감 전에는 아래에서 수정할 수 있어요.`);
+        feedback(m('submitted', { status: () => safetyView(data.proposal).label }));
       }
       ui['my-proposals'].open = true;
       renderProposals();
@@ -799,25 +820,25 @@
       const safetyRejected = error.data?.error?.code === 'PROPOSAL_SAFETY_REJECTED';
       const editRateLimited = error.data?.error?.code === 'EDIT_RATE_LIMITED';
       const attemptRateLimited = error.data?.error?.code === 'PROPOSAL_ATTEMPT_RATE_LIMITED';
-      const retryWait = error.retryAfterSeconds ? `${error.retryAfterSeconds}초 후` : '잠시 후';
+      const retryWait = error.retryAfterSeconds ? m('retrySeconds', { seconds: error.retryAfterSeconds }) : m('retrySoon');
       feedback(safetyRejected
-        ? `${editingAtSend ? '수정본을 저장하지 않았어요.' : '제안을 접수하지 않았어요.'} 안전 기준을 벗어난 요청은 받을 수 없어요. 과도한 선정성·폭력, 개인정보 또는 안전 규칙을 무력화하는 지시를 제외해 주세요. 작성한 내용은 보관되며 제출 횟수는 차감되지 않았어요.`
-        : editRateLimited ? `너무 빠르게 연속 수정했어요. ${retryWait} 다시 저장해 주세요. 작성한 내용과 제출 횟수는 그대로입니다.`
-          : attemptRateLimited ? `요청이 짧은 시간에 너무 많았어요. ${retryWait} 다시 시도해 주세요. 작성한 내용과 제출 횟수는 그대로입니다.`
+        ? m('safetyRejected', { result: m(editingAtSend ? 'rejectedEditPrefix' : 'rejectedNewPrefix') })
+        : editRateLimited ? m('editRateLimited', { wait: retryWait })
+          : attemptRateLimited ? m('attemptRateLimited', { wait: retryWait })
           : error.status === 0 && !editingAtSend
-        ? '접수 결과를 확인하지 못했어요. 작성한 내용은 보관됩니다. 다시 전송해도 같은 요청이 중복 접수되지 않아요.'
-        : error.message, 'error', { reason: safetyRejected ? 'safety' : error.status === 429 && !editRateLimited && !attemptRateLimited ? 'quota' : '' });
+        ? m('sendUnknown')
+        : errorMessage(error), 'error', { reason: safetyRejected ? 'safety' : error.status === 429 && !editRateLimited && !attemptRateLimited ? 'quota' : '' });
       if (isServiceRejection(error)) {
         applyServiceRejection(error);
         await refreshStatus().catch(() => {});
       } else if (error.status === 409 && editingAtSend) {
         editing.conflict = true;
         await loadPrivate().catch(() => {});
-        feedback(error.message, 'error', { reload: editing?.editable === true, copy: Boolean(editing) });
+        feedback(errorMessage(error), 'error', { reload: editing?.editable === true, copy: Boolean(editing) });
       } else if (error.status === 401 || error.status === 403) {
         if (error.status === 401) {
           applySession({ user: null, csrfToken, googleNonce });
-          feedback('로그인 상태를 다시 확인해 주세요. 작성한 내용은 보관됩니다. 로그인한 뒤 다시 전송해 주세요.', 'error');
+          feedback(m('loginExpired'), 'error');
         }
         await refreshSession().catch(() => { sessionReady = false; });
       }
@@ -834,20 +855,21 @@
     if (!validPending(queued) || !user || editing) return;
     if (composing || !proposalsOpen()) {
       feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
-        : '작성 내용과 접수 상태를 확인한 뒤 전송 버튼을 다시 눌러주세요. 자동 제출하지 않았어요.', 'error',
+        : m('autoSendNotReady'), 'error',
       { reason: operatingState().proposalsPaused ? 'service' : '' });
       return;
     }
     if (ui.prompt.value !== queued.body) {
-      feedback('작성한 내용이 달라져 자동 제출하지 않았어요. 내용을 확인한 뒤 전송해 주세요.');
+      feedback(m('autoSendChanged'));
       return;
     }
     if (!privateReady || !quota) {
-      feedback('남은 횟수를 확인하지 못해 자동 제출하지 않았어요. 작성한 내용을 확인한 뒤 다시 전송해 주세요.', 'error');
+      feedback(m('autoSendNoQuotaInfo'), 'error');
       return;
     }
     if (quota.remaining <= 0) {
-      feedback(`남은 횟수가 없어 자동 제출하지 않았어요.${quota.nextAvailableAt ? ` ${shortTime(quota.nextAvailableAt, true)} KST부터` : ' 횟수가 돌아오면'} 다시 전송해 주세요. 작성한 내용은 그대로 남아 있어요.`, 'error', { reason: 'quota' });
+      const nextTime = quota.nextAvailableAt;
+      feedback(m('autoSendNoQuota', { when: nextTime ? m('nextSlotTime', { time: () => shortTime(nextTime, true) }) : m('nextSlotAvailable') }), 'error', { reason: 'quota' });
       return;
     }
     await sendProposal(queued.body, queued.requestId);
@@ -867,18 +889,18 @@
       const timer = setTimeout(() => {
         script.remove();
         googleLoadPromise = null;
-        reject(new Error('Google 로그인에 연결하지 못했어요. 네트워크 또는 콘텐츠 차단 설정을 확인하고 다시 시도해 주세요.'));
+        reject(new RequestError(m('googleTimeout')));
       }, 15000);
       script.onload = () => {
         clearTimeout(timer);
         if (window.google?.accounts?.id) resolve();
-        else { googleLoadPromise = null; reject(new Error('Google 로그인 화면을 준비하지 못했어요. 다시 시도해 주세요.')); }
+        else { googleLoadPromise = null; reject(new RequestError(m('googleUnavailable'))); }
       };
       script.onerror = () => {
         clearTimeout(timer);
         googleLoadPromise = null;
         script.remove();
-        reject(new Error('Google 로그인에 연결하지 못했어요. 네트워크 또는 콘텐츠 차단 설정을 확인해 주세요.'));
+        reject(new RequestError(m('googleConnection')));
       };
       document.head.append(script);
     });
@@ -914,13 +936,14 @@
       || !window.google?.accounts?.id) return;
     const availableWidth = Math.floor(ui['google-signin'].getBoundingClientRect().width);
     const width = Math.min(350, availableWidth);
-    if (width <= 0 || (generation === googleButtonGeneration && width === googleButtonWidth)) return;
+    if (width <= 0 || (generation === googleButtonGeneration && width === googleButtonWidth && googleButtonLocale === i18n.locale)) return;
     googleButtonGeneration = generation;
     googleButtonWidth = width;
+    googleButtonLocale = i18n.locale;
     ui['google-signin'].replaceChildren();
     window.google.accounts.id.renderButton(ui['google-signin'], {
       type: 'standard', theme: 'outline', size: 'large', text: 'continue_with',
-      shape: 'rectangular', width, locale: 'ko', logo_alignment: 'left',
+      shape: 'rectangular', width, locale: i18n.locale, logo_alignment: 'left',
     });
   }
 
@@ -930,7 +953,7 @@
     googleButtonWidth = 0;
     ui['retry-google'].hidden = true;
     ui['google-signin'].replaceChildren();
-    loginMessage('Google 로그인 연결을 준비하고 있습니다.');
+    loginMessage(m('loginPreparing'));
     try {
       await refreshSession();
       if (generation !== googleGeneration || !ui['login-dialog'].open) return;
@@ -942,12 +965,12 @@
           await resumeExplicitSend();
         } catch (error) {
           clearPending();
-          feedback('접수 상태를 확인하지 못해 자동 제출하지 않았어요. 작성한 내용은 보관됩니다. 연결을 확인한 뒤 다시 전송해 주세요.', 'error');
-          connectionError(error.message);
+          feedback(m('autoSendUnprepared'), 'error');
+          connectionError(errorMessage(error));
         }
         return;
       }
-      if (!status?.googleClientId) throw new Error('Google 로그인 설정을 확인하지 못했어요. 입력한 내용은 보관됩니다. 잠시 후 다시 연결해 주세요.');
+      if (!status?.googleClientId) throw new RequestError(m('googleConfig'));
       await loadGoogle();
       if (generation !== googleGeneration || !ui['login-dialog'].open) return;
       window.google.accounts.id.initialize({
@@ -956,10 +979,10 @@
         ux_mode: 'popup', context: 'signin',
       });
       renderGoogleButton(generation);
-      loginMessage(loginPurpose === 'admin' ? '관리자 계정으로 Google 로그인을 완료해 주세요.' : 'Google 버튼을 눌러 로그인해 주세요.');
+      loginMessage(loginPurpose === 'admin' ? m('googleAdminPrompt') : m('googlePrompt'));
     } catch (error) {
       if (generation !== googleGeneration) return;
-      loginMessage(error.message, true);
+      loginMessage(errorMessage(error), true);
       ui['retry-google'].hidden = false;
     }
   }
@@ -970,14 +993,7 @@
     saveCurrentDraft();
     loginPurpose = forAdmin ? 'admin' : forSubmission ? 'submission' : 'login';
     loginReturnFocus = document.activeElement;
-    ui['login-title'].textContent = forAdmin ? '관리자 로그인' : '당신의 아이디어를\n이어갈 차례.';
-    ui['login-description'].textContent = forAdmin
-      ? '관리자 계정을 다시 확인합니다.\nGoogle 로그인을 완료하면 관리자 화면으로 이동해요.'
-      : 'Google 계정으로 로그인하고 제안을 남겨주세요.\n최근 60분 동안 최대 3개의 제안을 보낼 수 있어요.';
-    ui['login-draft-note'].textContent = forAdmin
-      ? '제안과 수정 초안은 이 브라우저에 보관합니다. 관리자 로그인으로 제안이 전송되지는 않아요.' : forSubmission
-      ? '작성한 내용은 보관됩니다. 로그인 후 남은 횟수가 있으면 이 제안을 바로 접수해요.'
-      : '작성한 내용은 이 브라우저에 보관됩니다. 로그인만으로 제안이 전송되지는 않아요.';
+    renderLoginChrome();
     if (!ui['login-dialog'].open) ui['login-dialog'].showModal();
     await prepareGoogle();
   }
@@ -993,7 +1009,7 @@
   async function handleGoogleCredential(response, generation) {
     if (authenticating || generation !== googleGeneration || !ui['login-dialog'].open) return;
     if (!response.credential) {
-      loginMessage('로그인을 완료하지 못했어요. Google 버튼을 눌러 다시 시도해 주세요.', true);
+      loginMessage(m('googleIncomplete'), true);
       return;
     }
     const forAdmin = loginPurpose === 'admin';
@@ -1001,7 +1017,7 @@
     authenticating = true;
     ui['close-login'].disabled = true;
     ui['google-button-area'].inert = true;
-    loginMessage(forAdmin ? 'Google 계정과 관리자 권한을 확인하고 있어요.' : 'Google 계정과 남은 제출 횟수를 확인하고 있어요.');
+    loginMessage(forAdmin ? m('checkingAdmin') : m('checkingLoginQuota'));
     renderControls();
     try {
       const data = await request('/api/login', { method: 'POST', body: { credential: response.credential } });
@@ -1011,7 +1027,7 @@
       applySession(data);
       freshLoginCompleted = true;
       await refreshSession();
-      if (!user) throw new Error('로그인 상태를 확인하지 못했어요. 다시 시도해 주세요.');
+      if (!user) throw new RequestError(m('loginUnavailable'));
       if (forAdmin) {
         clearPending();
         authenticating = false;
@@ -1019,7 +1035,7 @@
         writeStorage('localStorage', AUTH_PULSE_KEY, String(Date.now()));
         if (user.isAdmin === true) navigateToAdmin();
         else {
-          feedback('로그인한 계정에는 관리자 권한이 없어요. 제안은 전송하지 않았으며 작성한 내용은 보관됩니다.', 'error');
+          feedback(m('adminDenied'), 'error');
           await loadPrivate().catch(() => {});
         }
         return;
@@ -1029,7 +1045,7 @@
       await loadPrivate();
       authenticating = false;
       closeLogin(true);
-      feedback(operatingState().proposalsPaused ? `로그인했어요. ${pausedSubmissionMessage()}` : '로그인했어요. 아이디어를 남겨주세요.',
+      feedback(operatingState().proposalsPaused ? m('loggedInPaused', { notice: pausedSubmissionMessage() }) : m('loggedIn'),
         operatingState().proposalsPaused ? 'error' : 'success', { reason: operatingState().proposalsPaused ? 'service' : '' });
       writeStorage('localStorage', AUTH_PULSE_KEY, String(Date.now()));
       await resumeExplicitSend();
@@ -1038,10 +1054,10 @@
         clearPending();
         authenticating = false;
         closeLogin();
-        feedback('로그인했지만 제출 준비를 마치지 못했어요. 작성한 내용은 보관됩니다. 연결을 다시 확인한 뒤 전송해 주세요.', 'error');
+        feedback(m('loginPreparationFailed'), 'error');
       } else {
         if (forAdmin) clearPending();
-        loginMessage(error.message, true);
+        loginMessage(errorMessage(error), true);
         ui['retry-google'].hidden = false;
         googleButtonGeneration = -1;
         ui['google-signin'].replaceChildren();
@@ -1070,11 +1086,11 @@
       window.google?.accounts?.id?.disableAutoSelect();
       ui['proposal-list'].replaceChildren();
       ui['my-proposals'].hidden = true;
-      feedback('로그아웃했어요. 작성 중이던 새 제안은 이 브라우저에 남아 있어요.');
+      feedback(m('loggedOut'));
       writeStorage('localStorage', AUTH_PULSE_KEY, String(Date.now()));
       await refreshSession();
     } catch (error) {
-      feedback(user ? '로그아웃을 확인하지 못했어요. 연결을 확인한 뒤 다시 눌러주세요.' : '로그아웃했어요. 다시 로그인하려면 서버 연결을 확인해 주세요.', 'error');
+      feedback(user ? m('logoutFailed') : m('logoutReconnect'), 'error');
       if (!user) sessionReady = false;
     } finally {
       authenticating = false;
@@ -1107,14 +1123,14 @@
     saveCurrentDraft();
     if (!validateBody(body)) return;
     if (!statusReady || !sessionReady) {
-      feedback('서버와 로그인 연결을 먼저 확인해 주세요. 작성한 내용은 그대로 남아 있어요.', 'error');
+      feedback(m('connectionFirst'), 'error');
       await synchronize();
       return;
     }
     if (!proposalsOpen()) {
       clearPending();
       feedback(operatingState().proposalsPaused ? pausedSubmissionMessage()
-        : '지금은 제안을 접수할 수 없어요. 작성한 내용은 보관되며 자동 전송하지 않습니다.', 'error',
+        : m('notAccepting'), 'error',
       { reason: operatingState().proposalsPaused ? 'service' : '' });
       return;
     }
@@ -1126,7 +1142,7 @@
     if (editing && (!editing.editable || editing.conflict)) return;
     if (!editing && (!quota || quota.remaining <= 0)) {
       clearPending();
-      feedback('지금은 제안을 보낼 수 있는 횟수가 없어요. 표시된 시각 이후에 전송 버튼을 다시 눌러주세요.', 'error', { reason: 'quota' });
+      feedback(m('noQuota'), 'error', { reason: 'quota' });
       await loadPrivate().catch(() => {});
       return;
     }
@@ -1159,7 +1175,7 @@
   ui['cancel-edit'].addEventListener('click', () => {
     if (submitting) return;
     endEdit();
-    feedback('새 제안 작성으로 돌아왔어요. 수정 중인 내용은 이 브라우저에 보관됩니다.');
+    feedback(m('editCancelled'));
     ui.prompt.focus();
   });
   ui['reload-edit'].addEventListener('click', () => {
@@ -1173,11 +1189,11 @@
     ui.prompt.value = body;
     saveCurrentDraft();
     renderControls();
-    feedback('새 제안으로 준비했어요. 전송하면 제출 횟수 1회를 사용합니다.');
+    feedback(m('editCopied'));
     ui.prompt.focus();
   });
   window.addEventListener('online', () => { synchronize(); });
-  window.addEventListener('offline', () => { connectionError('인터넷 연결이 끊겼어요. 작성한 내용은 보관되며, 연결이 돌아와도 자동 전송하지 않습니다.'); });
+  window.addEventListener('offline', () => { connectionError(m('offline')); });
   window.addEventListener('pageshow', (event) => { if (event.persisted) synchronize(); });
   window.addEventListener('storage', (event) => {
     if (event.key === AUTH_PULSE_KEY && !submitting && !authenticating) synchronize();
@@ -1187,8 +1203,35 @@
   });
   window.addEventListener('resize', () => { renderGoogleButton(); });
 
-  renderControls();
-  renderTime();
-  setInterval(renderTime, 1000);
-  synchronize({ resumePending: true });
+  function renderLoginChrome() {
+    const forAdmin = loginPurpose === 'admin';
+    ui['login-title'].textContent = t(forAdmin ? 'adminLoginTitle' : 'loginTitle');
+    ui['login-description'].textContent = t(forAdmin ? 'adminLoginDescription' : 'loginDescription');
+    ui['login-draft-note'].textContent = loginPurpose === 'submission' && operatingState().proposalsPaused
+      ? localize(pausedSubmissionMessage())
+      : t(forAdmin ? 'adminLoginNote' : loginPurpose === 'submission' ? 'submissionLoginNote' : 'headerLoginNote');
+  }
+
+  function renderLocale() {
+    // Language changes only redraw copy: no save, login, quota fetch or pending send.
+    renderControls();
+    renderTime({ passive: true });
+    renderProposals();
+    renderLoginChrome();
+    ui['form-message'].textContent = localize(feedbackMessage);
+    ui['connection-message'].textContent = localize(connectionMessage);
+    ui['login-message'].textContent = localize(currentLoginMessage);
+    document.querySelector('meta[property="og:locale"]')?.setAttribute('content', i18n.locale === 'ko' ? 'ko_KR' : 'en_US');
+    renderGoogleButton();
+  }
+
+  i18n.bindLanguageControls();
+  i18n.apply();
+  i18n.subscribe(renderLocale);
+  renderLocale();
+  i18n.init().then(() => {
+    renderLocale();
+    setInterval(renderTime, 1000);
+    synchronize({ resumePending: true });
+  });
 })();

@@ -8,6 +8,7 @@
 - 최초로 확인된 관리자 Google 계정 ID(sub)를 서버에 고정한다. 브라우저가 보낸 이메일·이름·권한·로컬 저장소로 관리자를 지정하지 않는다. 일반 회원에게 관리자 승격 기능을 제공하지 않는다.
 - `/admin` HTML과 `/api/admin`의 모든 조회·변경을 서버에서 검사한다. 비로그인은 로그인으로 안내하고 일반 회원은 거부한다. 모든 관리자 응답은 캐시하지 않는다. 관리자 자격 증명이나 데이터는 공개 HTML에 넣지 않는다.
 - 변경에는 CSRF·Origin 검사, 요청 식별자, 최신 revision, 사유와 감사 기록이 필요하다. 서비스 종료·종료 후 재개는 최근 15분 이내 Google 로그인과 확인 문구를 추가로 요구한다. 관리자는 자신을 이용 정지할 수 없다.
+- 관리자 화면도 영어 기본·한국 접속 시 한국어·수동 언어 선택을 제공한다. 종료 확인은 정확한 `END SERVICE`, 재개 확인은 `RESUME SERVICE`로 언어와 무관하게 고정한다. 서버는 기존 `서비스 종료`, `서비스 재개`도 해당 작업에만 호환 허용한다. 언어 전환은 사유·체크박스·확인 입력·미확정 요청을 바꾸거나 재전송하지 않는다. [언어 지원 기준](localization.md)을 따른다.
 
 서버 토큰 검증과 변경되지 않는 Google `sub`를 계정 식별에 사용하는 근거는 [Google ID 토큰 서버 검증 안내](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token)를 따른다. 실제 운영자 로그인 검증은 Google 운영 origin 허용 설정이 정상인 환경에서 별도로 수행한다.
 
@@ -71,7 +72,7 @@
 - `create_version`: `label`, `summary`
 - `retry_version`: `versionId`, `revision` — 실패·취소 기록을 유지하고 새 대기 요청을 생성
 - `cancel_version`: `versionId`, `revision` — 대기 요청은 취소, 실행 중 요청에는 중단 요청 표시
-- `set_service`: `mode`, `proposalsEnabled`, `developmentEnabled`, `message`, `revision`, 필요 시 `confirmation=서비스 종료|서비스 재개`
+- `set_service`: `mode`, `proposalsEnabled`, `developmentEnabled`, `message`, `revision`, 필요 시 `confirmation=END SERVICE|RESUME SERVICE`(각 작업의 기존 한국어 문구도 호환 허용)
 
 개발 요청 상태는 `queued|running|failed|completed|cancelled`다. `completed`는 작업 완료 기록이며, 그 값만으로 게임 공개 여부가 바뀌지 않는다. 관리자 API로 실행·검증 성공 상태를 직접 입력하지 않는다. 작업자 기록과 검증된 게임 공개는 별도 절차다.
 

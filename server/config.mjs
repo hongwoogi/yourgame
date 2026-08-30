@@ -12,6 +12,10 @@ export const GOOGLE_NONCE_MS = 10 * 60 * 1000;
 export const SESSION_CREATION_LIMIT = 30;
 export const SESSION_CREATION_WINDOW_MS = 60 * 1000;
 
+export function isTrustedVercelGeoDeployment(env = process.env) {
+  return env.VERCEL === '1' && ['production', 'preview'].includes(env.VERCEL_ENV);
+}
+
 export function readConfig(env = process.env) {
   const production = env.NODE_ENV === 'production' || env.VERCEL === '1';
   const configuredOrigin = env.APP_ORIGIN || (production ? 'https://yourga.me' : 'http://localhost:3000');
@@ -38,6 +42,7 @@ export function readConfig(env = process.env) {
   return {
     production,
     trustVercelIpHeader: env.VERCEL === '1',
+    trustVercelGeoHeader: isTrustedVercelGeoDeployment(env),
     appOrigin: parsed.origin,
     secureCookies: parsed.protocol === 'https:',
     databaseUrl,

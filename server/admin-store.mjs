@@ -14,6 +14,7 @@ const iso = value => new Date(Number(value)).toISOString();
 const ID = /^[A-Za-z0-9_-]{8,128}$/;
 const RUN_STATUSES = ['queued', 'running', 'failed', 'completed', 'cancelled'];
 const MODERATION = ['pending', 'reviewed', 'excluded'];
+const confirmationTokens = mode => mode === 'ended' ? ['END SERVICE', '서비스 종료'] : ['RESUME SERVICE', '서비스 재개'];
 const FIELDS = {
   set_user_status: ['userId', 'status', 'revision'],
   moderate_proposal: ['proposalId', 'moderation', 'revision'],
@@ -409,7 +410,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
       if (input.confirmation !== undefined && typeof input.confirmation !== 'string') throw invalid();
       targetStatement = { sql: 'SELECT * FROM service_control WHERE id = 1', args: [] };
       const noSensitiveTransition = mode === 'ended' ? "mode = 'ended'" : "mode != 'ended'";
-      const confirmation = mode === 'ended' ? '서비스 종료' : '서비스 재개';
+      const confirmations = confirmationTokens(mode);
       primary = {
         sql: `UPDATE service_control SET mode = ?, proposals_enabled = ?, development_enabled = ?, message = ?,
           revision = revision + 1, updated_at = ${databaseClockSql}
@@ -417,9 +418,9 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
             AND (${noSensitiveTransition} OR EXISTS (${actorSql}
               AND a.authenticated_at > ${databaseClockSql} - ${ADMIN_AUTH_MAX_AGE_MS}
               AND a.authenticated_at <= ${databaseClockSql}))
-            AND (${noSensitiveTransition} OR ? = ?)`,
+            AND (${noSensitiveTransition} OR ? IN (?, ?))`,
         args: [mode, mode === 'ended' ? 0 : Number(input.proposalsEnabled), mode === 'ended' ? 0 : Number(input.developmentEnabled),
-          message, expectedRevision, ...command.args, session?.tokenHash || '', input.confirmation || '', confirmation],
+          message, expectedRevision, ...command.args, session?.tokenHash || '', input.confirmation || '', ...confirmations],
       };
       if (mode !== 'active' || !input.developmentEnabled) afterAudit.push({
         sql: `UPDATE development_runs SET cancel_requested = 1, revision = revision + 1, updated_at = ${databaseClockSql}
@@ -471,8 +472,8 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
           || Number(actor.authenticated_at) > Number(actor.now_ms))) {
         throw new ApiError(403, 'ADMIN_REAUTH_REQUIRED', '서비스 종료·재개 전에는 15분 이내 Google 재로그인이 필요합니다.');
       }
-      if (sensitive && input.confirmation !== (input.mode === 'ended' ? '서비스 종료' : '서비스 재개')) {
-        throw new ApiError(422, 'CONFIRMATION_REQUIRED', `확인 문구 '${input.mode === 'ended' ? '서비스 종료' : '서비스 재개'}'를 정확히 입력해 주세요.`);
+      if (sensitive && !confirmationTokens(input.mode).includes(input.confirmation)) {
+        throw new ApiError(422, 'CONFIRMATION_REQUIRED', `확인 문구 '${confirmationTokens(input.mode)[0]}'를 정확히 입력해 주세요.`);
       }
     }
     throw new ApiError(409, 'ADMIN_ACTION_CONFLICT', '현재 상태에서는 이 작업을 실행할 수 없습니다. 최신 상태를 확인해 주세요.');

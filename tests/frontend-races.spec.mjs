@@ -85,7 +85,7 @@ async function fixture(page) {
     }
     return reply({ error: { code: 'UNEXPECTED_REQUEST', message: 'Unexpected regression-fixture request.' } }, 400);
   });
-  await page.goto('/');
+  await page.goto('/?lang=ko');
   await expect(page.locator('#user-name')).toHaveText(ALICE.user.name);
   await expect(page.locator('#logout-button')).toBeEnabled();
   await expect(page.locator('.proposal-body')).toHaveText('Alice private proposal');

@@ -1,137 +1,129 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101510">
-  <meta name="description" content="모두의 프롬프트로 함께 만드는 하나의 PC·모바일 싱글플레이 로그라이크. 제안 수집, Codex 자동 개발, 실행 검증, 공개를 거치며 진화하는 게임, yourga.me.">
-  <title>yourga.me — 프롬프트로 진화하는 로그라이크</title>
+  <meta name="description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Share your ideas, then follow the planned cycle of review, Codex development, testing, and release. The first game is still in development.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" data-i18n-content="public.pageTitle" content="yourga.me — One roguelike, shaped by your prompts">
+  <meta property="og:description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Share your ideas, then follow the planned cycle of review, Codex development, testing, and release. The first game is still in development.">
+  <meta property="og:locale" content="en_US">
+  <title data-i18n="public.pageTitle">yourga.me — One roguelike, shaped by your prompts</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23101510'/%3E%3Cpath d='M10 10h7v7h6v-7h7v13h-7v7h-7V20h-6z' fill='%23d0ef8a'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </head>
 <body data-app="yourgame">
-  <a class="skip-link" href="#prompt">제안 입력으로 건너뛰기</a>
+  <a class="skip-link" href="#prompt" data-i18n="public.skipLink">Skip to the idea form</a>
   <div class="desktop-app">
     <header class="masthead wrap">
-      <a class="wordmark" href="/" aria-label="yourga.me 홈">
+      <a class="wordmark" href="/" aria-label="yourga.me home" data-i18n-aria-label="public.home">
         <svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 3h7v7h8V3h7v14h-7v8h-8V17H3V3Z" fill="currentColor"/></svg>
         <span>yourga<span class="wordmark-dot">.</span>me</span>
       </a>
       <div class="masthead-right">
-        <span class="experiment-label">A ROGUELIKE WE MAKE TOGETHER</span>
+        <span class="experiment-label" data-i18n="public.mastheadTagline">A ROGUELIKE WE MAKE TOGETHER</span>
+        <label class="language-control">
+          <span class="sr-only" data-i18n="public.language">Language</span>
+          <select id="language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language">
+            <option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option>
+          </select>
+        </label>
         <div id="account-area" class="account-area">
           <span id="user-name" class="user-name" hidden></span>
-          <a class="button button-quiet admin-link" id="admin-link" href="/admin" hidden>관리자</a>
-          <button class="button button-quiet" id="login-button" type="button" disabled>로그인 <span aria-hidden="true">↗</span></button>
-          <button class="button button-quiet" id="logout-button" type="button" hidden>로그아웃</button>
+          <a class="button button-quiet admin-link" id="admin-link" href="/admin" hidden data-i18n="public.admin">Admin</a>
+          <button class="button button-quiet" id="login-button" type="button" disabled><span class="button-copy" data-i18n="public.logIn">Log in</span> <span aria-hidden="true">↗</span></button>
+          <button class="button button-quiet" id="logout-button" type="button" hidden data-i18n="public.logOut">Log out</button>
         </div>
       </div>
     </header>
     <main class="wrap" id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="little-cross" aria-hidden="true">✳</span> A ROGUELIKE, SHAPED BY YOUR PROMPTS</p>
-          <h1 id="hero-title">당신의 프롬프트로,<br><span>진화하는 로그라이크.</span></h1>
-          <p class="hero-description">모두의 제안으로 함께 만드는 하나의 PC·모바일 싱글플레이 로그라이크.<br>프롬프트를 모아 정리하고, Codex가 자동 개발해 검증 후 공개합니다.</p>
+          <p class="eyebrow"><span class="little-cross" aria-hidden="true">✳</span><span data-i18n="public.heroEyebrow">A ROGUELIKE, SHAPED BY YOUR PROMPTS</span></p>
+          <h1 id="hero-title"><span data-i18n="public.heroLead">Your prompts.</span><br><span class="hero-accent" data-i18n="public.heroAccent">One evolving roguelike.</span></h1>
+          <p class="hero-description" data-i18n="public.heroDescription">One single-player roguelike for desktop and mobile, shaped by everyone's ideas. Submit a prompt; Codex will build from reviewed ideas, with each version tested before release.</p>
         </div>
         <div class="release-panel">
-          <div class="release-heading"><span class="index-label">01 / FIRST RELEASE</span><svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20 20 4M4 4h16v16" stroke="currentColor" stroke-width="1.3"/></svg></div>
-          <h2 class="countdown-title" id="countdown-title">첫 번째 게임 공개까지</h2>
-          <div class="countdown" id="countdown" aria-label="공개 목표까지 남은 시간" aria-live="off">
-            <div class="time-unit"><span id="count-days">00</span><small>일</small></div><span class="time-separator" aria-hidden="true">:</span>
-            <div class="time-unit"><span id="count-hours">00</span><small>시간</small></div><span class="time-separator" aria-hidden="true">:</span>
-            <div class="time-unit"><span id="count-minutes">00</span><small>분</small></div><span class="time-separator" aria-hidden="true">:</span>
-            <div class="time-unit"><span id="count-seconds">00</span><small>초</small></div>
+          <div class="release-heading"><span class="index-label" data-i18n="public.firstReleaseIndex">01 / FIRST RELEASE</span><svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20 20 4M4 4h16v16" stroke="currentColor" stroke-width="1.3"/></svg></div>
+          <h2 class="countdown-title" id="countdown-title">Until the first release</h2>
+          <div class="countdown" id="countdown" aria-label="Time until the planned first release" aria-live="off">
+            <div class="time-unit"><span id="count-days">00</span><small data-i18n="public.days">days</small></div><span class="time-separator" aria-hidden="true">:</span>
+            <div class="time-unit"><span id="count-hours">00</span><small data-i18n="public.hours">hours</small></div><span class="time-separator" aria-hidden="true">:</span>
+            <div class="time-unit"><span id="count-minutes">00</span><small data-i18n="public.minutes">min</small></div><span class="time-separator" aria-hidden="true">:</span>
+            <div class="time-unit"><span id="count-seconds">00</span><small data-i18n="public.seconds">sec</small></div>
           </div>
           <p id="release-message" class="release-message" hidden></p>
-          <div class="release-date"><span>첫 공개 목표</span><time datetime="2026-09-01T00:00:00+09:00">2026.09.01 <span class="date-divider">/</span> 00:00 <abbr title="한국 표준시">KST</abbr></time></div>
-          <p class="release-note" id="release-note">서버 기준 시각을 확인하고 있습니다.</p>
+          <div class="release-date"><span data-i18n="public.targetLabel">Planned first release</span><time datetime="2026-09-01T00:00:00+09:00" data-i18n="public.targetDate" data-i18n-title="public.koreaTime" title="Korea Standard Time (UTC+9)">Sep 1, 2026 / 00:00 KST</time></div>
+          <p class="release-note" id="release-note">Checking the server time.</p>
         </div>
       </section>
       <div class="connection-notice" id="connection-notice" role="status" hidden>
-        <p id="connection-message"></p><button type="button" id="retry-connection" class="text-button">다시 연결 <span aria-hidden="true">↻</span></button>
+        <p id="connection-message"></p><button type="button" id="retry-connection" class="text-button"><span class="button-copy" data-i18n="public.reconnect">Reconnect</span> <span aria-hidden="true">↻</span></button>
       </div>
       <section class="service-notice" id="service-notice" role="status" aria-live="polite" aria-labelledby="service-title" hidden>
-        <h2 id="service-title">운영 안내</h2>
-        <p id="service-message" hidden></p>
-        <p id="service-detail"></p>
+        <h2 id="service-title">Service notice</h2><p id="service-message" hidden></p><p id="service-detail"></p>
       </section>
       <section class="submission-section" aria-labelledby="submission-title">
         <div class="collection-line">
-          <p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">제안 모집 상태 확인 중</span></p>
-          <p id="collection-deadline" class="collection-deadline">첫 제안 마감 · 08.31 23:00 KST</p>
+          <p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">Checking submissions</span></p>
+          <p id="collection-deadline" class="collection-deadline">First-round deadline · Aug 31, 23:00 KST</p>
         </div>
         <form id="prompt-form" class="prompt-form" novalidate>
           <div class="prompt-heading">
-            <div><p class="index-label">YOUR IDEA, OUR NEXT CHAPTER</p><h2 id="submission-title"><label for="prompt">이런 게임이면 좋겠어요.</label></h2></div>
-            <div class="quota" id="quota-container"><span id="quota-status">로그인 후 제안할 수 있어요</span><small id="quota-note">최근 60분 동안 최대 3개</small></div>
+            <div><p class="index-label" data-i18n="public.formEyebrow">YOUR IDEA, OUR NEXT CHAPTER</p><h2 id="submission-title"><label for="prompt" data-i18n="public.formTitle">What would you add to this game?</label></h2></div>
+            <div class="quota" id="quota-container"><span id="quota-status">Log in to share an idea</span><small id="quota-note">Up to 3 submissions per rolling 60 minutes</small></div>
           </div>
-          <div id="edit-banner" class="edit-banner" hidden><span>내 제안 수정 중 <span class="muted">· 제출 횟수를 사용하지 않아요</span></span><button id="cancel-edit" class="text-button" type="button">수정 취소 <span aria-hidden="true">×</span></button></div>
-          <textarea id="prompt" name="prompt" rows="4" placeholder="예: 탐험할 때마다 지형이 달라지고, 주운 재료로 무기를 만들 수 있으면 좋겠어요." aria-describedby="prompt-hint byte-count prompt-safety-note" spellcheck="false" autocomplete="off"></textarea>
-          <div class="prompt-bottom-line"><p id="prompt-hint">작은 아이디어도 좋아요. 구체적일수록 도움이 됩니다.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
-          <p class="prompt-safety-note" id="prompt-safety-note">접수한 제안은 안전 검토 후 개발 후보가 됩니다. 신규 제안은 검토 대기 중에도 제출 횟수 1회를 사용하며, 수정본은 다시 검토합니다.</p>
-          <details class="safety-guidance" id="safety-guidance"><summary>제안 안전 기준 · Teen 수준 목표 <span aria-hidden="true">＋</span></summary><div><p>ESRB Teen 수준 이하를 개발 목표로 삼습니다. 공식 등급을 취득했다는 뜻은 아닙니다.</p><ul><li>일반적인 판타지 전투 요구는 제안할 수 있어요. 과도한 선정성, 성적 행위·대상화·착취, 고어·신체 훼손과 잔혹하거나 과도하게 사실적인 폭력 묘사는 받지 않습니다.</li><li>현실의 위험 행동을 조장하는 안내, 혐오·괴롭힘·협박과 개인정보 공개는 받지 않습니다.</li><li>안전 규칙 무력화, 시스템 권한 변경, 개인정보·비밀값을 요구하는 지시는 받지 않습니다.</li></ul><p>현재는 기초 검사와 운영자 검토를 사용합니다. 접수나 안전 승인은 게임 반영·공개를 뜻하지 않으며, 위험한 입력을 완벽하게 판별한다고 보장하지 않습니다.</p></div></details>
-          <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden>최신 내용 불러오기</button><button id="copy-edit" type="button" class="text-button" hidden>새 제안으로 가져오기</button></div></div>
-          <div class="prompt-actions"><p class="submission-rules">한 번에 2,000바이트까지<br><span>모집 마감 전 수정 가능 · 삭제 불가</span></p><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">제안 보내기</span><svg id="submit-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div>
+          <div id="edit-banner" class="edit-banner" hidden><span><span data-i18n="public.editingLabel">Editing your idea</span><span class="muted">· <span data-i18n="public.editingNoSlot">No submission slot used</span></span></span><button id="cancel-edit" class="text-button" type="button"><span class="button-copy" data-i18n="public.cancelEdit">Cancel edit</span> <span aria-hidden="true">×</span></button></div>
+          <textarea id="prompt" name="prompt" rows="4" data-i18n-placeholder="public.placeholder" placeholder="For example: I'd love a map that changes each run, with weapons I can craft from materials I find." aria-describedby="prompt-hint byte-count prompt-safety-note" spellcheck="false" autocomplete="off"></textarea>
+          <div class="prompt-bottom-line"><p id="prompt-hint">Small ideas welcome. Specific details help.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
+          <p class="prompt-safety-note" id="prompt-safety-note" data-i18n="public.safetyNote">Ideas become development candidates after safety review. A new submission uses one slot even while review is pending. Edits go through review again.</p>
+          <details class="safety-guidance" id="safety-guidance">
+            <summary><span class="safety-summary-copy" data-i18n="public.safetySummary">Submission guidelines · Teen content target</span><span class="safety-toggle" aria-hidden="true">＋</span></summary>
+            <div><p data-i18n="public.safetyRating">We aim for content at or below ESRB Teen. The game has not received an official ESRB rating.</p><ul>
+              <li data-i18n="public.safetyCombat">Ordinary fantasy combat ideas are welcome. We don't accept explicit sexual content, sexual objectification or exploitation, gore, dismemberment, or cruel or excessively realistic violence.</li>
+              <li data-i18n="public.safetyHarm">Don't submit instructions that encourage dangerous real-world acts, hate, harassment, threats, or exposure of personal information.</li>
+              <li data-i18n="public.safetyInjection">Don't ask to disable safety rules, change system permissions, or reveal personal information or secrets.</li>
+            </ul><p data-i18n="public.safetyLimits">We currently use basic checks and manual review. Acceptance or safety approval does not guarantee inclusion or release, and these checks cannot catch every unsafe input.</p></div>
+          </details>
+          <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden data-i18n="public.reloadEdit">Load the latest version</button><button id="copy-edit" type="button" class="text-button" hidden data-i18n="public.copyEdit">Use as a new idea</button></div></div>
+          <div class="prompt-actions"><p class="submission-rules"><span class="byte-rule" data-i18n="public.byteRule">Up to 2,000 UTF-8 bytes per idea</span><br><span data-i18n="public.editRule">Editable until the round closes · No deletion</span></p><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">Send idea</span><svg id="submit-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div>
         </form>
-        <details class="my-proposals" id="my-proposals" hidden><summary><span>내가 보낸 제안 <span id="proposal-count" class="proposal-count">0</span></span><span class="summary-note">확인하고 수정하기 <span class="summary-chevron" aria-hidden="true">⌄</span></span></summary><div id="proposal-list" class="proposal-list"></div></details>
-        <p class="collection-footnote" id="collection-footnote">제안을 모아 다음 게임을 만듭니다. 모든 제안이 그대로 반영되지는 않을 수 있어요.</p>
+        <details class="my-proposals" id="my-proposals" hidden><summary><span><span data-i18n="public.myProposals">Your submissions</span> <span id="proposal-count" class="proposal-count">0</span></span><span class="summary-note"><span data-i18n="public.reviewEdit">View and edit</span> <span class="summary-chevron" aria-hidden="true">⌄</span></span></summary><div id="proposal-list" class="proposal-list"></div></details>
+        <p class="collection-footnote" id="collection-footnote" data-i18n="public.collectionFootnote">Ideas help shape the next version. Not every submission will be included as written.</p>
       </section>
       <section class="process-section" aria-labelledby="process-title">
-        <div class="process-heading">
-          <div>
-            <p class="index-label">FROM YOUR PROMPT TO THE NEXT VERSION</p>
-            <h2 id="process-title">한 번의 제안에서, 다음 버전까지.</h2>
-          </div>
-          <p class="process-intro">각자의 프롬프트가 모여 하나의 게임이 됩니다.<br>어떤 전투와 성장, 규칙을 담을지는 함께 정해가요.</p>
-        </div>
-        <p class="process-status-note"><span>진행 방식 안내</span>현재는 첫 게임 공개 준비 중입니다. 아래 자동 개발·공개 과정은 첫 회차에 실행될 예정이에요.</p>
+        <div class="process-heading"><div><p class="index-label" data-i18n="public.processEyebrow">FROM YOUR PROMPT TO THE NEXT VERSION</p><h2 id="process-title" data-i18n="public.processTitle">An idea today. A new version next.</h2></div><p class="process-intro" data-i18n="public.processIntro">Different ideas, one shared game. The combat, progression, and rules are ours to figure out together.</p></div>
+        <p class="process-status-note"><span class="process-status-label" data-i18n="public.processLabel">How it will work</span><span class="process-status-copy" data-i18n="public.processPending">The first game is still being prepared. The development and release cycle below is planned for the first round; it is not a live progress tracker.</span></p>
         <figure class="process-diagram">
-          <ol class="process-flow" aria-label="제안부터 다음 회차 피드백까지의 개발 순서">
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">01</span>
-              <h3>제안 수집</h3>
-              <p>모두의 프롬프트를<br>회차별로 모아요.</p>
-            </li>
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">02</span>
-              <h3>요구 정리</h3>
-              <p>안전 기준을 확인하고<br>유사 요구·충돌·장르를 검토해요.</p>
-            </li>
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">03</span>
-              <h3><span class="codex-label">Codex</span> 자동 개발</h3>
-              <p>정리된 요구를 바탕으로<br>게임 코드를 만들어요.</p>
-            </li>
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">04</span>
-              <h3>실행 검증</h3>
-              <p>게임을 실제로 실행해<br>변경 사항을 확인해요.</p>
-            </li>
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">05</span>
-              <h3>새 버전 공개</h3>
-              <p>검증을 통과한 버전을<br>공개해요.</p>
-            </li>
-            <li class="process-step">
-              <span class="flow-number" aria-hidden="true">06</span>
-              <h3>플레이 후 다시 제안</h3>
-              <p>직접 플레이한 경험으로<br>다음 변화를 제안해요.</p>
-            </li>
+          <ol class="process-flow" aria-label="The development cycle, from submissions to feedback on the next round" data-i18n-aria-label="public.processAria">
+            <li class="process-step"><span class="flow-number" aria-hidden="true">01</span><h3 data-i18n="public.step1Title">Collect ideas</h3><p data-i18n="public.step1Body">Gather everyone's prompts for each round.</p></li>
+            <li class="process-step"><span class="flow-number" aria-hidden="true">02</span><h3 data-i18n="public.step2Title">Review requests</h3><p data-i18n="public.step2Body">Check safety, group similar ideas, and resolve conflicts with the game's rules.</p></li>
+            <li class="process-step"><span class="flow-number" aria-hidden="true">03</span><h3 class="codex-label" data-i18n="public.step3Title">Codex builds</h3><p data-i18n="public.step3Body">Turn reviewed requests into game code.</p></li>
+            <li class="process-step"><span class="flow-number" aria-hidden="true">04</span><h3 data-i18n="public.step4Title">Test the game</h3><p data-i18n="public.step4Body">Run the game and check the changes.</p></li>
+            <li class="process-step"><span class="flow-number" aria-hidden="true">05</span><h3 data-i18n="public.step5Title">Release a version</h3><p data-i18n="public.step5Body">Publish a version that passes verification.</p></li>
+            <li class="process-step"><span class="flow-number" aria-hidden="true">06</span><h3 data-i18n="public.step6Title">Play, then suggest</h3><p data-i18n="public.step6Body">Use your play experience to suggest what comes next.</p></li>
           </ol>
-          <div class="process-loop"><span>플레이 경험을 다음 회차 제안으로</span></div>
-          <div class="process-policies" aria-label="검증과 공개 단계의 예외 처리 정책">
-            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong>검증 실패</strong><span class="policy-arrow" aria-hidden="true">→</span>공개 보류 · 기존 정상 게임 유지</span></p>
-            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong>공개 후 장애</strong><span class="policy-arrow" aria-hidden="true">→</span>이전 정상 게임으로 복귀</span></p>
+          <div class="process-loop"><span data-i18n="public.processLoop">What you play informs the next round of ideas</span></div>
+          <div class="process-policies" aria-label="What happens if testing or a release fails" data-i18n-aria-label="public.policyAria">
+            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong data-i18n="public.validationFailed">If testing fails</strong><span class="policy-arrow" aria-hidden="true">→</span><span data-i18n="public.validationPolicy">Hold the release; keep the working version</span></span></p>
+            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong data-i18n="public.releaseFailed">If a release breaks</strong><span class="policy-arrow" aria-hidden="true">→</span><span data-i18n="public.releasePolicy">Return to the previous working version</span></span></p>
           </div>
-          <figcaption>정상 게임 유지·복귀는 이전에 공개한 게임이 있을 때의 정책입니다. 첫 회차에서 검증에 실패하면 공개를 보류하고 문제를 해결합니다.</figcaption>
+          <figcaption data-i18n="public.processCaption">Keeping or restoring a working version only applies once a game has been released. If the first round fails verification, we will delay release and fix the problem.</figcaption>
         </figure>
       </section>
     </main>
-    <footer class="footer wrap"><span>ONE GAME. MANY POSSIBILITIES.</span><span>제안은 함께, 플레이는 각자.<span class="footer-cross" aria-hidden="true">✳</span></span></footer>
+    <footer class="footer wrap"><span data-i18n="public.footerTagline">ONE GAME. MANY POSSIBILITIES.</span><span><span data-i18n="public.footerTogether">Built together. Played solo.</span><span class="footer-cross" aria-hidden="true">✳</span></span></footer>
   </div>
-  <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title" aria-describedby="login-description"><button class="dialog-close" id="close-login" type="button" aria-label="로그인 창 닫기"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><span class="login-mark" aria-hidden="true">✳</span><p class="index-label">LET’S MAKE IT YOUR GAME</p><h2 id="login-title">당신의 아이디어를<br>이어갈 차례.</h2><p id="login-description">Google 계정으로 로그인하고 제안을 남겨주세요.<br>최근 60분 동안 최대 3개의 제안을 보낼 수 있어요.</p><div class="google-button-area" id="google-button-area"><div id="google-signin"></div></div><p class="login-message" id="login-message" role="status" aria-live="polite">로그인 연결을 준비하고 있습니다.</p><button id="retry-google" class="text-button" type="button" hidden>로그인 다시 준비하기</button><p class="login-draft-note" id="login-draft-note">작성한 내용은 이 브라우저에 보관됩니다.</p></dialog>
-  <noscript><div class="noscript-notice">제안 작성과 Google 로그인을 이용하려면 브라우저의 JavaScript를 켜주세요.</div></noscript>
+  <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title" aria-describedby="login-description">
+    <label class="language-control dialog-language"><span class="sr-only" data-i18n="public.language">Language</span><select id="login-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label>
+    <button class="dialog-close" id="close-login" type="button" aria-label="Close login dialog" data-i18n-aria-label="public.closeLogin"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+    <span class="login-mark" aria-hidden="true">✳</span><p class="index-label" data-i18n="public.loginEyebrow">LET'S MAKE IT YOUR GAME</p><h2 id="login-title">Make your idea<br>part of the game.</h2>
+    <p id="login-description">Log in with Google to share an idea.<br>You can submit up to 3 ideas in any 60-minute period.</p>
+    <div class="google-button-area" id="google-button-area"><div id="google-signin"></div></div><p class="login-message" id="login-message" role="status" aria-live="polite">Preparing Google login.</p>
+    <button id="retry-google" class="text-button" type="button" hidden data-i18n="public.retryGoogle">Try preparing login again</button><p class="login-draft-note" id="login-draft-note">Your draft stays in this browser.</p>
+  </dialog>
+  <noscript><div class="noscript-notice">Enable JavaScript to submit ideas and log in with Google.</div></noscript>
 </body>
 </html>

@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 const html = readFileSync(new URL('../server/admin-page.html', import.meta.url), 'utf8');
 const script = readFileSync(new URL('../public/admin.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../public/admin.css', import.meta.url), 'utf8');
+const modules = Object.fromEntries(['i18n.js', 'error-messages.js', 'admin-messages.js']
+  .map((name) => ['/' + name, readFileSync(new URL('../public/' + name, import.meta.url), 'utf8')]));
 const NOW = '2026-08-31T05:00:00.000Z';
 const ADMIN = { id: 'admin-fixture', name: '관리 테스트', email: 'operator@example.test', isAdmin: true };
 const MEMBER = { id: 'member-fixture', name: '참여자 테스트', email: 'participant@example.test',
@@ -25,7 +27,7 @@ async function fixture(page, options = {}) {
     session: { user: { ...ADMIN }, csrfToken: 'admin-fixture-csrf', googleNonce: 'unused-fixture-nonce' },
     service: { mode: 'active', proposalsEnabled: true, developmentEnabled: true, message: '', revision: 1, updatedAt: NOW },
     users: [{ ...SELF }, { ...MEMBER }], proposals: [structuredClone(PROPOSAL)], versions: [], audit: [],
-    reads: [], writes: [], receipts: new Map(), forbidden: false, recentAuthRequired: false,
+    reads: [], writes: [], apiLanguages: [], localeReads: 0, receipts: new Map(), forbidden: false, recentAuthRequired: false,
     conflictOnce: false, loseNextReceipt: false, readFailure: false, safetyConflictOnce: false, ...options,
   };
   const reply = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
@@ -35,6 +37,16 @@ async function fixture(page, options = {}) {
     if (url.pathname === '/admin' || url.pathname === '/admin/') return route.fulfill({ contentType: 'text/html', headers: { 'Cache-Control': 'no-store' }, body: html });
     if (url.pathname === '/admin.js') return route.fulfill({ contentType: 'text/javascript', body: script });
     if (url.pathname === '/admin.css') return route.fulfill({ contentType: 'text/css', body: css });
+    if (Object.hasOwn(modules, url.pathname)) return route.fulfill({ contentType: 'text/javascript', body: modules[url.pathname] });
+    if (url.pathname === '/api/locale') {
+      state.localeReads += 1;
+      return reply(route, { locale: options.country === 'KR' ? 'ko' : 'en', source: options.country ? 'country' : 'default' });
+    }
+    if (url.pathname.startsWith('/api/')) {
+      const language = request.headers()['x-yourgame-language'];
+      expect(['en', 'ko']).toContain(language);
+      state.apiLanguages.push({ path: url.pathname, method: request.method(), language });
+    }
     if (url.pathname === '/api/session') return reply(route, state.session);
     if (url.pathname === '/api/logout') {
       state.session = { user: null, csrfToken: 'anonymous-fixture', googleNonce: 'anonymous-fixture' };
@@ -96,8 +108,8 @@ async function fixture(page, options = {}) {
     let targetId = 'service';
     if (payload.action === 'set_service') {
       expect(payload.revision).toBe(state.service.revision);
-      if (payload.mode === 'ended' && state.service.mode !== 'ended') expect(payload.confirmation).toBe('서비스 종료');
-      if (payload.mode !== 'ended' && state.service.mode === 'ended') expect(payload.confirmation).toBe('서비스 재개');
+      if (payload.mode === 'ended' && state.service.mode !== 'ended') expect(payload.confirmation).toBe('END SERVICE');
+      if (payload.mode !== 'ended' && state.service.mode === 'ended') expect(payload.confirmation).toBe('RESUME SERVICE');
       state.service = { mode: payload.mode, proposalsEnabled: payload.mode === 'ended' ? false : payload.proposalsEnabled,
         developmentEnabled: payload.mode === 'ended' ? false : payload.developmentEnabled, message: payload.message,
         revision: state.service.revision + 1, updatedAt: NOW };
@@ -149,7 +161,8 @@ async function fixture(page, options = {}) {
     }
     return reply(route, result);
   });
-  await page.goto('/admin');
+  // Existing Korean flows opt in explicitly. `language: null` exercises default/geo selection.
+  await page.goto(options.language === null ? '/admin' : '/admin?lang=' + (options.language || 'ko'));
   if (state.session.user?.isAdmin) await expect(page.locator('#admin-shell')).toBeVisible();
   else await expect(page.locator('#admin-gate')).toBeVisible();
   return state;
@@ -157,14 +170,22 @@ async function fixture(page, options = {}) {
 
 async function section(page, name) { await page.locator(`.admin-nav [data-section="${name}"]`).click(); }
 
-async function openSafetyReview(page) {
+async function openSafetyReview(page, label = '안전 심사') {
   await section(page, 'proposals');
-  await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).first().click();
+  await page.locator('#proposals-rows').getByRole('button', { name: label, exact: true }).first().click();
   await expect(page.locator('#safety-review-fields')).toBeVisible();
 }
 
 async function confirmSafetyChecks(page) {
   for (const id of ['safety-check-content', 'safety-check-instructions', 'safety-check-brief']) await page.locator(`#${id}`).check();
+}
+
+async function expectNoPageOverflow(page) {
+  const layout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+    outside: [...document.querySelectorAll('body *')].filter((node) => !node.closest('.table-scroll') && node.getClientRects().length)
+      .map((node) => ({ tag: node.tagName, id: node.id, className: String(node.className), right: node.getBoundingClientRect().right,
+        width: node.getBoundingClientRect().width })).filter((node) => node.right > innerWidth + 1).slice(0, 12) }));
+  expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width);
 }
 
 test('admin client refuses ordinary accounts without fetching management data', async ({ page }) => {
@@ -387,7 +408,7 @@ test('ending service requires the exact typed phrase and preserves data', async 
   await page.locator('#action-confirmation').fill('종료');
   await expect(page.locator('#action-submit')).toBeDisabled();
   expect(state.writes).toHaveLength(0);
-  await page.locator('#action-confirmation').fill('서비스 종료');
+  await page.locator('#action-confirmation').fill('END SERVICE');
   await page.locator('#action-submit').click();
   await expect(page.locator('#action-dialog')).toBeHidden();
   expect(state.service.mode).toBe('ended');
@@ -406,9 +427,9 @@ test('resuming an ended service leaves unselected capabilities disabled', async 
   await page.locator('#service-proposals').check();
   await page.locator('#danger-service-button').click();
   await page.locator('#action-reason').fill('제안 접수만 다시 개시');
-  await page.locator('#action-confirmation').fill('서비스 종료');
+  await page.locator('#action-confirmation').fill('END SERVICE');
   await expect(page.locator('#action-submit')).toBeDisabled();
-  await page.locator('#action-confirmation').fill('서비스 재개');
+  await page.locator('#action-confirmation').fill('RESUME SERVICE');
   await page.locator('#action-submit').click();
   await expect(page.locator('#action-dialog')).toBeHidden();
   expect(state.service).toMatchObject({ mode: 'active', proposalsEnabled: true, developmentEnabled: false });
@@ -419,7 +440,7 @@ test('reauth refusal preserves reasons and offers the fixed Google reauth path',
   await section(page, 'service');
   await page.locator('#danger-service-button').click();
   await page.locator('#action-reason').fill('재인증 뒤 확인할 종료 사유');
-  await page.locator('#action-confirmation').fill('서비스 종료');
+  await page.locator('#action-confirmation').fill('END SERVICE');
   await page.locator('#action-submit').click();
   await expect(page.locator('#action-reason')).toHaveValue('재인증 뒤 확인할 종료 사유');
   await expect(page.locator('#action-confirmation')).toHaveValue('');
@@ -507,7 +528,7 @@ test('an uncertain sensitive action can be retried inside its modal without a se
   await section(page, 'service');
   await page.locator('#danger-service-button').click();
   await page.locator('#action-reason').fill('접수 종료 결과 확인');
-  await page.locator('#action-confirmation').fill('서비스 종료');
+  await page.locator('#action-confirmation').fill('END SERVICE');
   await page.locator('#action-submit').click();
   await expect(page.locator('#action-feedback')).toContainText('요청 결과를 확인하지 못했습니다');
   await expect(page.locator('#action-retry')).toBeEnabled();
@@ -526,7 +547,7 @@ test('returning after reauth restores only drafts and never replays the confirme
   await page.locator('#service-message').fill('재인증 중에도 보관할 공지');
   await page.locator('#danger-service-button').click();
   await page.locator('#action-reason').fill('재인증 후 다시 검토할 이유');
-  await page.locator('#action-confirmation').fill('서비스 종료');
+  await page.locator('#action-confirmation').fill('END SERVICE');
   await page.locator('#action-submit').click();
   await expect(page.locator('#action-reauth-link')).toBeVisible();
   state.recentAuthRequired = false;
@@ -556,6 +577,223 @@ test('member pagination sends a fifty-row limit and a cursor, then search resets
   expect(state.reads.at(-1)).not.toHaveProperty('cursor');
 });
 
+test('English is the default administrator interface and API language without changing stored data', async ({ page }) => {
+  const state = await fixture(page, { language: null });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page).toHaveTitle('yourga.me — Administration');
+  await expect(page.locator('#section-title')).toHaveText('Overview');
+  await expect(page.locator('#admin-name')).toHaveText(ADMIN.name);
+  await expect(page.locator('#admin-email')).toHaveText(ADMIN.email);
+  await expect(page.locator('#panel-overview')).toContainText('Development requests and game releases are separate.');
+  await section(page, 'proposals');
+  await expect(page.locator('#proposals-rows pre')).toHaveText(PROPOSAL.body);
+  await expect(page.locator('#proposals-rows')).toContainText('Safety review pending');
+  await expect(page.locator('#proposals-rows time')).toHaveAttribute('datetime', NOW);
+  await expect(page.locator('#proposals-rows time')).toContainText('14:00');
+  expect(await page.evaluate(() => window.__adminXss)).toBeUndefined();
+  expect(state.apiLanguages.every((request) => request.language === 'en')).toBe(true);
+  expect(state.localeReads).toBe(1);
+  expect(state.writes).toHaveLength(0);
+  const untranslated = await page.locator('[data-i18n]').evaluateAll((nodes) => nodes
+    .filter((node) => /[가-힣]|\[admin\./.test(node.textContent)).map((node) => node.getAttribute('data-i18n')));
+  expect(untranslated).toEqual([]);
+});
+
+test('Korean country recommendation yields to an explicit administrator language choice after reload', async ({ page }) => {
+  const state = await fixture(page, { language: null, country: 'KR' });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ko');
+  await expect(page.locator('#section-title')).toHaveText('운영 개요');
+  const continuity = await page.evaluate(() => window.__localeContinuity = crypto.randomUUID());
+  await page.locator('.admin-language-bar [data-language-select]').selectOption('en');
+  await expect(page.locator('#section-title')).toHaveText('Overview');
+  expect(await page.evaluate(() => window.__localeContinuity)).toBe(continuity);
+  expect(await page.evaluate(() => localStorage.getItem('yourgame.language.v1'))).toBe('en');
+  await page.reload();
+  await expect(page.locator('#admin-shell')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#section-title')).toHaveText('Overview');
+  expect(state.localeReads).toBe(1);
+  expect(state.writes).toHaveLength(0);
+  expect(state.apiLanguages.at(-1).language).toBe('en');
+});
+
+test('switching languages inside safety review preserves the original, draft, decision and all checks', async ({ page }) => {
+  const state = await fixture(page, { language: 'en' });
+  await openSafetyReview(page, 'Safety review');
+  const brief = '게임 변경만 정리한 한국어 원문: 터치로 이동하고 작은 방을 탐험합니다.';
+  const reason = '검토한 사유는 언어 선택과 무관하게 보존합니다.';
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill(brief);
+  await page.locator('#action-reason').fill(reason);
+  await confirmSafetyChecks(page);
+  await page.locator('.safety-binding summary').click();
+  const binding = state.proposals[0].safety.bodyHash;
+  const continuity = await page.evaluate(() => window.__localeContinuity = crypto.randomUUID());
+  const language = page.locator('#action-dialog [data-language-select]');
+  await language.selectOption('ko');
+  await expect(page.locator('#action-title')).toHaveText('제안 안전 심사');
+  await expect(page.locator('#action-submit')).toHaveText('안전 심사 저장');
+  await language.selectOption('en');
+  await expect(page.locator('#action-title')).toHaveText('Proposal safety review');
+  await expect(page.locator('#safety-review-body')).toHaveText(PROPOSAL.body);
+  await expect(page.locator('#safety-review-binding')).toContainText(binding);
+  await expect(page.locator('#safety-development-brief')).toHaveValue(brief);
+  await expect(page.locator('#action-reason')).toHaveValue(reason);
+  await expect(page.locator('#safety-decision')).toHaveValue('approved');
+  for (const id of ['safety-check-content', 'safety-check-instructions', 'safety-check-brief']) await expect(page.locator('#' + id)).toBeChecked();
+  await expect(page.locator('.safety-binding')).toHaveAttribute('open', '');
+  await expect(page.locator('#action-submit')).toBeEnabled();
+  expect(await page.evaluate(() => window.__localeContinuity)).toBe(continuity);
+  expect(state.writes).toHaveLength(0);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0]).toMatchObject({ action: 'review_proposal_safety', status: 'approved',
+    proposalRevision: 1, revision: 1, bodyHash: binding, policyVersion: 'teen-v1', checklistConfirmed: true,
+    developmentBrief: brief, reason });
+  expect(state.apiLanguages.at(-1).language).toBe('en');
+});
+
+test('language changes translate unknown-result notices without changing the exact pending safety request', async ({ page }) => {
+  const state = await fixture(page, { language: 'en', loseNextReceipt: true });
+  await openSafetyReview(page, 'Safety review');
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill('입력 원문 그대로 유지하는 게임 요구 정리문');
+  await page.locator('#action-reason').fill('입력한 심사 사유는 번역하지 않는다');
+  await confirmSafetyChecks(page);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-feedback')).toContainText('The request outcome could not be confirmed.');
+  const original = structuredClone(state.writes[0]);
+  await page.locator('#action-dialog [data-language-select]').selectOption('ko');
+  await expect(page.locator('#action-feedback')).toContainText('요청 결과를 확인하지 못했습니다');
+  await expect(page.locator('#action-retry')).toBeEnabled();
+  await expect(page.locator('#safety-development-brief')).toBeDisabled();
+  await expect(page.locator('#action-reason')).toHaveValue(original.reason);
+  for (const id of ['safety-check-content', 'safety-check-instructions', 'safety-check-brief']) await expect(page.locator('#' + id)).toBeChecked();
+  expect(state.writes).toHaveLength(1);
+  await page.locator('#action-retry').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes).toHaveLength(2);
+  expect(state.writes[1]).toEqual(original);
+  expect(state.audit).toHaveLength(1);
+  expect(state.apiLanguages.filter((request) => request.method === 'POST').map((request) => request.language)).toEqual(['en', 'ko']);
+});
+
+test('language changes cannot restore administrator data after an access denial', async ({ page }) => {
+  const state = await fixture(page, { language: 'en' });
+  await openSafetyReview(page, 'Safety review');
+  await page.locator('#safety-decision').selectOption('approved');
+  await page.locator('#safety-development-brief').fill('PRIVATE_LANGUAGE_REVIEW');
+  await page.locator('#action-reason').fill('Private reason for the authorization test');
+  await confirmSafetyChecks(page);
+  state.forbidden = true;
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#admin-gate')).toBeVisible();
+  await expect(page.locator('#gate-message')).toContainText('Administrator access was denied.');
+  const reads = state.reads.length;
+  await page.locator('.admin-language-bar [data-language-select]').selectOption('ko');
+  await expect(page.locator('#gate-message')).toContainText('관리자 접근이 거부되었습니다');
+  await expect(page.locator('#admin-shell')).toBeEmpty();
+  await expect(page.locator('body')).not.toContainText('PRIVATE_LANGUAGE_REVIEW');
+  await expect(page.locator('body')).not.toContainText(ADMIN.email);
+  expect(state.writes).toHaveLength(0);
+  expect(state.reads).toHaveLength(reads);
+});
+
+test('ending and resuming use fixed English confirmation tokens across interface language changes', async ({ page }) => {
+  const state = await fixture(page, { language: 'en' });
+  await section(page, 'service');
+  const notice = '운영자가 작성한 공지는 원문으로 保持합니다.';
+  await page.locator('#service-message').fill(notice);
+  await page.locator('#danger-service-button').click();
+  await expect(page.locator('#confirmation-phrase')).toHaveText('END SERVICE');
+  await page.locator('#action-reason').fill('사유 원문 유지');
+  await page.locator('#action-confirmation').fill(' END SERVICE ');
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  await page.locator('#action-confirmation').fill('END SERVICE');
+  await page.locator('#action-dialog [data-language-select]').selectOption('ko');
+  await expect(page.locator('#confirmation-phrase')).toHaveText('END SERVICE');
+  await expect(page.locator('#action-confirmation')).toHaveValue('END SERVICE');
+  await expect(page.locator('#action-reason')).toHaveValue('사유 원문 유지');
+  expect(state.writes).toHaveLength(0);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes[0].confirmation).toBe('END SERVICE');
+  expect(state.service.message).toBe(notice);
+  await page.locator('#service-proposals').check();
+  await page.locator('#danger-service-button').click();
+  await expect(page.locator('#confirmation-phrase')).toHaveText('RESUME SERVICE');
+  await page.locator('#action-reason').fill('제안 접수만 재개');
+  await page.locator('#action-confirmation').fill('RESUME SERVICE');
+  await page.locator('#action-dialog [data-language-select]').selectOption('en');
+  await expect(page.locator('#action-title')).toHaveText('Resume service');
+  await expect(page.locator('#action-confirmation')).toHaveValue('RESUME SERVICE');
+  expect(state.writes).toHaveLength(1);
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-dialog')).not.toBeVisible();
+  expect(state.writes[1].confirmation).toBe('RESUME SERVICE');
+  expect(state.service).toMatchObject({ mode: 'active', proposalsEnabled: true, developmentEnabled: false, message: notice });
+});
+
+test('reauthentication remains required after a language change and restores drafts without replaying', async ({ page }) => {
+  const state = await fixture(page, { language: 'en', recentAuthRequired: true });
+  await section(page, 'service');
+  await page.locator('#service-message').fill('원문 공지 preserved');
+  await page.locator('#danger-service-button').click();
+  await page.locator('#action-reason').fill('보존할 사유 preserved');
+  await page.locator('#action-confirmation').fill('END SERVICE');
+  await page.locator('#action-submit').click();
+  await expect(page.locator('#action-reauth-link')).toBeVisible();
+  await expect(page.locator('#action-confirmation')).toHaveValue('');
+  await page.locator('#action-dialog [data-language-select]').selectOption('ko');
+  await expect(page.locator('#action-feedback')).toContainText('최근 Google 로그인이 필요합니다');
+  await expect(page.locator('#action-reason')).toHaveValue('보존할 사유 preserved');
+  await expect(page.locator('#action-submit')).toBeDisabled();
+  expect(state.writes).toHaveLength(1);
+  state.recentAuthRequired = false;
+  await page.reload();
+  await expect(page.locator('#admin-shell')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ko');
+  await expect(page.locator('#service-message')).toHaveValue('원문 공지 preserved');
+  await page.locator('#danger-service-button').click();
+  await expect(page.locator('#action-reason')).toHaveValue('보존할 사유 preserved');
+  await expect(page.locator('#action-confirmation')).toHaveValue('');
+  expect(state.writes).toHaveLength(1);
+  expect(state.service.mode).toBe('active');
+});
+
+test.describe('English mobile administration', () => {
+  test.use({ hasTouch: true });
+  for (const width of [320, 360]) {
+    test(`long English admin controls and safety review fit at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 800 });
+      const state = await fixture(page, { language: 'en' });
+      await section(page, 'service');
+      await page.locator('#service-message').fill('Original service notice remains unchanged.');
+      await expectNoPageOverflow(page);
+      await page.screenshot({ path: testInfo.outputPath(`admin-en-service-${width}.png`), fullPage: true });
+      await openSafetyReview(page, 'Safety review');
+      await page.locator('#safety-decision').selectOption('approved');
+      await page.locator('#safety-development-brief').fill('Use touch controls to explore a small room.');
+      await page.locator('#action-reason').fill('Reviewed the current original and game requirements.');
+      await confirmSafetyChecks(page);
+      await expect(page.locator('#action-submit')).toBeEnabled();
+      await expectNoPageOverflow(page);
+      expect(await page.locator('#safety-development-brief').evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
+      const smallTargets = await page.locator('#action-dialog button, #action-dialog select').evaluateAll((nodes) => nodes
+        .filter((node) => node.getClientRects().length).map((node) => ({ id: node.id, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height }))
+        .filter((node) => node.width < 44 || node.height < 44));
+      expect(smallTargets).toEqual([]);
+      await page.screenshot({ path: testInfo.outputPath(`admin-en-safety-${width}.png`) });
+      await page.locator('#action-cancel').click();
+      await section(page, 'versions');
+      await page.locator('#version-create summary').click();
+      await expectNoPageOverflow(page);
+      expect(state.writes).toHaveLength(0);
+    });
+  }
+});
+
 test.describe('mobile touch', () => {
   test.use({ hasTouch: true });
 
@@ -574,14 +812,14 @@ test.describe('mobile touch', () => {
     await expect(page.locator('#service-message')).toBeVisible();
     await page.locator('#service-message').fill('모바일에서도 작성할 수 있는 공지');
     await checkTouchTargets();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoPageOverflow(page);
     await page.screenshot({ path: testInfo.outputPath('admin-service-mobile.png'), fullPage: true });
     await page.locator('#danger-service-button').tap();
     await expect(page.locator('#action-reason')).toBeVisible();
     await expect(page.locator('#action-confirmation')).toBeVisible();
     await checkTouchTargets();
     await page.screenshot({ path: testInfo.outputPath('admin-confirmation-mobile.png') });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoPageOverflow(page);
     // Connecting a mouse must not shrink the controls on the same narrow screen.
     await page.locator('#action-cancel').click();
     await section(page, 'proposals');
@@ -592,7 +830,7 @@ test.describe('mobile touch', () => {
     await checkTouchTargets();
     const overflow = await page.locator('#panel-proposals .table-scroll').evaluate((node) => node.scrollWidth > node.clientWidth);
     expect(overflow).toBe(true);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoPageOverflow(page);
     await page.locator('#proposals-rows').getByRole('button', { name: '안전 심사', exact: true }).tap();
     await expect(page.locator('#safety-review-body')).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('admin-safety-source-mobile.png') });
@@ -603,7 +841,7 @@ test.describe('mobile touch', () => {
     await expect(page.locator('#action-submit')).toBeEnabled();
     await checkTouchTargets();
     expect(await page.locator('#safety-development-brief').evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expectNoPageOverflow(page);
     await page.screenshot({ path: testInfo.outputPath('admin-safety-review-mobile.png') });
     await page.locator('#action-cancel').click();
   });

@@ -3,7 +3,7 @@ import { isIP } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import {
   ANONYMOUS_SESSION_MS, FIRST_RELEASE, LOGIN_SESSION_MS,
-  MAX_BYTES, SUBMISSION_LIMIT, WINDOW_MS, currentCollection, readConfig,
+  MAX_BYTES, SUBMISSION_LIMIT, WINDOW_MS, currentCollection, isTrustedVercelGeoDeployment, readConfig,
 } from './config.mjs';
 import { openDatabase } from './database.mjs';
 import { ApiError, unavailable } from './errors.mjs';
@@ -12,9 +12,12 @@ import { createStore, hashValue } from './store.mjs';
 import { withNetworkDeadline } from './network.mjs';
 import { publicService, proposalsAllowed } from './admin-policy.mjs';
 import { SAFETY_POLICY_VERSION } from './safety-policy.mjs';
+import { LOCALE_VARY, localizeProposalPayload, requestLocale } from './localization.mjs';
+import { apiErrorMessage } from '../public/error-messages.js';
 
 const BODY_LIMIT = 16 * 1024;
 const METHODS = {
+  '/api/locale': ['GET'],
   '/api/status': ['GET'],
   '/api/session': ['GET'],
   '/api/login': ['POST'],
@@ -133,16 +136,19 @@ export function createApiHandler({
     });
     return storePromise;
   });
-  const verify = verifyCredential || createGoogleVerifier({ clientId: config.googleClientId, now });
+  let verify = verifyCredential;
 
   return function apiHandler(req, res, routeOverride) {
     return withNetworkDeadline(async () => {
       const requestId = randomUUID();
+      const language = requestLocale(req, config);
+      const locale = language.locale;
       let route = routeOverride || '/unknown';
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store, private');
       res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Vary', 'Cookie');
+      res.setHeader('Vary', LOCALE_VARY);
+      res.setHeader('Content-Language', locale);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Request-Id', requestId);
       try {
@@ -155,6 +161,8 @@ export function createApiHandler({
         }
         const mutation = method !== 'GET';
         ensureOrigin(req, config.appOrigin, mutation);
+
+        if (route === '/api/locale') return respond(res, 200, language);
 
         if (route === '/api/status') {
           const time = now();
@@ -213,11 +221,12 @@ export function createApiHandler({
             res.statusCode = 302;
             res.setHeader('Location', '/?admin=1');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            return res.end('관리자 로그인이 필요합니다.');
+            return res.end(locale === 'ko' ? '관리자 로그인이 필요합니다.' : 'Administrator sign-in is required.');
           }
           await db.admin.requireAdmin(session);
           const html = await readAdminPage();
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.setHeader('Content-Language', 'en');
           res.statusCode = 200;
           return res.end(html);
         }
@@ -231,6 +240,7 @@ export function createApiHandler({
           if (session.nonceExpiresAt <= now()) {
             throw new ApiError(401, 'GOOGLE_NONCE_EXPIRED', '로그인 대기 시간이 지났습니다. Google 로그인을 다시 진행해 주세요.');
           }
+          verify ||= createGoogleVerifier({ clientId: config.googleClientId, now });
           const identity = await verify(body.credential, session.googleNonce);
           const authenticated = await db.completeLogin(session, identity);
           setSessionCookie(res, authenticated.token, config, true);
@@ -258,15 +268,15 @@ export function createApiHandler({
         }
         if (method === 'GET') {
           const result = await db.listProposals(session.user.id);
-          return respond(res, 200, { ...result, ownerId: session.user.id });
+          return respond(res, 200, localizeProposalPayload({ ...result, ownerId: session.user.id }, locale));
         }
         await db.recordProposalAttempt(session.user.id, session.tokenHash);
         const body = await readJson(req);
         if (method === 'POST') {
           const result = await db.createProposal(session.user.id, body);
-          return respond(res, result.created ? 201 : 200, { proposal: result.proposal, quota: result.quota });
+          return respond(res, result.created ? 201 : 200, localizeProposalPayload({ proposal: result.proposal, quota: result.quota }, locale));
         }
-        return respond(res, 200, await db.editProposal(session.user.id, body));
+        return respond(res, 200, localizeProposalPayload(await db.editProposal(session.user.id, body), locale));
       } catch (error) {
         const failure = error instanceof ApiError ? error : unavailable();
         if (failure.status >= 500) {
@@ -279,7 +289,7 @@ export function createApiHandler({
           res.setHeader('Retry-After', String(Math.max(1, Math.ceil((Date.parse(failure.details.quota.nextAvailableAt) - now()) / 1000))));
         }
         return respond(res, failure.status, {
-          error: { code: failure.code, message: failure.message }, ...failure.details, requestId,
+          error: { code: failure.code, message: apiErrorMessage(failure.code, locale) }, ...failure.details, requestId,
         });
       }
     });
@@ -291,9 +301,12 @@ export async function handleApi(req, res, route) {
   try {
     runtimeHandler ||= createApiHandler();
   } catch {
+    const { locale } = requestLocale(req, { trustVercelGeoHeader: isTrustedVercelGeoDeployment() });
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    return respond(res, 503, { error: { code: 'CONFIGURATION_ERROR', message: '서비스 설정을 확인해야 합니다.' } });
+    res.setHeader('Vary', LOCALE_VARY);
+    res.setHeader('Content-Language', locale);
+    return respond(res, 503, { error: { code: 'CONFIGURATION_ERROR', message: apiErrorMessage('CONFIGURATION_ERROR', locale) } });
   }
   return runtimeHandler(req, res, route);
 }

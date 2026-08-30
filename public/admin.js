@@ -1,28 +1,63 @@
+import { i18n } from './i18n.js';
+import './admin-messages.js';
+
 (() => {
   'use strict';
+
+  const COPY = Symbol('admin-interface-copy');
+  const copyBindings = new Map();
+  let pruneQueued = false;
+  function liveCopy(render) { return { [COPY]: true, toString: render }; }
+  function copy(key, parameters = {}) {
+    return liveCopy(() => i18n.t('admin.' + key, typeof parameters === 'function' ? parameters() : parameters));
+  }
+  function setCopy(node, value) {
+    if (!node) return;
+    if (value?.[COPY]) copyBindings.set(node, value); else copyBindings.delete(node);
+    node.textContent = value?.[COPY] ? String(value) : text(value, '');
+    if (!pruneQueued) {
+      pruneQueued = true;
+      queueMicrotask(() => {
+        pruneQueued = false;
+        for (const node of copyBindings.keys()) if (!node.isConnected) copyBindings.delete(node);
+      });
+    }
+  }
+  function refreshInterfaceCopy() {
+    // Text-only updates: never reset forms, checklists, focus, dialog state or
+    // pending mutation identities when a language preference changes.
+    for (const [node, message] of copyBindings) {
+      if (node.isConnected) node.textContent = String(message);
+      else copyBindings.delete(node);
+    }
+  }
+  function errorPresentation(error) {
+    return error?.presentation || liveCopy(() => i18n.apiError(error?.code, i18n.t('admin.requestFailed')));
+  }
+
 
   const REAUTH_DRAFT_KEY = 'yourgame.admin.reauth-draft.v1';
   const AUTH_PULSE_KEY = 'yourgame.auth-pulse.v1';
   const SECTIONS = {
-    overview: ['SERVICE OVERVIEW', '운영 개요', '서비스 상태와 최근 운영 기록을 확인합니다.'],
-    users: ['MEMBERS', '회원', '계정과 기여 이력을 보존하면서 이용 상태를 관리합니다.'],
-    proposals: ['COMMUNITY INPUT', '프롬프트', '원문을 보존하며 제안을 검토하고 개발 입력을 정리합니다.'],
-    versions: ['DEVELOPMENT REQUESTS', '개발 버전', '개발 요청과 작업 이력을 확인합니다. 실제 게임 공개 이력과는 별도입니다.'],
-    service: ['SERVICE OPERATIONS', '서비스 운영', '접수·자동 개발 허용과 점검·종료·재개를 관리합니다.'],
-    audit: ['AUDIT TRAIL', '감사 이력', '관리자가 실행한 변경과 그 사유를 확인합니다.'],
+    overview: [copy('sectionOverviewEyebrow'), copy('sectionOverviewTitle'), copy('sectionOverviewDescription')],
+    users: [copy('sectionUsersEyebrow'), copy('sectionUsersTitle'), copy('sectionUsersDescription')],
+    proposals: [copy('sectionProposalsEyebrow'), copy('sectionProposalsTitle'), copy('sectionProposalsDescription')],
+    versions: [copy('sectionVersionsEyebrow'), copy('sectionVersionsTitle'), copy('sectionVersionsDescription')],
+    service: [copy('sectionServiceEyebrow'), copy('sectionServiceTitle'), copy('sectionServiceDescription')],
+    audit: [copy('sectionAuditEyebrow'), copy('sectionAuditTitle'), copy('sectionAuditDescription')],
   };
   const LIST_SECTIONS = ['users', 'proposals', 'versions', 'audit'];
-  const MODE_LABELS = { active: '활성', maintenance: '점검', ended: '종료' };
-  const USER_LABELS = { active: '활성', suspended: '이용 정지' };
-  const MODERATION_LABELS = { pending: '검토 대기', reviewed: '검토 완료', excluded: '개발 대상 제외' };
-  const SAFETY_LABELS = { pending: '안전 대기', approved: '안전 승인', held: '안전 보류', blocked: '안전 차단' };
+  const MODE_LABELS = { active: copy('modeActive'), maintenance: copy('modeMaintenance'), ended: copy('modeEnded') };
+  const USER_LABELS = { active: copy('modeActive'), suspended: copy('userSuspended') };
+  const MODERATION_LABELS = { pending: copy('moderationPending'), reviewed: copy('moderationReviewed'), excluded: copy('countExcluded') };
+  const SAFETY_LABELS = { pending: copy('safetyPending'), approved: copy('safetyApproved'), held: copy('safetyHeld'), blocked: copy('safetyBlocked') };
   const SAFETY_CHECK_IDS = ['safety-check-content', 'safety-check-instructions', 'safety-check-brief'];
   const encoder = new TextEncoder();
-  const VERSION_LABELS = { queued: '대기', running: '실행 중', failed: '실패', completed: '작업 완료', cancelled: '취소' };
+  const VERSION_LABELS = { queued: copy('versionQueued'), running: copy('versionRunning'), failed: copy('versionFailed'), completed: copy('versionCompleted'), cancelled: copy('versionCancelled') };
   const ACTION_LABELS = {
-    set_user_status: '회원 상태 변경', moderate_proposal: '프롬프트 검토 변경',
-    create_version: '개발 요청 등록', retry_version: '개발 재시도 요청',
-    cancel_version: '개발 취소·중단 요청', set_service: '서비스 설정 변경', review_proposal_safety: '제안 안전 심사',
+    set_user_status: copy('actionUserStatus'), moderate_proposal: copy('actionModeration'),
+    create_version: copy('actionCreateRequest'), retry_version: copy('actionRetryRequest'),
+    cancel_version: copy('actionCancelRequest'), set_service: copy('actionService'), review_proposal_safety: copy('actionSafety'),
   };
   const state = {
     authorized: false, sessionReady: false, epoch: 0, sessionSequence: 0, csrfToken: null, user: null, admin: null,
@@ -50,7 +85,10 @@
     'safety-decision', 'safety-approval-fields', 'safety-development-brief', 'safety-brief-bytes', ...SAFETY_CHECK_IDS,
   ].map((id) => [id, $(id)]));
 
-  class ApiError extends Error {
+  class LocalizedError extends Error {
+    constructor(message) { super(String(message)); this.presentation = message; }
+  }
+  class ApiError extends LocalizedError {
     constructor(message, status = 0, code = '') { super(message); this.status = status; this.code = code; }
   }
   class StaleResponse extends Error {}
@@ -60,7 +98,7 @@
   const element = (tag, className, value) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
-    if (value !== undefined) node.textContent = text(value, '');
+    if (value !== undefined) setCopy(node, value);
     return node;
   };
 
@@ -68,7 +106,7 @@
     if (!state.authorized) return;
     ui['admin-notice'].hidden = !message;
     ui['admin-notice'].dataset.kind = kind;
-    ui['admin-notice-message'].textContent = message;
+    setCopy(ui['admin-notice-message'], message);
     ui['retry-mutation'].hidden = !(retry || state.attempt?.unknown === true);
     ui['reauth-link'].hidden = !reauth;
     ui['action-reauth-link'].hidden = !reauth || !ui['action-dialog'].open;
@@ -77,13 +115,13 @@
   function fieldFeedback(id, message) {
     const node = ui[id];
     if (!node?.isConnected) return;
-    node.textContent = message;
+    setCopy(node, message);
     node.hidden = !message;
   }
 
   function clearReauthDraft() { try { sessionStorage.removeItem(REAUTH_DRAFT_KEY); } catch { /* No credentials are stored. */ } }
 
-  function denyAccess(message = '관리자 권한이 없는 계정입니다. 관리 데이터는 표시하지 않습니다.', title = '관리자 접근을 확인해 주세요.') {
+  function denyAccess(message = copy('accessDenied'), title = copy('checkAccessTitle')) {
     state.epoch += 1;
     state.authorized = false;
     state.sessionReady = false;
@@ -97,8 +135,8 @@
     state.attempt = null;
     state.reasons.clear();
     state.safetyDrafts.clear();
-    ui['safety-review-body'].textContent = '';
-    ui['safety-review-binding'].textContent = '';
+    setCopy(ui['safety-review-body'], '');
+    setCopy(ui['safety-review-binding'], '');
     for (const list of Object.values(state.lists)) { list.items = []; list.ready = false; list.sequence += 1; }
     clearInterval(state.heartbeat);
     clearReauthDraft();
@@ -107,8 +145,8 @@
     ui['admin-shell'].replaceChildren();
     ui['admin-shell'].hidden = true;
     ui['admin-gate'].hidden = false;
-    ui['gate-title'].textContent = title;
-    ui['gate-message'].textContent = message;
+    setCopy(ui['gate-title'], title);
+    setCopy(ui['gate-message'], message);
     ui['gate-login'].hidden = false;
     ui['gate-retry'].hidden = false;
   }
@@ -118,7 +156,7 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 18000);
     try {
-      const headers = { Accept: 'application/json' };
+      const headers = { Accept: 'application/json', 'X-Yourgame-Language': i18n.locale };
       if (method !== 'GET') {
         headers['Content-Type'] = 'application/json';
         if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
@@ -131,18 +169,18 @@
       let data;
       try { data = await response.json(); }
       catch {
-        if (response.status === 401 || response.status === 403) denyAccess('관리자 접근이 거부되었습니다. 표시 중인 관리 데이터를 지웠습니다. 다시 로그인해 주세요.');
-        throw new ApiError('서버 응답을 확인하지 못했습니다.', response.status >= 400 ? response.status : 0);
+        if (response.status === 401 || response.status === 403) denyAccess(copy('accessDeniedClear'));
+        throw new ApiError(copy('invalidResponse'), response.status >= 400 ? response.status : 0);
       }
       if (epoch !== state.epoch) throw new StaleResponse();
       if (!response.ok) {
         const code = typeof data?.error?.code === 'string' ? data.error.code : '';
-        const message = response.status < 500 && typeof data?.error?.message === 'string'
-          ? data.error.message.slice(0, 500) : '서버 연결에 실패했습니다. 입력한 내용은 그대로 보관됩니다.';
+        const message = liveCopy(() => i18n.apiError(code,
+          i18n.t(response.status >= 500 ? 'admin.serverFailurePreserved' : 'admin.requestFailed')));
         if ((response.status === 401 || response.status === 403) && code !== 'ADMIN_REAUTH_REQUIRED') {
           denyAccess(response.status === 401
-            ? '로그인 상태가 만료되었거나 변경되었습니다. 표시 중인 관리 데이터를 지웠습니다. 다시 로그인해 주세요.'
-            : '관리자 접근이 거부되었습니다. 표시 중인 관리 데이터를 지웠습니다. 관리자 계정으로 다시 확인해 주세요.');
+            ? copy('sessionExpiredClear')
+            : copy('adminDeniedClear'));
         }
         throw new ApiError(message, response.status, code);
       }
@@ -151,7 +189,7 @@
       if (epoch !== state.epoch || error instanceof StaleResponse) throw new StaleResponse();
       if (error instanceof ApiError) throw error;
       throw new ApiError(error.name === 'AbortError'
-        ? '응답이 늦어 요청 결과를 확인하지 못했습니다.' : '인터넷 또는 서버 연결을 확인해 주세요.');
+        ? copy('timeoutUnknown') : copy('connectionCheck'));
     } finally { clearTimeout(timer); }
   }
 
@@ -160,11 +198,11 @@
     const data = await api('/api/session');
     if (sequence !== state.sessionSequence) return false;
     if (!data?.user || data.user.isAdmin !== true || !data.csrfToken) {
-      denyAccess(data?.user ? '이 계정에는 관리자 권한이 없습니다. 관리 데이터는 표시하지 않습니다.' : '관리자 계정의 Google 로그인이 필요합니다.');
+      denyAccess(data?.user ? copy('ordinaryAccount') : copy('adminLoginRequired'));
       return false;
     }
     if (state.user && state.user.id !== data.user.id) {
-      denyAccess('로그인 계정이 바뀌었습니다. 관리 데이터를 지웠습니다. 새로 접속해 권한을 확인해 주세요.');
+      denyAccess(copy('accountChanged'));
       return false;
     }
     state.user = data.user;
@@ -176,7 +214,7 @@
   function formatDate(value, seconds = false) {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return '—';
-    return new Intl.DateTimeFormat('ko-KR', {
+    return new Intl.DateTimeFormat(i18n.intlLocale, {
       timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), hourCycle: 'h23',
     }).format(date);
@@ -184,14 +222,14 @@
 
   function timeCell(value) {
     const cell = element('td');
-    const time = element('time', '', formatDate(value));
+    const time = element('time', '', liveCopy(() => formatDate(value)));
     if (value) time.dateTime = String(value);
     cell.append(time);
     return cell;
   }
 
   function badge(value, labels, tone = '') {
-    const node = element('span', 'badge', labels[value] || '상태 확인 불가');
+    const node = element('span', 'badge', labels[value] || copy('unknownStatus'));
     if (tone) node.dataset.tone = tone;
     return node;
   }
@@ -218,25 +256,25 @@
   function renderService({ replaceDraft = false } = {}) {
     const service = state.service;
     if (!service || !state.authorized) return;
-    const modeLabel = MODE_LABELS[service.mode] || '상태 확인 불가';
-    ui['current-service-badge'].textContent = modeLabel;
+    const modeLabel = MODE_LABELS[service.mode] || copy('unknownStatus');
+    setCopy(ui['current-service-badge'], modeLabel);
     ui['current-service-badge'].dataset.tone = modeTone(service.mode);
-    ui['overview-mode'].textContent = modeLabel;
-    ui['overview-permissions'].textContent = `프롬프트 접수 ${service.proposalsEnabled ? '허용' : '중지'} · 자동 개발 ${service.developmentEnabled ? '허용' : '중지'}${service.mode === 'active' ? '' : '\n현재 운영 상태에서는 새 접수·개발·공개를 진행하지 않습니다.'}`;
-    ui['service-current-mode'].textContent = modeLabel;
-    ui['service-revision'].textContent = `revision ${service.revision} · ${formatDate(service.updatedAt)} KST`;
+    setCopy(ui['overview-mode'], modeLabel);
+    setCopy(ui['overview-permissions'], copy('servicePermissions', { proposals: copy(service.proposalsEnabled ? 'permissionAllowed' : 'permissionPaused'), development: copy(service.developmentEnabled ? 'permissionAllowed' : 'permissionPaused'), note: service.mode === 'active' ? '' : copy('serviceInactiveNote') }));
+    setCopy(ui['service-current-mode'], modeLabel);
+    setCopy(ui['service-revision'], copy('serviceRevision', () => ({ revision: service.revision, date: formatDate(service.updatedAt) })));
     if (replaceDraft || !state.serviceDirty) setServiceDraft(service);
     const ended = service.mode === 'ended';
-    ui['danger-title'].textContent = ended ? '종료된 서비스 재개' : '서비스 종료';
-    ui['danger-description'].textContent = ended
-      ? '데이터와 관리자 접근은 유지되어 있습니다. 다시 허용할 접수·개발 기능을 직접 선택한 뒤 재개해 주세요.'
-      : '접수·자동 개발·공개를 중단합니다. 데이터는 삭제하지 않으며 관리자 접근과 복구 경로는 유지합니다.';
-    ui['danger-service-button'].textContent = ended ? '서비스 재개…' : '서비스 종료…';
-    ui['service-submit'].textContent = ended ? '재개 설정 확인' : '운영 설정 저장';
+    setCopy(ui['danger-title'], ended ? copy('resumeEndedService') : copy('endService'));
+    setCopy(ui['danger-description'], ended
+      ? copy('resumeServiceDescription')
+      : copy('endServiceDescription'));
+    setCopy(ui['danger-service-button'], ended ? copy('resumeServiceButton') : copy('endServiceButton'));
+    setCopy(ui['service-submit'], ended ? copy('reviewResumeSettings') : copy('saveService'));
     const until = state.admin?.recentAuthUntil;
-    ui['recent-auth-note'].textContent = until
-      ? `민감 작업 인증 기준: ${formatDate(until)} KST까지. 종료·재개 시 서버에서 다시 확인합니다.`
-      : '종료와 재개에는 최근 Google 로그인과 확인 문구가 필요합니다.';
+    setCopy(ui['recent-auth-note'], until
+      ? copy('recentAuthUntil', () => ({ date: formatDate(until) }))
+      : copy('sensitiveAuthNote'));
   }
 
   async function loadOverview({ replaceDraft = false, initial = false } = {}) {
@@ -245,11 +283,11 @@
       const data = await api('/api/admin?section=overview');
       if (sequence !== state.overviewSequence) return;
       if (!data?.admin?.id || data.admin.id !== state.user?.id) {
-        denyAccess('관리자 계정과 조회 결과가 일치하지 않습니다. 다시 접속해 권한을 확인해 주세요.');
+        denyAccess(copy('adminMismatch'));
         return;
       }
       if (!data.service || !MODE_LABELS[data.service.mode] || !revisionValid(data.service.revision)) {
-        throw new ApiError('운영 상태를 확인하지 못했습니다. 설정 변경을 잠시 멈추고 다시 조회해 주세요.');
+        throw new ApiError(copy('serviceStateUnavailable'));
       }
       if (initial) state.authorized = true;
       if (!state.authorized) return;
@@ -257,12 +295,12 @@
       state.overview = data;
       state.service = data.service;
       state.serviceReady = true;
-      ui['admin-name'].textContent = text(data.admin.name, '관리자');
-      ui['admin-email'].textContent = text(data.admin.email, '');
+      setCopy(ui['admin-name'], text(data.admin.name, copy('administrator')));
+      setCopy(ui['admin-email'], text(data.admin.email, ''));
       const counts = data.counts || {};
       for (const [key, id] of Object.entries({ users: 'count-users', suspendedUsers: 'count-suspended-users',
         proposals: 'count-proposals', excludedProposals: 'count-excluded-proposals', versions: 'count-versions', pendingVersions: 'count-pending-versions' })) {
-        $(id).textContent = Number.isSafeInteger(counts[key]) && counts[key] >= 0 ? counts[key].toLocaleString('ko-KR') : '—';
+        setCopy($(id), liveCopy(() => Number.isSafeInteger(counts[key]) && counts[key] >= 0 ? counts[key].toLocaleString(i18n.intlLocale) : '—'));
       }
       renderService({ replaceDraft });
       renderAudit('recent-audit-rows', Array.isArray(data.recentAudit) ? data.recentAudit : []);
@@ -273,12 +311,15 @@
       if (sequence !== state.overviewSequence || error instanceof StaleResponse) return;
       state.serviceReady = false;
       updateControls();
-      if (!initial && state.authorized) notice(error.message, 'error');
+      if (!initial && state.authorized) notice(errorPresentation(error), 'error');
       throw error;
     }
   }
 
-  function markUpdated() { ui['last-refreshed'].textContent = `${formatDate(Date.now(), true)} KST 조회`; }
+  function markUpdated() {
+    const at = Date.now();
+    setCopy(ui['last-refreshed'], copy('lastRefreshed', () => ({ date: formatDate(at, true) })));
+  }
 
   function emptyRows(bodyId, title, description) {
     const body = $(bodyId);
@@ -303,23 +344,23 @@
 
   function userCell(user) {
     const cell = element('td');
-    cell.append(element('p', 'cell-name', text(user.name, '이름 없음')),
+    cell.append(element('p', 'cell-name', text(user.name, copy('unnamed'))),
       element('small', 'cell-secondary', user.email), element('small', 'cell-id', user.id));
     return cell;
   }
 
   function renderUsers(items) {
-    if (!items.length) { emptyRows('users-rows', '조회된 회원이 없습니다.', '검색 조건을 바꾸거나 다음 가입을 기다려 주세요.'); return; }
+    if (!items.length) { emptyRows('users-rows', copy('noMembers'), copy('noMembersHelp')); return; }
     const fragment = document.createDocumentFragment();
     for (const user of items) {
       const row = element('tr');
       const status = element('td');
       status.append(badge(user.status, USER_LABELS, user.status === 'suspended' ? 'warning' : ''));
-      if (user.isAdmin || user.id === state.admin.id) status.append(element('small', '', '관리자 · 정지 불가'));
-      const count = element('td', '', Number.isSafeInteger(user.proposalCount) ? user.proposalCount.toLocaleString('ko-KR') : '—');
+      if (user.isAdmin || user.id === state.admin.id) status.append(element('small', '', copy('adminCannotSuspend')));
+      const count = element('td', '', liveCopy(() => Number.isSafeInteger(user.proposalCount) ? user.proposalCount.toLocaleString(i18n.intlLocale) : '—'));
       const actions = element('td');
       const group = element('div', 'cell-actions');
-      const view = element('button', 'text-button', '제안 보기');
+      const view = element('button', 'text-button', copy('viewProposals'));
       view.type = 'button';
       view.addEventListener('click', () => {
         const form = $('proposals-filters');
@@ -331,7 +372,7 @@
       group.append(view);
       if (!user.isAdmin && user.id !== state.admin.id && USER_LABELS[user.status]) {
         const nextStatus = user.status === 'suspended' ? 'active' : 'suspended';
-        group.append(recordButton(nextStatus === 'suspended' ? '이용 정지' : '이용 정지 해제',
+        group.append(recordButton(nextStatus === 'suspended' ? copy('suspendMemberButton') : copy('unsuspendMemberButton'),
           () => openRecordAction('set_user_status', user, { status: nextStatus }),
           { section: 'users', danger: nextStatus === 'suspended', disabled: !revisionValid(user.revision) }));
       }
@@ -362,7 +403,7 @@
   function resetSafetyChecks() { for (const id of SAFETY_CHECK_IDS) ui[id].checked = false; }
 
   function renderProposals(items) {
-    if (!items.length) { emptyRows('proposals-rows', '조회된 프롬프트가 없습니다.', '회원·회차·검토 상태 필터를 확인해 주세요.'); return; }
+    if (!items.length) { emptyRows('proposals-rows', copy('noProposals'), copy('noProposalsHelp')); return; }
     const fragment = document.createDocumentFragment();
     for (const proposal of items) {
       const row = element('tr');
@@ -371,37 +412,37 @@
       const summary = element('summary');
       const body = typeof proposal.body === 'string' ? proposal.body : '';
       const preview = [...body].slice(0, 110).join('');
-      summary.append(document.createTextNode(preview + (codePoints(body) > 110 ? '…' : '')), element('small', '', '원문 전체 확인 ↗'));
+      summary.append(document.createTextNode(preview + (codePoints(body) > 110 ? '…' : '')), element('small', '', copy('viewOriginal')));
       details.append(summary, element('pre', '', body));
       bodyCell.append(details, element('small', 'cell-id', proposal.id));
       const author = userCell(proposal.user || {});
-      author.append(element('small', '', `회차 ${text(proposal.roundId)}`));
+      author.append(element('small', '', copy('roundValue', { round: text(proposal.roundId) })));
       const moderation = element('td');
       moderation.append(badge(proposal.moderation, MODERATION_LABELS, proposal.moderation === 'excluded' ? 'warning' : ''));
       if (proposal.moderationReason) moderation.append(element('p', 'proposal-reason', proposal.moderationReason));
       const safetyCell = element('div', 'safety-cell');
-      safetyCell.append(element('span', 'field-caption', '독립 안전 심사'));
+      safetyCell.append(element('span', 'field-caption', copy('independentSafety')));
       const safety = proposal.safety;
       if (safety && Object.hasOwn(SAFETY_LABELS, safety.status)) {
         safetyCell.append(badge(safety.status, SAFETY_LABELS, safety.status === 'approved' ? 'positive' : ['held', 'blocked'].includes(safety.status) ? 'warning' : ''),
-          element('small', '', `본문 r${text(safety.proposalRevision)} · 심사 r${text(safety.revision)} · ${text(safety.policyVersion)}`));
+          element('small', '', copy('safetyRevisions', { bodyRevision: text(safety.proposalRevision), reviewRevision: text(safety.revision), policy: text(safety.policyVersion) })));
         if (safety.reason) safetyCell.append(element('p', 'proposal-reason', safety.reason));
-        if (safety.reviewedAt) safetyCell.append(element('small', '', `최근 심사 ${formatDate(safety.reviewedAt)} KST`));
-        if (safety.hardBlocked) safetyCell.append(element('p', 'proposal-reason', '현재 원문은 명백한 금지 요청으로 승인할 수 없습니다.'));
-      } else safetyCell.append(element('small', '', '안전 상태를 확인하지 못했습니다. 다시 조회해 주세요.'));
+        if (safety.reviewedAt) safetyCell.append(element('small', '', copy('lastSafetyReview', () => ({ date: formatDate(safety.reviewedAt) }))));
+        if (safety.hardBlocked) safetyCell.append(element('p', 'proposal-reason', copy('hardBlocked')));
+      } else safetyCell.append(element('small', '', copy('safetyUnavailable')));
       moderation.append(safetyCell);
       const actions = element('td');
       const group = element('div', 'cell-actions');
       const allowed = revisionValid(proposal.moderationRevision);
-      group.append(recordButton('안전 심사', () => openRecordAction('review_proposal_safety', proposal),
+      group.append(recordButton(copy('reviewSafety'), () => openRecordAction('review_proposal_safety', proposal),
         { section: 'proposals', disabled: !safetyBindingValid(proposal) }));
       if (proposal.moderation === 'excluded') {
-        group.append(recordButton('개발 대상 복원', () => openRecordAction('moderate_proposal', proposal, { moderation: 'pending' }), { section: 'proposals', disabled: !allowed }));
+        group.append(recordButton(copy('restoreDevelopment'), () => openRecordAction('moderate_proposal', proposal, { moderation: 'pending' }), { section: 'proposals', disabled: !allowed }));
       } else if (MODERATION_LABELS[proposal.moderation]) {
         const next = proposal.moderation === 'reviewed' ? 'pending' : 'reviewed';
-        group.append(recordButton(next === 'reviewed' ? '검토 완료' : '검토 대기로',
+        group.append(recordButton(next === 'reviewed' ? copy('moderationReviewed') : copy('returnPending'),
           () => openRecordAction('moderate_proposal', proposal, { moderation: next }), { section: 'proposals', disabled: !allowed }),
-        recordButton('개발 대상 제외', () => openRecordAction('moderate_proposal', proposal, { moderation: 'excluded' }), { section: 'proposals', danger: true, disabled: !allowed }));
+        recordButton(copy('excludeDevelopmentButton'), () => openRecordAction('moderate_proposal', proposal, { moderation: 'excluded' }), { section: 'proposals', danger: true, disabled: !allowed }));
       }
       actions.append(group);
       row.append(bodyCell, author, moderation, timeCell(proposal.createdAt), actions);
@@ -411,7 +452,7 @@
   }
 
   function renderVersions(items) {
-    if (!items.length) { emptyRows('versions-rows', '개발 요청이 아직 없습니다.', '실제 게임 공개 이력과 별도로, 개발 요청을 등록하면 이곳에 기록됩니다.'); return; }
+    if (!items.length) { emptyRows('versions-rows', copy('noRequests'), copy('noRequestsHelp')); return; }
     const fragment = document.createDocumentFragment();
     for (const version of items) {
       const row = element('tr');
@@ -419,19 +460,19 @@
       label.append(element('p', 'cell-name', version.label), element('p', 'version-summary', version.summary), element('small', 'cell-id', version.id));
       const status = element('td');
       status.append(badge(version.status, VERSION_LABELS, version.status === 'failed' ? 'warning' : ''));
-      if (version.cancelRequested) status.append(element('small', '', '안전 확인 지점에서 중단 요청됨'));
-      if (version.status === 'completed') status.append(element('small', '', '게임 공개 여부와 별도'));
+      if (version.cancelRequested) status.append(element('small', '', copy('stopAtCheckpoint')));
+      if (version.status === 'completed') status.append(element('small', '', copy('separateFromPublication')));
       const references = element('td');
-      references.append(element('small', 'cell-id', version.parentId ? `원 요청 ${version.parentId}` : '원 요청 —'),
-        element('small', 'cell-id', version.commitSha ? `커밋 ${String(version.commitSha).slice(0, 12)}` : '커밋 기록 없음'));
+      references.append(element('small', 'cell-id', copy('parentRequest', { id: text(version.parentId) })),
+        element('small', 'cell-id', version.commitSha ? copy('commitValue', { commit: String(version.commitSha).slice(0, 12) }) : copy('noCommit')));
       const actions = element('td');
       const group = element('div', 'cell-actions');
       if (version.status === 'queued' || version.status === 'running') {
-        group.append(recordButton(version.status === 'queued' ? '요청 취소' : '중단 요청',
+        group.append(recordButton(version.status === 'queued' ? copy('cancelRequest') : copy('stopRequest'),
           () => openRecordAction('cancel_version', version),
           { section: 'versions', danger: true, disabled: !revisionValid(version.revision) || version.cancelRequested === true }));
       } else if (version.status === 'failed' || version.status === 'cancelled') {
-        group.append(recordButton('다시 요청', () => openRecordAction('retry_version', version), { section: 'versions', disabled: !revisionValid(version.revision) }));
+        group.append(recordButton(copy('retryRequest'), () => openRecordAction('retry_version', version), { section: 'versions', disabled: !revisionValid(version.revision) }));
       }
       actions.append(group);
       row.append(label, status, timeCell(version.updatedAt || version.createdAt), references, actions);
@@ -441,7 +482,7 @@
   }
 
   function renderAudit(bodyId, items) {
-    if (!items.length) { emptyRows(bodyId, '아직 운영 변경 기록이 없습니다.', '관리자가 변경을 실행하면 운영자와 사유가 기록됩니다.'); return; }
+    if (!items.length) { emptyRows(bodyId, copy('noAudit'), copy('noAuditHelp')); return; }
     const fragment = document.createDocumentFragment();
     for (const entry of items) {
       const row = element('tr');
@@ -467,7 +508,7 @@
 
   function renderPagination(section) {
     const list = state.lists[section];
-    $(`${section}-page-info`).textContent = `${list.page} 페이지 · ${list.items.length}개 표시 · 페이지당 최대 50개`;
+    setCopy($(`${section}-page-info`), copy('pagination', () => ({ page: list.page.toLocaleString(i18n.intlLocale), count: list.items.length.toLocaleString(i18n.intlLocale) })));
     document.querySelector(`[data-prev="${section}"]`).disabled = list.loading || !list.previous.length;
     document.querySelector(`[data-next="${section}"]`).disabled = list.loading || !list.nextCursor;
   }
@@ -484,7 +525,7 @@
     try {
       const data = await api(`/api/admin?${query}`);
       if (!state.authorized || sequence !== list.sequence) return;
-      if (!Array.isArray(data?.items)) throw new ApiError('목록 응답을 확인하지 못했습니다. 다시 조회해 주세요.');
+      if (!Array.isArray(data?.items)) throw new ApiError(copy('invalidListResponse'));
       list.items = data.items;
       list.nextCursor = typeof data.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null;
       list.ready = true;
@@ -497,7 +538,7 @@
     } catch (error) {
       if (error instanceof StaleResponse || !state.authorized || sequence !== list.sequence) return;
       list.ready = false;
-      notice(error.message, 'error');
+      notice(errorPresentation(error), 'error');
       throw error;
     } finally {
       if (state.authorized && sequence === list.sequence) { list.loading = false; renderPagination(section); updateControls(); }
@@ -508,9 +549,9 @@
     if (!state.authorized || !SECTIONS[section]) return;
     state.section = section;
     const [eyebrow, title, description] = SECTIONS[section];
-    ui['section-eyebrow'].textContent = eyebrow;
-    ui['section-title'].textContent = title;
-    ui['section-description'].textContent = description;
+    setCopy(ui['section-eyebrow'], eyebrow);
+    setCopy(ui['section-title'], title);
+    setCopy(ui['section-description'], description);
     for (const panel of document.querySelectorAll('.admin-panel')) panel.hidden = panel.id !== `panel-${section}`;
     for (const link of document.querySelectorAll('.admin-nav [data-section]')) {
       if (link.dataset.section === section) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
@@ -531,11 +572,11 @@
       if (record.isAdmin || record.id === state.admin.id || !revisionValid(record.revision)) return;
       config = {
         action, userId: record.id, status: change.status, revision: record.revision, section: 'users',
-        title: change.status === 'suspended' ? '회원 이용 정지' : '회원 이용 정지 해제',
-        target: `${text(record.name, '회원')} · ${text(record.email)}`,
+        title: change.status === 'suspended' ? copy('suspendTitle') : copy('unsuspendTitle'),
+        target: liveCopy(() => `${text(record.name, copy('memberLabel'))} · ${text(record.email)}`),
         description: change.status === 'suspended'
-          ? '현재 로그인 세션을 회수하고 새 접수·수정을 차단합니다. 계정과 기존 기여 이력은 삭제하지 않습니다.'
-          : '회원이 다시 로그인하고 제안할 수 있도록 이용 정지를 해제합니다. 기존 기록은 유지됩니다.',
+          ? copy('suspendDescription')
+          : copy('unsuspendDescription'),
       };
     } else if (action === 'review_proposal_safety') {
       if (!safetyBindingValid(record)) return;
@@ -544,26 +585,26 @@
         bodyHash: record.safety.bodyHash, policyVersion: record.safety.policyVersion, revision: record.safety.revision,
         body: typeof record.body === 'string' ? record.body : '', hardBlocked: record.safety.hardBlocked === true,
         developmentBrief: typeof record.safety.developmentBrief === 'string' ? record.safety.developmentBrief : '',
-        section: 'proposals', title: '제안 안전 심사', target: `프롬프트 ${record.id}`,
-        description: '현재 본문과 안전 정책에만 유효한 판단을 기록합니다. 원문에 포함된 운영 지시를 실행하지 마세요. 본문이 수정되거나 정책이 바뀌면 다시 심사해야 하며, 안전 승인은 게임 채택·공개와 별도입니다.',
+        section: 'proposals', title: copy('actionSafety'), target: copy('proposalTarget', { id: record.id }),
+        description: copy('reviewSafetyDescription'),
       };
     } else if (action === 'moderate_proposal') {
       if (!revisionValid(record.moderationRevision)) return;
       config = {
         action, proposalId: record.id, moderation: change.moderation, revision: record.moderationRevision, section: 'proposals',
-        title: change.moderation === 'excluded' ? '개발 대상에서 제외' : change.moderation === 'reviewed' ? '검토 완료로 변경' : record.moderation === 'excluded' ? '개발 대상으로 복원' : '검토 대기로 변경',
-        target: `프롬프트 ${record.id}`,
-        description: '제안 원문·접수 시각·제출 횟수는 그대로 보존합니다. 제외된 프롬프트는 개발 입력으로 사용하지 않으며, 고정된 회차 입력은 별도로 재확인합니다.',
+        title: change.moderation === 'excluded' ? copy('excludeTitle') : change.moderation === 'reviewed' ? copy('markReviewedTitle') : record.moderation === 'excluded' ? copy('restoreDevelopmentTitle') : copy('markPendingTitle'),
+        target: copy('proposalTarget', { id: record.id }),
+        description: copy('moderationDescription'),
       };
     } else {
       if (!revisionValid(record.revision)) return;
       config = {
         action, versionId: record.id, revision: record.revision, section: 'versions', target: text(record.label),
-        title: action === 'retry_version' ? '개발 다시 요청' : record.status === 'running' ? '실행 중 작업 중단 요청' : '대기 개발 요청 취소',
+        title: action === 'retry_version' ? copy('retryDevelopmentTitle') : record.status === 'running' ? copy('stopDevelopmentTitle') : copy('cancelDevelopmentTitle'),
         description: action === 'retry_version'
-          ? '기존 실패·취소 기록을 보존하고 새 대기 요청을 만듭니다. 요청 등록만으로 개발·검증·게임 공개가 완료되지는 않습니다.'
-          : record.status === 'running' ? '다음 안전 확인 지점에서 중단하도록 요청합니다. 외부에 이미 전송한 배포 요청을 즉시 취소한다는 뜻은 아닙니다.'
-            : '아직 시작하지 않은 개발 요청을 취소하고 기록을 보존합니다.',
+          ? copy('retryDevelopmentDescription')
+          : record.status === 'running' ? copy('stopDevelopmentDescription')
+            : copy('cancelDevelopmentDescription'),
       };
     }
     showDialog(config);
@@ -574,22 +615,22 @@
     state.dialogAction = config;
     state.dialogConflict = false;
     state.returnFocus = document.activeElement;
-    ui['action-title'].textContent = config.title;
-    ui['action-target'].textContent = config.target || '';
-    ui['action-description'].textContent = config.description;
+    setCopy(ui['action-title'], config.title);
+    setCopy(ui['action-target'], config.target || '');
+    setCopy(ui['action-description'], config.description);
     ui['action-reason'].value = reason || state.reasons.get(dialogKey(config)) || '';
     ui['action-confirmation'].value = '';
     ui['action-reauth-link'].hidden = true;
     ui['confirmation-field'].hidden = !config.confirmation;
-    ui['confirmation-phrase'].textContent = config.confirmation || '';
+    setCopy(ui['confirmation-phrase'], config.confirmation || '');
     ui['action-submit'].classList.toggle('danger', Boolean(config.confirmation));
     ui['action-submit'].classList.toggle('primary', !config.confirmation);
     fieldFeedback('action-feedback', '');
     const isSafety = config.action === 'review_proposal_safety';
     ui['safety-review-fields'].hidden = !isSafety;
-    ui['safety-review-body'].textContent = isSafety ? config.body : '';
-    ui['safety-review-binding'].textContent = isSafety
-      ? `본문 revision ${config.proposalRevision}\nSHA-256 ${config.bodyHash}\n정책 ${config.policyVersion} · 심사 revision ${config.revision}` : '';
+    setCopy(ui['safety-review-body'], isSafety ? config.body : '');
+    setCopy(ui['safety-review-binding'], isSafety
+      ? copy('safetyBinding', { bodyRevision: config.proposalRevision, bodyHash: config.bodyHash, policy: config.policyVersion, reviewRevision: config.revision }) : '');
     ui['safety-decision'].value = '';
     ui['safety-decision'].querySelector('[value="approved"]').disabled = isSafety && config.hardBlocked;
     ui['safety-hard-block'].hidden = !isSafety || !config.hardBlocked;
@@ -597,7 +638,7 @@
     const savedSafety = isSafety ? state.safetyDrafts.get(config.proposalId) : null;
     ui['safety-development-brief'].value = savedSafety?.brief ?? (isSafety ? config.developmentBrief : '');
     if (savedSafety && savedSafety.source !== safetySourceKey(config)) {
-      fieldFeedback('action-feedback', '이전 본문의 정리문을 보관했습니다. 아래 사유와 현재 원문을 다시 대조하고, 승인하려면 모든 항목을 새로 확인해 주세요.');
+      fieldFeedback('action-feedback', copy('oldBriefPreserved'));
     }
     if (!ui['action-dialog'].open) ui['action-dialog'].showModal();
     updateControls();
@@ -616,19 +657,19 @@
 
   function validateText(value, label, limit, required = true) {
     const trimmed = String(value).trim();
-    if (required && !trimmed) throw new Error(`${label} 항목을 입력해 주세요.`);
-    if (codePoints(trimmed) > limit) throw new Error(`${label} 항목은 ${limit.toLocaleString('ko-KR')}자까지 입력할 수 있습니다.`);
+    if (required && !trimmed) throw new LocalizedError(copy('requiredField', { label }));
+    if (codePoints(trimmed) > limit) throw new LocalizedError(copy('fieldLimit', () => ({ label, limit: limit.toLocaleString(i18n.intlLocale) })));
     return trimmed;
   }
 
   function servicePayload({ ending = false } = {}) {
-    if (!state.serviceReady || !revisionValid(state.service?.revision)) throw new Error('운영 상태를 먼저 새로 조회해 주세요.');
+    if (!state.serviceReady || !revisionValid(state.service?.revision)) throw new LocalizedError(copy('refreshServiceFirst'));
     const draft = serviceDraft();
     return {
       action: 'set_service', mode: ending ? 'ended' : draft.mode,
       proposalsEnabled: ending ? false : draft.proposalsEnabled,
       developmentEnabled: ending ? false : draft.developmentEnabled,
-      message: validateText(draft.message, '서비스 공지', 1000, false), revision: state.service.revision,
+      message: validateText(draft.message, copy('serviceNotice'), 1000, false), revision: state.service.revision,
     };
   }
 
@@ -639,40 +680,40 @@
         state.serviceDirty = true;
       }
       const payload = servicePayload({ ending });
-      const confirmation = ending ? '서비스 종료' : '서비스 재개';
+      const confirmation = ending ? 'END SERVICE' : 'RESUME SERVICE';
       showDialog({
-        ...payload, confirmation, section: 'service', title: confirmation,
-        target: `${MODE_LABELS[state.service.mode]} → ${MODE_LABELS[payload.mode]} · revision ${payload.revision}`,
+        ...payload, confirmation, section: 'service', title: ending ? copy('endService') : copy('resumeService'),
+        target: copy('serviceTransition', { from: MODE_LABELS[state.service.mode], to: MODE_LABELS[payload.mode], revision: payload.revision }),
         description: ending
-          ? '신규·수정 접수와 자동 개발·공개를 중단하고 두 허용 스위치를 끕니다. 데이터는 삭제하지 않으며 관리자 접근은 유지됩니다. 실행 중 작업은 다음 안전 확인 지점에서 중단합니다.'
-          : `종료된 서비스를 ${MODE_LABELS[payload.mode]} 상태로 재개합니다. 프롬프트 접수는 ${payload.proposalsEnabled ? '허용' : '중지'}, 자동 개발은 ${payload.developmentEnabled ? '허용' : '중지'}로 저장합니다. 선택한 기능과 공지를 확인해 주세요.`,
+          ? copy('endConfirmationDescription')
+          : copy('resumeConfirmationDescription', { mode: MODE_LABELS[payload.mode], proposals: copy(payload.proposalsEnabled ? 'permissionAllowed' : 'permissionPaused'), development: copy(payload.developmentEnabled ? 'permissionAllowed' : 'permissionPaused') }),
       }, ui['service-reason'].value);
-    } catch (error) { fieldFeedback('service-feedback', error.message); }
+    } catch (error) { fieldFeedback('service-feedback', errorPresentation(error)); }
   }
 
   function payloadForDialog() {
     const config = state.dialogAction;
-    if (!config || state.dialogConflict) throw new Error('최신 상태를 다시 확인하고 작업을 열어 주세요.');
-    const reason = validateText(ui['action-reason'].value, '변경 사유', 500);
+    if (!config || state.dialogConflict) throw new LocalizedError(copy('reopenLatestAction'));
+    const reason = validateText(ui['action-reason'].value, copy('changeReason'), 500);
     const payload = { action: config.action, reason };
     for (const key of ['userId', 'status', 'proposalId', 'moderation', 'versionId', 'revision', 'mode', 'proposalsEnabled', 'developmentEnabled', 'message', 'proposalRevision', 'bodyHash', 'policyVersion']) {
       if (Object.hasOwn(config, key)) payload[key] = config[key];
     }
     if (config.action === 'review_proposal_safety') {
       const status = ui['safety-decision'].value;
-      if (!Object.hasOwn(SAFETY_LABELS, status)) throw new Error('안전 심사 결과를 선택해 주세요.');
+      if (!Object.hasOwn(SAFETY_LABELS, status)) throw new LocalizedError(copy('selectSafetyDecision'));
       const approved = status === 'approved';
-      if (approved && config.hardBlocked) throw new Error('현재 원문은 명백한 금지 요청으로 승인할 수 없습니다.');
+      if (approved && config.hardBlocked) throw new LocalizedError(copy('hardBlocked'));
       const brief = approved ? ui['safety-development-brief'].value.trim() : '';
       const confirmed = approved && SAFETY_CHECK_IDS.every((id) => ui[id].checked);
       if (approved && (!brief || encoder.encode(brief).length > 2000 || !confirmed)) {
-        throw new Error('승인하려면 2,000바이트 이내의 안전한 게임 요구 정리문과 세 가지 확인 항목이 모두 필요합니다.');
+        throw new LocalizedError(copy('approvalRequirements'));
       }
       Object.assign(payload, { status, checklistConfirmed: confirmed, developmentBrief: brief });
       saveSafetyDraft();
     }
     if (config.confirmation) {
-      if (ui['action-confirmation'].value !== config.confirmation) throw new Error(`확인 문구 '${config.confirmation}'를 정확히 입력해 주세요.`);
+      if (ui['action-confirmation'].value !== config.confirmation) throw new LocalizedError(copy('exactConfirmation', { phrase: config.confirmation }));
       payload.confirmation = ui['action-confirmation'].value;
     }
     return payload;
@@ -702,7 +743,7 @@
     const approving = isSafety && safetyDecision === 'approved';
     const briefBytes = encoder.encode(ui['safety-development-brief'].value.trim()).length;
     ui['safety-approval-fields'].hidden = !approving;
-    ui['safety-brief-bytes'].textContent = `${briefBytes.toLocaleString('ko-KR')} / 2,000 bytes`;
+    setCopy(ui['safety-brief-bytes'], copy('briefBytes', () => ({ count: briefBytes.toLocaleString(i18n.intlLocale) })));
     ui['safety-brief-bytes'].dataset.invalid = String(briefBytes > 2000);
     const validSafety = !isSafety || (Object.hasOwn(SAFETY_LABELS, safetyDecision)
       && (!approving || (!config.hardBlocked && briefBytes > 0 && briefBytes <= 2000 && SAFETY_CHECK_IDS.every((id) => ui[id].checked))));
@@ -711,7 +752,7 @@
     ui['action-retry'].hidden = !dialogRetry;
     ui['action-retry'].disabled = state.busy || !state.sessionReady;
     ui['action-submit'].disabled = state.busy || !state.sessionReady || state.dialogConflict || !config || !validReason || !validConfirmation || !validSafety || state.attempt?.unknown === true;
-    ui['action-submit'].textContent = state.busy && state.attempt?.channel === 'dialog' ? '처리 중…' : isSafety ? '안전 심사 저장' : '확인하고 실행';
+    setCopy(ui['action-submit'], state.busy && state.attempt?.channel === 'dialog' ? copy('processing') : isSafety ? copy('saveSafetyReview') : copy('confirmAction'));
     ui['action-close'].disabled = state.busy;
     ui['action-cancel'].disabled = state.busy;
     ui['admin-logout'].disabled = state.busy;
@@ -747,7 +788,7 @@
         saveSafetyDraft();
         resetSafetyChecks();
         state.dialogConflict = true;
-        fieldFeedback('action-feedback', '심사 대상 본문·정책 또는 이전 판단이 변경되었습니다. 정리문과 사유는 보관했습니다. 이 창을 닫고 목록에서 최신 원문을 다시 열어 직접 심사해 주세요.');
+        fieldFeedback('action-feedback', copy('safetyConflictPreserved'));
         updateControls();
         return results.every((result) => result.status === 'fulfilled');
       }
@@ -762,10 +803,10 @@
         state.dialogAction.revision = nextRevision;
         state.dialogConflict = false;
         ui['action-confirmation'].value = '';
-        fieldFeedback('action-feedback', '최신 상태를 다시 조회했습니다. 작성한 사유를 확인하고 작업을 다시 실행해 주세요.');
+        fieldFeedback('action-feedback', copy('latestStateRecheck'));
       } else {
         state.dialogConflict = true;
-        fieldFeedback('action-feedback', '최신 대상을 확인하지 못했습니다. 사유는 보관됩니다. 목록에서 대상을 다시 조회한 뒤 작업을 열어 주세요.');
+        fieldFeedback('action-feedback', copy('latestTargetUnavailable'));
       }
     }
     updateControls();
@@ -775,7 +816,7 @@
   async function performMutation(channel, payload, { retry = false } = {}) {
     if (!state.authorized || !state.sessionReady || state.busy) return;
     if (state.attempt?.unknown && !retry) {
-      notice('아직 결과를 확인하지 못한 요청이 있습니다. 새 작업 전에 같은 요청으로 결과를 확인해 주세요.', 'error', { retry: true });
+      notice(copy('unresolvedRequest'), 'error', { retry: true });
       return;
     }
     const attempt = retry ? state.attempt : attemptFor(channel, payload);
@@ -787,7 +828,7 @@
     try {
       const result = await api('/api/admin', { method: 'POST', payload: attempt.payload });
       if (!state.authorized) return;
-      if (result?.ok !== true) throw new ApiError('변경 결과를 확인하지 못했습니다.');
+      if (result?.ok !== true) throw new ApiError(copy('mutationReceiptUnavailable'));
       state.attempt = null;
       if (attempt.channel === 'dialog') {
         if (state.dialogAction) state.reasons.delete(dialogKey(state.dialogAction));
@@ -807,39 +848,39 @@
       }
       clearReauthDraft();
       const successMessage = attempt.payload.action === 'review_proposal_safety'
-        ? '안전 심사와 사유를 기록했습니다. 운영 허용과 게임 채택·검증·공개는 각각 별도입니다.'
+        ? copy('safetySaved')
         : attempt.payload.action === 'create_version' || attempt.payload.action === 'retry_version'
-        ? '개발 요청을 등록했습니다. 실행·검증·게임 공개는 별도 절차로 진행됩니다.'
-        : attempt.payload.action === 'cancel_version' ? '취소·중단 요청을 기록했습니다. 실행 중인 작업은 다음 안전 확인 지점에서 확인합니다.'
-          : '변경을 저장하고 감사 기록을 남겼습니다.';
+        ? copy('requestSaved')
+        : attempt.payload.action === 'cancel_version' ? copy('stopSaved')
+          : copy('changeSaved');
       notice(successMessage);
       const refreshed = await refreshAfterMutation(attempt.payload);
-      if (state.authorized && !refreshed) notice(`${successMessage} 최신 화면 조회에는 실패했으므로 새로고침해 주세요. 요청을 다시 보낼 필요는 없습니다.`, 'error');
+      if (state.authorized && !refreshed) notice(copy('savedRefreshFailed', { message: successMessage }), 'error');
     } catch (error) {
       if (error instanceof StaleResponse || !state.authorized) return;
       if (error.code === 'ADMIN_REAUTH_REQUIRED') {
         state.attempt = null;
         ui['action-confirmation'].value = '';
         resetSafetyChecks();
-        fieldFeedback(feedbackId, '민감 작업에는 최근 Google 로그인이 필요합니다. 사유와 설정은 보존되며, 다시 인증한 뒤 직접 작업을 확인해야 합니다.');
-        notice('민감 작업 인증이 만료되었습니다. Google로 다시 인증해 주세요. 작성한 사유와 설정을 보관하며 자동 실행하지 않습니다.', 'error', { reauth: true });
+        fieldFeedback(feedbackId, copy('reauthRequiredPreserved'));
+        notice(copy('reauthNotice'), 'error', { reauth: true });
         saveReauthDraft();
       } else if (error.status === 409) {
         state.attempt = null;
         state.dialogConflict = attempt.channel === 'dialog';
-        fieldFeedback(feedbackId, '다른 변경과 충돌했습니다. 사유와 입력을 보존하고 최신 상태를 다시 조회합니다.');
-        notice('다른 작업이 먼저 반영되었습니다. 최신 상태를 다시 조회한 뒤 입력 내용을 확인해 주세요.', 'error');
+        fieldFeedback(feedbackId, copy('conflictPreserved'));
+        notice(copy('conflictNotice'), 'error');
         await refreshAfterMutation(attempt.payload, { conflict: true });
       } else if (error.status === 0 || error.status >= 500) {
         attempt.unknown = true;
         state.attempt = attempt;
-        const message = '요청 결과를 확인하지 못했습니다. 입력과 요청 식별자를 보관합니다. 아래에서 같은 요청으로 다시 확인할 수 있으며 자동 재전송하지 않습니다.';
+        const message = copy('unknownMutation');
         fieldFeedback(feedbackId, message);
         notice(message, 'error', { retry: true });
       } else {
         state.attempt = null;
-        fieldFeedback(feedbackId, error.message);
-        notice(error.message, 'error');
+        fieldFeedback(feedbackId, errorPresentation(error));
+        notice(errorPresentation(error), 'error');
       }
     } finally {
       state.busy = false;
@@ -860,7 +901,7 @@
         safetyDrafts: [...state.safetyDrafts.entries()],
       }));
     } catch {
-      notice('이 브라우저에서 재인증 전 임시 저장을 사용할 수 없습니다. 사유와 설정을 복사한 뒤 다시 인증해 주세요.', 'error', { reauth: true });
+      notice(copy('reauthStorageUnavailable'), 'error', { reauth: true });
     }
   }
 
@@ -888,7 +929,7 @@
       }
     }
     if (SECTIONS[draft.section]) state.section = draft.section;
-    notice('재인증 전 작성한 내용을 복원했습니다. 같은 대상의 작업을 열면 사유를 다시 확인할 수 있습니다. 자동 실행하지 않으며 확인 문구는 새로 입력해야 합니다.');
+    notice(copy('reauthDraftRestored'));
   }
 
   async function refreshCurrent() {
@@ -898,8 +939,8 @@
       if (!await verifySession()) return;
       if (state.lists[state.section]) await loadList(state.section);
       else await loadOverview();
-      if (!state.attempt?.unknown && ui['reauth-link'].hidden) notice('최신 상태를 조회했습니다. 작성 중인 내용은 유지됩니다.');
-    } catch (error) { if (!(error instanceof StaleResponse) && state.authorized) notice(error.message, 'error'); }
+      if (!state.attempt?.unknown && ui['reauth-link'].hidden) notice(copy('refreshedPreserved'));
+    } catch (error) { if (!(error instanceof StaleResponse) && state.authorized) notice(errorPresentation(error), 'error'); }
     finally { if (state.authorized) ui['refresh-view'].disabled = false; }
   }
 
@@ -912,7 +953,7 @@
         state.sessionReady = false;
         for (const list of Object.values(state.lists)) list.ready = false;
         updateControls();
-        notice('관리자 연결을 다시 확인하지 못했습니다. 작성한 내용은 유지되며 최신 조회 후 변경할 수 있습니다.', 'error');
+        notice(copy('accessCheckUnavailable'), 'error');
       }
     }
   }
@@ -956,10 +997,10 @@
     try {
       const payload = servicePayload();
       if (state.service.mode === 'ended' && payload.mode !== 'ended') { openServiceConfirmation(false); return; }
-      if (payload.mode === 'ended') throw new Error('서비스 종료·재개는 아래 민감 작업 영역에서 확인해 주세요.');
-      payload.reason = validateText(ui['service-reason'].value, '변경 사유', 500);
+      if (payload.mode === 'ended') throw new LocalizedError(copy('useSensitiveSection'));
+      payload.reason = validateText(ui['service-reason'].value, copy('changeReason'), 500);
       performMutation('service', payload);
-    } catch (error) { fieldFeedback('service-feedback', error.message); }
+    } catch (error) { fieldFeedback('service-feedback', errorPresentation(error)); }
   });
   ui['danger-service-button'].addEventListener('click', () => {
     if (!state.busy && !state.attempt?.unknown && state.serviceReady) openServiceConfirmation(state.service.mode !== 'ended');
@@ -969,18 +1010,18 @@
     if (state.busy || state.attempt?.unknown) return;
     try {
       const payload = {
-        action: 'create_version', label: validateText(ui['version-label'].value, '요청 이름', 80),
-        summary: validateText(ui['version-summary'].value, '개발 요구 요약', 2000),
-        reason: validateText(ui['version-reason'].value, '등록 사유', 500),
+        action: 'create_version', label: validateText(ui['version-label'].value, copy('requestName'), 80),
+        summary: validateText(ui['version-summary'].value, copy('developmentSummary'), 2000),
+        reason: validateText(ui['version-reason'].value, copy('registrationReason'), 500),
       };
       performMutation('version', payload);
-    } catch (error) { fieldFeedback('version-feedback', error.message); }
+    } catch (error) { fieldFeedback('version-feedback', errorPresentation(error)); }
   });
   ui['action-form'].addEventListener('submit', (event) => {
     event.preventDefault();
     if (state.busy || state.attempt?.unknown) return;
     try { performMutation('dialog', payloadForDialog()); }
-    catch (error) { fieldFeedback('action-feedback', error.message); }
+    catch (error) { fieldFeedback('action-feedback', errorPresentation(error)); }
   });
   ui['action-reason'].addEventListener('input', () => {
     if (state.dialogAction) state.reasons.set(dialogKey(state.dialogAction), ui['action-reason'].value);
@@ -1015,9 +1056,9 @@
     try {
       await api('/api/logout', { method: 'POST', payload: {} });
       try { localStorage.setItem(AUTH_PULSE_KEY, String(Date.now())); } catch { /* Other pages still verify their own sessions. */ }
-      denyAccess('로그아웃했습니다. 화면의 관리 데이터를 지웠습니다.', '로그아웃했습니다.');
+      denyAccess(copy('signedOutClear'), copy('signedOut'));
     } catch (error) {
-      if (!(error instanceof StaleResponse)) denyAccess('로그아웃 결과를 확인하지 못했습니다. 관리 데이터는 화면에서 지웠습니다. 다시 접속해 로그인 상태를 확인해 주세요.');
+      if (!(error instanceof StaleResponse)) denyAccess(copy('logoutUnknownClear'));
     } finally { state.busy = false; }
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkCurrentAccess(); });
@@ -1026,6 +1067,9 @@
 
   async function boot() {
     try {
+      await i18n.init();
+      i18n.apply(document);
+      refreshInterfaceCopy();
       if (!await verifySession()) return;
       await loadOverview({ initial: true, replaceDraft: true });
       if (!state.authorized) return;
@@ -1039,11 +1083,13 @@
       updateControls();
     } catch (error) {
       if (error instanceof StaleResponse) return;
-      ui['gate-title'].textContent = '관리 화면을 불러오지 못했습니다.';
-      ui['gate-message'].textContent = error.message;
+      setCopy(ui['gate-title'], copy('loadAdminFailed'));
+      setCopy(ui['gate-message'], errorPresentation(error));
       ui['gate-retry'].hidden = false;
       ui['gate-login'].hidden = false;
     }
   }
+  i18n.bindLanguageControls();
+  i18n.subscribe(refreshInterfaceCopy);
   boot();
 })();

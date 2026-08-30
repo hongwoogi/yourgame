@@ -22,20 +22,30 @@ for (const file of sourceFiles) {
 }
 for (const file of ['package.json', 'vercel.json']) JSON.parse(await readFile(path.join(root, file), 'utf8'));
 const html = await readFile(path.join(root, 'public', 'index.html'), 'utf8');
-if (!html.includes('lang="ko"') || !html.includes('app.js') || !html.includes('styles.css')) {
-  throw new Error('The Korean entry page and its assets must be present.');
+if (!html.includes('lang="en"') || !html.includes('app.js') || !html.includes('styles.css') || !html.includes('data-language-select')) {
+  throw new Error('The English-first entry page, language selector and assets must be present.');
 }
-for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css']) {
+for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css', 'i18n.js', 'error-messages.js', 'public-messages.js', 'admin-messages.js']) {
   if (!(await readFile(path.join(root, 'public', asset), 'utf8')).trim()) {
     throw new Error(`Required browser asset is empty: ${asset}`);
   }
 }
 const adminHtml = await readFile(path.join(root, 'server', 'admin-page.html'), 'utf8');
-if (!adminHtml.includes('lang="ko"') || !adminHtml.includes('/admin.js') || !adminHtml.includes('/admin.css')) {
-  throw new Error('The protected administrator page and its assets must be present.');
+if (!adminHtml.includes('lang="en"') || !adminHtml.includes('/admin.js') || !adminHtml.includes('/admin.css') || !adminHtml.includes('data-language-select')) {
+  throw new Error('The English-first protected administrator page, language selector and assets must be present.');
 }
 if ((await readdir(path.join(root, 'public'))).some(name => /^admin(?:-page)?\.html$/i.test(name))) {
   throw new Error('Administrator HTML must not be deployed as a public static file.');
+}
+// Registering the real catalogs checks language-key and interpolation parity
+// without a browser or network. Also catch misspelled static translation keys.
+const { i18n } = await import('../public/i18n.js');
+await import('../public/public-messages.js');
+await import('../public/admin-messages.js');
+for (const [file, source] of [['public/index.html', html], ['server/admin-page.html', adminHtml]]) {
+  for (const match of source.matchAll(/\bdata-i18n(?:-(?:placeholder|aria-label|aria-description|title|content|alt))?="([^"]+)"/g)) {
+    if (i18n.t(match[1]) === '[' + match[1] + ']') throw new Error(`Missing translation ${match[1]} in ${file}.`);
+  }
 }
 console.log(`Checked ${sourceFiles.length} JavaScript files and deployment configuration.`);
 if (process.argv.includes('--test')) {

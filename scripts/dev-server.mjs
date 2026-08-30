@@ -17,7 +17,7 @@ const mimeTypes = {
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
-const routes = new Set(['status', 'session', 'login', 'logout', 'proposals', 'health', 'admin', 'admin-page']);
+const routes = new Set(['locale', 'status', 'session', 'login', 'logout', 'proposals', 'health', 'admin', 'admin-page']);
 
 export const devServer = http.createServer(async (req, res) => {
   try {
@@ -33,7 +33,7 @@ export const devServer = http.createServer(async (req, res) => {
       const route = url.pathname.slice(5);
       if (!routes.has(route)) {
         res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-        return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: '요청한 경로가 없습니다.' } }));
+        return res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'The requested route was not found.' } }));
       }
       req.query = Object.fromEntries(url.searchParams);
       const { default: handler } = await import(pathToFileURL(path.join(root, 'api', `${route}.js`)).href);
@@ -69,7 +69,7 @@ export const devServer = http.createServer(async (req, res) => {
     if (res.headersSent) return res.end();
     const status = error?.code === 'ENOENT' ? 404 : 500;
     res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(status === 404 ? 'Not found' : '요청 처리 중 오류가 발생했습니다.');
+    res.end(status === 404 ? 'Not found' : 'The request could not be completed.');
     if (status === 500) console.error('Local request failed; check application configuration.');
   }
 });
