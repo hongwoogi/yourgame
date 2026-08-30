@@ -12,7 +12,8 @@
 2. `npm run test:ui`로 입력 보존·로그인 모달·자동 제출·잔여 0회·수정 화면을 검증한다. 이 검사는 Google 응답을 대체한 UI 검사이므로 실제 Google 계정 로그인 성공과 구분한다.
 3. 실제 Google 제공자 설정과 운영 도메인의 로그인을 별도로 확인한다. Client ID 존재만으로 허용 origin이나 Google 로그인이 정상이라고 표시하지 않는다.
 4. 운영 DB는 서버 환경으로만 연결한다. `node --env-file=.env.production.local scripts/init-db.mjs`는 기존 데이터를 지우지 않는 초기 스키마 적용용이다. 자격증명이나 `.env` 내용을 출력하지 않는다.
-5. 커밋·배포가 성공한 뒤 운영 도메인에서 `/api/health`, `/api/status`와 실제 화면을 확인한다. `/health.json`은 동적 상태 확인 경로로 연결한다.
+5. 커밋 전에 추적되지 않은 파일을 확인한다. 배포할 커밋을 `git archive`로 `.local/` 아래 새 검증 폴더에 꺼내 `npm ci`와 `npm run build`를 다시 실행한다. 로컬에만 남은 테스트 보조 파일에 기대어 성공한 검사를 배포 검증으로 간주하지 않는다.
+6. 커밋·배포가 성공한 뒤 운영 도메인에서 `/api/health`, `/api/status`와 실제 화면을 확인한다. `/health.json`은 동적 상태 확인 경로로 연결한다.
 
 ## 정기 점검
 
