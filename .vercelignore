@@ -3,8 +3,8 @@
 .env
 .env.*
 docs
-scripts
 README.md
 CONTEXT.md
 .agents
 skills-lock.json
+playwright.config.mjs

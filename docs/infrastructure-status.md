@@ -1,6 +1,16 @@
 # 인프라 연결 상태
 
-확인일: 2026-08-31, Asia/Seoul. GitHub·Vercel·Turso·yourga.me 연결을 완료했다. 인프라 확인용 준비 페이지를 제공하며 게임 공개, 제안 모집 및 자동 진화는 아직 시작하지 않았다.
+확인일: 2026-08-31, Asia/Seoul. GitHub·Vercel·Turso·yourga.me 연결을 완료했다. Google 로그인·제안 접수·카운트다운 코드를 구현하고 운영 DB 스키마를 적용했으며, 새 코드의 운영 배포를 검증 중이다. 게임 공개와 자동 진화는 아직 시작하지 않았다.
+
+## 제안 접수 구현과 검증
+
+- Node.js 22 서버 API 6개와 정적 진입 화면을 구현했다. 최근 60분 최대 3개·UTF-8 2,000바이트·마감·수정·중복 재시도는 서버와 DB에서 검사한다.
+- 운영 DB에 schema v1을 비파괴 적용했다. 사용자·세션·제안·세션 생성 제한용 테이블과 제약을 추가했으며 시험 사용자나 제안은 넣지 않았다.
+- `npm run build`의 백엔드·서명 검증·모니터 테스트 45개와 Playwright 브라우저 흐름 13개가 통과했다. 독립 worker 3개에서 동시에 보낸 24개 접수 중 정확히 3개만 저장했다. 계정 전환·오래된 응답·일시적인 조회 실패의 화면 경합도 재현 후 수정했다.
+- 로컬 실제 UI와 실제 Google 버튼 렌더링을 확인했다. Google 계정 로그인을 끝까지 완료한 검증은 아직 없으며, 테스트 대역 검사와 구분한다.
+- Vercel Production에 `APP_ORIGIN=https://yourga.me`를 등록했다. 기존 Google·Turso 환경변수를 유지한다. 다른 origin에서의 변경 요청은 허용하지 않는다.
+- 기존 `/health.json`의 고정 성공 파일을 없애고 DB·인증 설정을 확인하는 `/api/health`로 연결한다. Google 클라이언트 설정의 존재만으로 실제 로그인 정상 여부를 판정하지 않는다.
+- 아래의 준비 페이지·초기 연결 기록은 이전 단계의 검증 이력이다. 신규 배포와 정기 점검의 실제 결과는 확인 뒤 이 절에 기록한다.
 
 ## GitHub와 Vercel
 
@@ -46,3 +56,10 @@ npx --yes vercel@59.10.0 domains verify yourga.me --scope hso1025-2820s-projects
 - Vercel 연동 CLI가 자동 설치한 .agents/skills/turso-cloud와 skills-lock.json은 로컬 도구 자료로 유지하고 Git·배포 업로드에서 제외한다.
 - 브라우저 연결 도구 오류로 처음 동의 화면을 조작하지 못했으며, 사용자가 필요한 승인을 마친 뒤 CLI 작업을 재개했다. 승인 우회나 별도 Cloudflare API 토큰 발급은 하지 않았다.
 - Codex 모델 실행, 정기 작업, 게임 버전 집계, 데이터 스키마 및 제안 수집은 아직 시작하지 않았다.
+
+## Google 로그인 준비
+
+- 2026-08-31 사용자가 제공한 웹용 OAuth 2.0 클라이언트의 ID와 비밀키를 `.env.local`과 Vercel Production의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`으로 등록했다. Production의 두 변수는 Secret 유형이며 Preview·Development 원격 환경은 변경하지 않았다.
+- 로컬 값의 원본 일치, Production 변수 존재와 Secret 유형, Git 제외와 추적 가능 파일의 실제 값 미포함을 확인했다. 값 자체는 문서나 도구 출력에 기록하지 않는다.
+- 브라우저 연결 도구 오류로 Google 콘솔의 허용 origin을 확인하지 못했다. 제공 파일에 주소 목록이 없다는 사실만으로 콘솔 설정도 비어 있다고 단정하지 않는다.
+- 로그인 UI와 서버 세션은 이후 구현해 자동 검사를 통과했다. 실제 Google 계정 로그인과 허용 origin 검증은 별도로 남아 있다. 자세한 범위와 남은 검증은 [Google 로그인 준비 상태](google-login-setup.md)를 따른다.

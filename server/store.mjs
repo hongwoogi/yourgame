@@ -1,0 +1,294 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import {
+  ANONYMOUS_SESSION_MS, GOOGLE_NONCE_MS, INITIAL_CUTOFF, LOGIN_SESSION_MS,
+  MAX_BYTES, SESSION_CREATION_LIMIT, SESSION_CREATION_WINDOW_MS, SUBMISSION_LIMIT, WINDOW_MS,
+} from './config.mjs';
+import { ApiError } from './errors.mjs';
+import { checkSchema, writeBatch } from './database.mjs';
+
+export const hashValue = value => createHash('sha256').update(value).digest('hex');
+const randomToken = () => randomBytes(32).toString('base64url');
+export const DATABASE_NOW_SQL = `(CAST(strftime('%s', 'now') AS INTEGER) * 1000
+  + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER))`;
+const cleanupSessions = time => ({
+  sql: `DELETE FROM sessions WHERE token_hash IN
+    (SELECT token_hash FROM sessions WHERE expires_at <= ? ORDER BY expires_at LIMIT 100)`,
+  args: [time],
+});
+
+export function validateBody(body) {
+  if (typeof body !== 'string' || !body.trim() || !body.isWellFormed()) {
+    throw new ApiError(422, 'INVALID_BODY', '내용이 있는 올바른 제안을 입력해 주세요.');
+  }
+  if (Buffer.byteLength(body, 'utf8') > MAX_BYTES) {
+    throw new ApiError(413, 'BODY_TOO_LARGE', '제안은 UTF-8 기준 2,000바이트까지 입력할 수 있습니다.');
+  }
+  return body;
+}
+
+function proposalView(row, now) {
+  return {
+    id: row.id,
+    body: row.body,
+    createdAt: new Date(Number(row.created_at)).toISOString(),
+    updatedAt: new Date(Number(row.updated_at)).toISOString(),
+    roundId: row.round_id,
+    editable: row.round_id === 'pending' || (row.round_id === 'initial' && now < INITIAL_CUTOFF),
+    revision: Number(row.revision),
+  };
+}
+
+function quotaStatement(userId, databaseClockSql) {
+  return {
+    sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
+      SELECT COUNT(p.id) AS used, MIN(p.created_at) AS oldest, clock.now_ms
+      FROM clock LEFT JOIN proposals p ON p.user_id = ?
+        AND p.created_at > clock.now_ms - ? AND p.created_at <= clock.now_ms
+      GROUP BY clock.now_ms`,
+    args: [userId, WINDOW_MS],
+  };
+}
+
+function quotaView(result) {
+  const used = Number(result.rows[0]?.used ?? 0);
+  const remaining = Math.max(0, SUBMISSION_LIMIT - used);
+  return {
+    remaining,
+    limit: SUBMISSION_LIMIT,
+    nextAvailableAt: remaining === 0 && result.rows[0]?.oldest != null
+      ? new Date(Number(result.rows[0].oldest) + WINDOW_MS).toISOString() : null,
+  };
+}
+
+function sessionView(row) {
+  if (!row) return null;
+  return {
+    tokenHash: row.token_hash,
+    csrfToken: row.csrf_token,
+    googleNonce: row.google_nonce,
+    nonceExpiresAt: Number(row.nonce_expires_at),
+    expiresAt: Number(row.expires_at),
+    user: row.user_id ? { id: row.user_id, name: row.name } : null,
+  };
+}
+
+const sessionSql = `SELECT s.*, u.name FROM sessions s
+  LEFT JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`;
+
+export function createStore(client, { now = Date.now, databaseClockSql = DATABASE_NOW_SQL } = {}) {
+  return {
+    async health() {
+      await checkSchema(client);
+      return 'ok';
+    },
+
+    async getSession(token) {
+      if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+      const result = await client.execute({ sql: sessionSql, args: [hashValue(token), now()] });
+      return sessionView(result.rows[0]);
+    },
+
+    async createAnonymousSession(clientFingerprint = 'unknown') {
+      const time = now();
+      const token = randomToken();
+      const tokenHash = hashValue(token);
+      const csrfToken = randomToken();
+      const googleNonce = randomToken();
+      const expiresAt = time + ANONYMOUS_SESSION_MS;
+      const rateWindow = Math.floor(time / SESSION_CREATION_WINDOW_MS);
+      const rateWindowEnd = (rateWindow + 1) * SESSION_CREATION_WINDOW_MS;
+      const rateKey = hashValue(`${rateWindow}:${clientFingerprint}`);
+      const results = await writeBatch(client, [
+        cleanupSessions(time),
+        {
+          sql: `DELETE FROM session_rate_windows WHERE bucket_key IN
+            (SELECT bucket_key FROM session_rate_windows WHERE expires_at <= ? ORDER BY expires_at LIMIT 100)`,
+          args: [time],
+        },
+        {
+          sql: `INSERT INTO session_rate_windows(bucket_key, used, expires_at) VALUES (?, 1, ?)
+            ON CONFLICT(bucket_key) DO UPDATE SET used = used + 1 WHERE used < ?`,
+          args: [rateKey, rateWindowEnd, SESSION_CREATION_LIMIT],
+        },
+        {
+          sql: `INSERT INTO sessions(token_hash, user_id, csrf_token, google_nonce,
+            nonce_expires_at, created_at, expires_at) SELECT ?, NULL, ?, ?, ?, ?, ? WHERE changes() = 1`,
+          args: [tokenHash, csrfToken, googleNonce, time + GOOGLE_NONCE_MS, time, expiresAt],
+        },
+      ]);
+      if (results[3].rowsAffected !== 1) {
+        throw new ApiError(429, 'SESSION_RATE_LIMITED', '접속 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.', {
+          retryAfterSeconds: Math.max(1, Math.ceil((rateWindowEnd - time) / 1000)),
+        });
+      }
+      return {
+        token,
+        session: { tokenHash, csrfToken, googleNonce, expiresAt, nonceExpiresAt: time + GOOGLE_NONCE_MS, user: null },
+      };
+    },
+
+    async refreshSessionNonce(session) {
+      const time = now();
+      if (session.nonceExpiresAt > time) return session;
+      const nonce = randomToken();
+      const results = await writeBatch(client, [
+        {
+          sql: `UPDATE sessions SET google_nonce = ?, nonce_expires_at = ?
+            WHERE token_hash = ? AND expires_at > ? AND nonce_expires_at <= ?`,
+          args: [nonce, time + GOOGLE_NONCE_MS, session.tokenHash, time, time],
+        },
+        { sql: sessionSql, args: [session.tokenHash, time] },
+      ]);
+      return sessionView(results[1].rows[0]);
+    },
+
+    async completeLogin(session, identity) {
+      const time = now();
+      if (session.nonceExpiresAt <= time) {
+        throw new ApiError(401, 'GOOGLE_NONCE_EXPIRED', '로그인 대기 시간이 지났습니다. Google 로그인을 다시 진행해 주세요.');
+      }
+      const token = randomToken();
+      const tokenHash = hashValue(token);
+      const csrfToken = randomToken();
+      const googleNonce = randomToken();
+      const expiresAt = time + LOGIN_SESSION_MS;
+      const oldSessionCondition = `EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?
+        AND google_nonce = ? AND expires_at > ? AND nonce_expires_at > ?)`;
+      const oldSessionArgs = [session.tokenHash, session.googleNonce, time, time];
+      const results = await writeBatch(client, [
+        {
+          sql: `INSERT INTO users(id, google_sub, name, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ? WHERE ${oldSessionCondition}
+            ON CONFLICT(google_sub) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+          args: [randomUUID(), identity.googleSub, identity.name, time, time, ...oldSessionArgs],
+        },
+        {
+          sql: `INSERT INTO sessions(token_hash, user_id, csrf_token, google_nonce,
+              nonce_expires_at, created_at, expires_at)
+            SELECT ?, users.id, ?, ?, ?, ?, ? FROM users
+            WHERE google_sub = ? AND ${oldSessionCondition}`,
+          args: [tokenHash, csrfToken, googleNonce, time + GOOGLE_NONCE_MS, time, expiresAt,
+            identity.googleSub, ...oldSessionArgs],
+        },
+        {
+          sql: 'DELETE FROM sessions WHERE token_hash = ? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?)',
+          args: [session.tokenHash, tokenHash],
+        },
+        cleanupSessions(time),
+        { sql: sessionSql, args: [tokenHash, time] },
+      ]);
+      const updated = sessionView(results[4].rows[0]);
+      if (!updated) {
+        throw new ApiError(409, 'LOGIN_SESSION_CHANGED', '로그인 상태가 변경되었습니다. 새로고침한 뒤 다시 시도해 주세요.');
+      }
+      return { token, session: updated };
+    },
+
+    async logout(session) {
+      const time = now();
+      const token = randomToken();
+      const tokenHash = hashValue(token);
+      const csrfToken = randomToken();
+      const googleNonce = randomToken();
+      const expiresAt = time + ANONYMOUS_SESSION_MS;
+      await writeBatch(client, [
+        { sql: 'DELETE FROM sessions WHERE token_hash = ?', args: [session.tokenHash] },
+        cleanupSessions(time),
+        {
+          sql: `INSERT INTO sessions(token_hash, user_id, csrf_token, google_nonce,
+            nonce_expires_at, created_at, expires_at) VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+          args: [tokenHash, csrfToken, googleNonce, time + GOOGLE_NONCE_MS, time, expiresAt],
+        },
+      ]);
+      return {
+        token,
+        session: { tokenHash, csrfToken, googleNonce, nonceExpiresAt: time + GOOGLE_NONCE_MS, expiresAt, user: null },
+      };
+    },
+
+    async listProposals(userId) {
+      const results = await client.batch([
+        {
+          sql: `SELECT * FROM proposals WHERE user_id = ? ORDER BY created_at DESC, id DESC`,
+          args: [userId],
+        },
+        quotaStatement(userId, databaseClockSql),
+      ], 'read');
+      const time = Number(results[1].rows[0].now_ms);
+      return {
+        proposals: results[0].rows.map(row => proposalView(row, time)),
+        quota: quotaView(results[1]),
+        serverTime: new Date(time).toISOString(),
+      };
+    },
+
+    async createProposal(userId, { body, requestId }) {
+      validateBody(body);
+      if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId)) {
+        throw new ApiError(422, 'INVALID_REQUEST_ID', '접수 요청 식별자가 올바르지 않습니다. 새로고침 후 다시 시도해 주세요.');
+      }
+      const bodyHash = hashValue(body);
+      // The quota check and insert share ONE write transaction. Separate
+      // read-then-insert queries would let parallel instances exceed the cap.
+      const results = await writeBatch(client, [
+        {
+          sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
+            INSERT INTO proposals(id, user_id, request_id, request_body_hash, body,
+              created_at, updated_at, round_id, revision)
+            SELECT ?, ?, ?, ?, ?, clock.now_ms, clock.now_ms,
+              CASE WHEN clock.now_ms < ? THEN 'initial' ELSE 'pending' END, 1 FROM clock
+            WHERE (SELECT COUNT(*) FROM proposals
+              WHERE user_id = ? AND created_at > clock.now_ms - ? AND created_at <= clock.now_ms) < ?
+            ON CONFLICT(user_id, request_id) DO NOTHING`,
+          args: [randomUUID(), userId, requestId, bodyHash, body, INITIAL_CUTOFF,
+            userId, WINDOW_MS, SUBMISSION_LIMIT],
+        },
+        { sql: 'SELECT * FROM proposals WHERE user_id = ? AND request_id = ?', args: [userId, requestId] },
+        quotaStatement(userId, databaseClockSql),
+      ]);
+      const time = Number(results[2].rows[0].now_ms);
+      const quota = quotaView(results[2]);
+      const row = results[1].rows[0];
+      if (row && row.request_body_hash !== bodyHash) {
+        throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '같은 접수 요청으로 다른 내용을 전송할 수 없습니다. 목록을 확인한 뒤 다시 작성해 주세요.', { quota });
+      }
+      if (!row) {
+        throw new ApiError(429, 'QUOTA_EXCEEDED', '최근 60분 동안 제안 3개를 모두 제출했습니다. 다음 제출 가능 시각을 확인해 주세요.', { quota });
+      }
+      return { proposal: proposalView(row, time), quota, created: results[0].rowsAffected === 1 };
+    },
+
+    async editProposal(userId, { id, body, revision }) {
+      validateBody(body);
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(id)) {
+        throw new ApiError(422, 'INVALID_PROPOSAL_ID', '수정할 제안을 확인해 주세요.');
+      }
+      if (!Number.isSafeInteger(revision) || revision < 1) {
+        throw new ApiError(422, 'INVALID_REVISION', '제안의 최신 내용을 확인한 뒤 다시 수정해 주세요.');
+      }
+      const results = await writeBatch(client, [
+        {
+          sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
+            UPDATE proposals SET body = ?, updated_at = MAX(created_at, (SELECT now_ms FROM clock)), revision = revision + 1
+            WHERE id = ? AND user_id = ? AND revision = ?
+              AND (round_id = 'pending' OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))`,
+          args: [body, id, userId, revision, INITIAL_CUTOFF],
+        },
+        { sql: 'SELECT * FROM proposals WHERE id = ?', args: [id] },
+        quotaStatement(userId, databaseClockSql),
+      ]);
+      const time = Number(results[2].rows[0].now_ms);
+      const row = results[1].rows[0];
+      if (!row) throw new ApiError(404, 'PROPOSAL_NOT_FOUND', '제안을 찾을 수 없습니다.');
+      if (row.user_id !== userId) throw new ApiError(403, 'NOT_PROPOSAL_OWNER', '본인의 제안만 수정할 수 있습니다.');
+      const quota = quotaView(results[2]);
+      if (results[0].rowsAffected !== 1) {
+        if (row.round_id === 'initial' && time >= INITIAL_CUTOFF) {
+          throw new ApiError(409, 'ROUND_CLOSED', '이 제안의 모집이 마감되어 수정할 수 없습니다.', { quota });
+        }
+        throw new ApiError(409, 'REVISION_CONFLICT', '다른 곳에서 수정된 제안입니다. 최신 내용을 확인한 뒤 다시 수정해 주세요.', { quota });
+      }
+      return { proposal: proposalView(row, time), quota };
+    },
+  };
+}
