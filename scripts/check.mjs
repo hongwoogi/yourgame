@@ -26,7 +26,7 @@ if (!html.includes('lang="en"') || !html.includes('app.js') || !html.includes('s
   throw new Error('The English-first entry page, language selector and assets must be present.');
 }
 for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css', 'language-control.css', 'flags/en.svg', 'flags/ko.svg',
-  'i18n.js', 'error-messages.js', 'public-messages.js', 'admin-messages.js']) {
+  'i18n.js', 'error-messages.js', 'public-messages.js', 'admin-messages.js', 'profile-policy.js']) {
   if (!(await readFile(path.join(root, 'public', asset), 'utf8')).trim()) {
     throw new Error(`Required browser asset is empty: ${asset}`);
   }

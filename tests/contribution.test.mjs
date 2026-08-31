@@ -6,6 +6,7 @@ import { CONTRIBUTION_POLICY_VERSION, MAX_VOTE_COUNT, publicContributionPolicy, 
   previewContribution, previewRequirementContributions, contributionAwardKey } from '../server/contribution-policy.mjs';
 import { initializeContributionDatabase, checkContributionSchema } from '../server/contribution-schema.mjs';
 import { createContributionStore, MAX_CONTRIBUTION_READ_ROWS } from '../server/contribution-store.mjs';
+import { COMMUNITY_PROFILE_NAMES_SCHEMA } from '../server/community-schema.mjs';
 
 const NOW = Date.parse('2026-08-31T05:00:00.000Z');
 const CLOCK = '(SELECT now_ms FROM test_clock WHERE id = 1)';
@@ -25,10 +26,12 @@ async function fixture(t) {
     `CREATE TABLE community_profiles(user_id TEXT PRIMARY KEY REFERENCES users(id), public_id TEXT UNIQUE,
       alias TEXT UNIQUE, leaderboard_visible INTEGER NOT NULL DEFAULT 0)`,
     'CREATE TABLE community_rounds(id TEXT PRIMARY KEY)',
+    'CREATE TABLE community_meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL)',
     "INSERT INTO community_rounds(id) VALUES ('initial')",
     'CREATE TABLE test_clock(id INTEGER PRIMARY KEY, now_ms INTEGER NOT NULL)',
     { sql: 'INSERT INTO test_clock(id, now_ms) VALUES (1, ?)', args: [NOW] },
   ], 'write');
+  await client.batch(COMMUNITY_PROFILE_NAMES_SCHEMA, 'write');
   await initializeContributionDatabase(client);
   const store = createContributionStore(client, { databaseClockSql: CLOCK });
   return {
@@ -174,7 +177,7 @@ test('additive initialization preserves an honest empty ledger and is repeatable
   assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, 0);
   assert.deepEqual((await f.store.leaderboard()).items, []);
   const member = await f.user();
-  assert.deepEqual(await f.store.privateSummary(member.session), { points: '0', adoptedCount: 0 });
+  assert.deepEqual(await f.store.privateSummary(member.session), { points: '0', adoptedCount: 0, rank: null });
   assert.deepEqual((await f.store.leaderboard()).items, []);
 });
 
@@ -202,7 +205,7 @@ test('public ranking excludes nonconsenting and currently suspended accounts wit
   for (const forbidden of ['google', 'email', 'tokenHash', 'body', 'safety', 'Private Google', visible.id, privateMember.alias, suspended.alias]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
-  assert.deepEqual(await f.store.privateSummary(privateMember.session), { points: '499.5', adoptedCount: 1 });
+  assert.deepEqual(await f.store.privateSummary(privateMember.session), { points: '499.5', adoptedCount: 1, rank: null });
 });
 
 test('privacy withdrawal and a later suspension take effect on the next public read', async t => {
@@ -223,7 +226,7 @@ test('private totals bind the actual live session to its user and never trust an
   const bob = await f.user();
   await seedRecord(f.client, fictionalRecord(alice));
   await seedRecord(f.client, fictionalRecord(bob, { points_units: '500' }));
-  assert.deepEqual(await f.store.privateSummary(alice.session), { points: '100', adoptedCount: 1 });
+  assert.deepEqual(await f.store.privateSummary(alice.session), { points: '100', adoptedCount: 1, rank: null });
   for (const session of [undefined, { user: { id: alice.id, isAdmin: true } },
     { ...alice.session, user: { id: bob.id, isAdmin: true } }, { tokenHash: hash('forged'), user: { id: bob.id } }]) {
     await assert.rejects(f.store.privateSummary(session), errorCode('LOGIN_REQUIRED'));
@@ -254,13 +257,87 @@ test('totals, negative values, half points and ordering stay exact beyond safe N
     [higher.publicId, '4503599627370496.5', 1], [lower.publicId, '4503599627370496', 2], [negative.publicId, '-20.5', 3],
   ]);
   await seedRecord(f.client, fictionalRecord(higher, { points_units: '-2', contribution_kind: 'voter', adopted: 0 }));
-  assert.deepEqual(await f.store.privateSummary(higher.session), { points: '4503599627370495.5', adoptedCount: 1 });
+  assert.deepEqual(await f.store.privateSummary(higher.session), { points: '4503599627370495.5', adoptedCount: 1, rank: 2 });
 });
 
-test('only server-generated public aliases are projected even if database metadata is malformed', async t => {
+test('whole-list exact ranking precedes pagination, preserves cross-page ties, and gives private ranks beyond the top five', async t => {
+  const f = await fixture(t);
+  const members = [];
+  for (let index = 0; index < 24; index += 1) {
+    const member = await f.user({ visible: true,
+      publicId: `00000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, '0')}` });
+    members.push(member);
+    const units = index < 2 ? '9007199254740993' : index < 18 ? String((1000 - index) * 2)
+      : index < 22 ? '100' : index === 22 ? null : '-1';
+    if (units !== null) await seedRecord(f.client, fictionalRecord(member, { points_units: units }));
+  }
+  await seedRecord(f.client, fictionalRecord(members[0], { points_units: '9007199254740993' }));
+  const hidden = await f.user();
+  const suspended = await f.user({ visible: true, status: 'suspended' });
+  for (const member of [hidden, suspended]) await seedRecord(f.client, fictionalRecord(member, { points_units: '99999999999999999999999999' }));
+  const first = await f.store.leaderboardPage();
+  const last = await f.store.leaderboardPage({ offset: 20, limit: 20 });
+  const all = [...first.items, ...last.items];
+  assert.deepEqual(all.map(item => item.author.id), members.map(member => member.publicId));
+  assert.deepEqual(all.map(item => item.rank), [...Array.from({ length: 18 }, (_, index) => index + 1), 19, 19, 19, 19, 23, 24]);
+  assert.equal(first.items[0].points, '9007199254740993');
+  assert.equal(first.items[1].points, '4503599627370496.5');
+  assert.equal(first.total, 24);
+  assert.equal(first.hasMore, true);
+  assert.equal(last.total, 24);
+  assert.equal(last.hasMore, false);
+  assert.deepEqual(last.items.map(item => item.rank), [19, 19, 23, 24]);
+  assert.deepEqual((await f.store.leaderboard()).items, first.items.slice(0, 10));
+  assert.deepEqual(await f.store.privateSummary(members[20].session), { points: '50', adoptedCount: 1, rank: 19 });
+  assert.deepEqual(await f.store.privateSummary(members[23].session), { points: '-0.5', adoptedCount: 1, rank: 24 });
+  assert.equal((await f.store.privateSummary(hidden.session)).rank, null);
+  for (const member of [members[18], members[20]]) await f.client.execute({
+    sql: 'INSERT INTO community_profile_names(user_id, alias, revision, created_at, updated_at) VALUES (?, ?, 2, ?, ?)',
+    args: [member.id, 'Same display name', NOW, NOW],
+  });
+  const renamed = await f.store.leaderboardPage({ limit: 50 });
+  assert.deepEqual(renamed.items.map(item => [item.author.id, item.rank]), all.map(item => [item.author.id, item.rank]));
+  assert.equal(renamed.items[18].author.alias, renamed.items[20].author.alias);
+  assert.equal((await f.store.privateSummary(members[20].session)).rank, 19);
+  assert.equal(renamed.items.some(item => item.author.id === hidden.publicId || item.author.id === suspended.publicId), false);
+});
+
+test('private rank and totals reject late session revocation or suspension and honor late visibility in their read transaction', async t => {
+  for (const change of ['logout', 'suspension', 'visibility']) await t.test(change, async t => {
+    const f = await fixture(t);
+    const member = await f.user({ visible: true });
+    await seedRecord(f.client, fictionalRecord(member));
+    let changed = false;
+    const client = new Proxy(f.client, { get(target, property) {
+      if (property !== 'batch') return typeof target[property] === 'function' ? target[property].bind(target) : target[property];
+      return async (statements, mode) => {
+        assert.equal(mode, 'read');
+        if (!changed) {
+          changed = true;
+          if (change === 'logout') await target.execute({ sql: 'DELETE FROM sessions WHERE token_hash = ?', args: [member.tokenHash] });
+          if (change === 'suspension') await target.execute({ sql: "UPDATE member_access SET status = 'suspended' WHERE user_id = ?", args: [member.id] });
+          if (change === 'visibility') await target.execute({ sql: 'UPDATE community_profiles SET leaderboard_visible = 0 WHERE user_id = ?', args: [member.id] });
+        }
+        return target.batch(statements, mode);
+      };
+    } });
+    const store = createContributionStore(client, { databaseClockSql: CLOCK });
+    if (change === 'visibility') assert.deepEqual(await store.privateSummary(member.session), { points: '100', adoptedCount: 1, rank: null });
+    else await assert.rejects(store.privateSummary(member.session), errorCode('LOGIN_REQUIRED'));
+    assert.equal(changed, true);
+    assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, 1);
+  });
+});
+
+test('neither malformed generated identity nor an unsafe display-name override can enter a public ranking', async t => {
   const f = await fixture(t);
   await f.user({ visible: true, alias: '<img src=x onerror=alert(1)>' });
   await assert.rejects(f.store.leaderboard(), errorCode('CONTRIBUTION_SCHEMA_UNAVAILABLE'));
+  const safe = await fixture(t);
+  const member = await safe.user({ visible: true });
+  await safe.client.execute({ sql: 'INSERT INTO community_profile_names VALUES (?, ?, 2, ?, ?)',
+    args: [member.id, '<script>unsafe</script>', NOW, NOW] });
+  await assert.rejects(safe.store.leaderboardPage(), errorCode('CONTRIBUTION_SCHEMA_UNAVAILABLE'));
 });
 
 test('ledger rows require canonical signed integral half units and exact evidence fields', async t => {
@@ -289,7 +366,7 @@ test('ledger evidence and amounts cannot be edited, deleted or replaced after in
     'DELETE FROM contribution_ledger']) await assert.rejects(f.client.execute(statement), /immutable/);
   await f.client.execute('PRAGMA recursive_triggers = OFF');
   await assert.rejects(seedRecord(f.client, { ...record, points_units: '999999' }, 'INSERT OR REPLACE'), /replaced/);
-  assert.deepEqual(await f.store.privateSummary(member.session), { points: '100', adoptedCount: 1 });
+  assert.deepEqual(await f.store.privateSummary(member.session), { points: '100', adoptedCount: 1, rank: null });
 });
 
 test('concurrent repeated fulfillment and a republished release cannot award the same participant twice', async t => {
@@ -314,8 +391,8 @@ test('separate real participants and later additional fulfillment can retain sep
     release_id: record.release_id }));
   await seedRecord(f.client, fictionalRecord(alice, { requirement_group_id: record.requirement_group_id,
     fulfillment_id: 'later-new-change', release_id: 'later-successful-release' }));
-  assert.deepEqual(await f.store.privateSummary(alice.session), { points: '200', adoptedCount: 2 });
-  assert.deepEqual(await f.store.privateSummary(bob.session), { points: '100', adoptedCount: 1 });
+  assert.deepEqual(await f.store.privateSummary(alice.session), { points: '200', adoptedCount: 2, rank: null });
+  assert.deepEqual(await f.store.privateSummary(bob.session), { points: '100', adoptedCount: 1, rank: null });
 });
 
 test('plans, approvals, completed tasks, forged receipts and admin flags never open settlement', async t => {
@@ -339,10 +416,15 @@ test('settlement rejects before consulting a database or an injected review opti
 
 test('bounded reads fail clearly instead of returning a partial or approximate total', async () => {
   const rows = Array(MAX_CONTRIBUTION_READ_ROWS + 1).fill({});
-  const store = createContributionStore({ execute: async () => ({ rows }) });
+  const store = createContributionStore({ execute: async () => ({ rows }), batch: async () => [{ rows }, { rows }] });
   await assert.rejects(store.leaderboard(), errorCode('CONTRIBUTION_SCHEMA_UNAVAILABLE'));
   await assert.rejects(store.privateSummary({ tokenHash: hash('test'), user: { id: 'member' } }), errorCode('CONTRIBUTION_SCHEMA_UNAVAILABLE'));
+  await assert.rejects(store.leaderboardPage(), errorCode('CONTRIBUTION_SCHEMA_UNAVAILABLE'));
   for (const limit of [0, 51, -1, 1.5, '10', NaN]) await assert.rejects(store.leaderboard({ limit }), TypeError);
+  for (const input of [{ offset: -1 }, { offset: 0.5 }, { offset: Number.MAX_SAFE_INTEGER + 1 }, { offset: '0' },
+    { limit: 0 }, { limit: 51 }, { limit: 1.1 }, { limit: '20' }]) {
+    await assert.rejects(store.leaderboardPage(input), errorCode('INVALID_COMMUNITY_INPUT'));
+  }
 });
 
 test('missing or altered immutable schema is not reported as an empty successful ledger', async t => {

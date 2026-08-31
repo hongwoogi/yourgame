@@ -1,6 +1,21 @@
+import { isValidProfileAlias } from '../public/profile-policy.js';
+
 // Public participation policy is separate from the Teen game-input policy.
 export const PUBLICATION_POLICY_VERSION = 'public-default-v1';
 export const COMMUNITY_VOTE_LIMIT = 3;
+export const COMMUNITY_PROFILE_NAMES_VERSION = 1;
+export const COMMUNITY_PROFILE_NAMES_READY_SQL = `((SELECT value FROM community_meta
+  WHERE key = 'profile_names_schema_version') = ${COMMUNITY_PROFILE_NAMES_VERSION}
+  AND (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+    'community_profile_name_identity_immutable', 'community_profile_names_no_delete')) = 2)`;
+
+export function profileDisplayAlias(generatedAlias, customAlias) {
+  // Preserve the original generated-identity invariant even when an override
+  // exists. Never substitute a Google account name or arbitrary account field.
+  if (typeof generatedAlias !== 'string' || !/^Player-[0-9a-f]{12}$/.test(generatedAlias)) return null;
+  if (customAlias == null) return generatedAlias;
+  return isValidProfileAlias(customAlias) ? customAlias : null;
+}
 
 export const COMMUNITY_DEFAULT_TRIGGER_NAMES = [
   'community_default_user', 'community_default_profile', 'community_default_body',

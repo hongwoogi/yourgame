@@ -124,11 +124,24 @@ function respond(res, status, payload) {
 function communityView(req) {
   const url = new URL(req.url, 'http://internal.invalid');
   const entries = [...url.searchParams];
-  if (url.search.length > 128 || entries.length > 1
-      || entries.some(([key, value]) => key !== 'view' || !['public', 'me'].includes(value))) {
+  const view = url.searchParams.get('view') || 'public';
+  const allowed = view === 'leaderboard' ? ['view', 'offset', 'limit'] : ['view'];
+  if (url.search.length > 256 || new Set(entries.map(([key]) => key)).size !== entries.length
+      || !['public', 'me', 'leaderboard'].includes(view)
+      || entries.some(([key]) => !allowed.includes(key))
+      || (url.searchParams.has('view') && !url.searchParams.get('view'))) {
     throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the community request.');
   }
-  return url.searchParams.get('view') || 'public';
+  if (view !== 'leaderboard') return { view };
+  const offsetText = url.searchParams.get('offset') ?? '0';
+  const limitText = url.searchParams.get('limit') ?? '20';
+  const offset = Number(offsetText);
+  const limit = Number(limitText);
+  if (!/^(0|[1-9][0-9]{0,15})$/.test(offsetText) || !Number.isSafeInteger(offset)
+      || !/^[1-9][0-9]?$/.test(limitText) || limit > 50) {
+    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the leaderboard page.');
+  }
+  return { view, offset, limit };
 }
 
 function safeLog(log, event, route, requestId, error) {
@@ -192,7 +205,12 @@ export function createApiHandler({
 
         if (route === '/api/locale') return respond(res, 200, language);
 
-        if (route === '/api/community' && method === 'GET' && communityView(req) === 'public') {
+        const community = route === '/api/community' && method === 'GET' ? communityView(req) : null;
+        if (community?.view === 'leaderboard') {
+          const db = await resolveStore();
+          return respond(res, 200, await db.contribution.leaderboardPage({ offset: community.offset, limit: community.limit }));
+        }
+        if (community?.view === 'public') {
           // Public reads never create or refresh a session, or copy an account
           // name into a public identity. Each store filters the visible records.
           const db = await resolveStore();
@@ -295,9 +313,11 @@ export function createApiHandler({
         if (route === '/api/community') {
           if (method === 'GET') {
             communityView(req);
-            const [participation, contribution] = await Promise.all([
-              db.community.privateState(session), db.contribution.privateSummary(session),
-            ]);
+            // Legacy accounts may not yet have a public profile. Establish it
+            // before computing their rank so the same response cannot claim a
+            // visible profile with a rank omitted only by an initialization race.
+            const participation = await db.community.privateState(session);
+            const contribution = await db.contribution.privateSummary(session);
             return respond(res, 200, { ...participation, ownerId: session.user.id, contribution });
           }
           // There is deliberately no browser/admin action to mint points or

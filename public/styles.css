@@ -661,3 +661,76 @@ html[lang="en"] .prompt-heading h2,html[lang="en"] .process-heading h2,html[lang
  .process-step{font-size:10px}.process-flow{column-gap:8px}
 }
 @media(pointer:coarse),(any-pointer:coarse){.text-button{min-height:44px}}
+
+/* Five public rows and a separate personal row, without invented placeholders. */
+.board-heading{height:auto;min-height:44px;gap:8px}
+.leaderboard-more{min-height:44px;display:inline-flex;align-items:center;gap:5px;flex:none;font-size:10px;color:var(--lime);white-space:nowrap}
+.leaderboard-preview{min-height:220px}
+.leaderboard-preview .leaderboard-list{display:block;margin:0}
+.leaderboard-preview #leaderboard-status{min-height:220px;padding:16px 0;align-items:flex-start;font-size:11px}
+.leaderboard-preview .leaderboard-entry{grid-template-columns:22px minmax(0,1fr) minmax(32px,68px);gap:6px;min-height:44px;padding:8px 0}
+.leaderboard-preview .community-alias,.my-rank-identity .community-alias{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.leaderboard-preview .leaderboard-points,.my-rank-entry .leaderboard-points,.my-rank-entry .leaderboard-rank{min-width:0;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.leaderboard-preview .leaderboard-rank{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.my-rank-slot{min-height:65px;border-top:1px solid var(--line);padding-top:12px;margin-top:0}
+.my-contribution{margin:0;padding:0;border:0;min-width:0}
+.my-rank-entry{display:grid;grid-template-columns:22px minmax(0,1fr) minmax(26px,54px) 44px;align-items:center;gap:4px;min-width:0;min-height:44px}
+.my-rank-identity{min-width:0;line-height:1.5}
+.my-rank-caption{display:block;color:var(--lime);font-size:9px;font-weight:550}
+.my-rank-entry .leaderboard-points{font-size:10px}
+.my-rank-status{font-size:10px;line-height:1.6;color:var(--muted);padding-top:4px}
+.my-rank-guest{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px}
+.my-rank-guest p{font-size:11px;line-height:1.6;color:var(--muted);margin:0;min-width:0}
+.my-rank-guest .text-button{min-width:44px;min-height:44px;flex:none;color:var(--lime)}
+.community-author{display:flex;align-items:center;gap:5px;min-width:0;width:100%}
+.community-author .community-alias{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.own-idea-badge{flex:none;display:inline-flex;align-items:center;padding:1px 5px;background:var(--lime);color:var(--bg);font-size:9px;line-height:1.5;font-weight:650;white-space:nowrap;border-radius:2px}
+.leaderboard-total{font-size:12px;line-height:1.6;color:var(--muted);margin:0 0 14px}
+.leaderboard-columns,.leaderboard-full-list .leaderboard-entry{display:grid;grid-template-columns:46px minmax(0,1fr) minmax(60px,130px);gap:12px}
+.leaderboard-columns{font-size:11px;color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line)}
+.leaderboard-columns>span:last-child{text-align:right}
+.leaderboard-full-list{display:block;margin:0}
+.leaderboard-full-list .leaderboard-entry{align-items:start;min-height:44px;padding:13px 0}
+.leaderboard-full-list .community-alias{font-size:13px;line-height:1.7;min-width:0;overflow-wrap:anywhere}
+.leaderboard-full-list .leaderboard-points{font-size:13px;max-width:none;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.leaderboard-full-list .leaderboard-rank{font-size:12px;min-width:0;overflow-wrap:anywhere}
+.leaderboard-full-list .is-own-rank{background:rgb(208 239 138 / 5%)}
+.leaderboard-full-status{font-size:13px;line-height:1.8;color:var(--muted);padding:30px 0;margin:0}
+.leaderboard-full-status[data-kind="error"],.alias-message[data-kind="error"]{color:var(--error)}
+.leaderboard-dialog-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-top:14px;min-height:58px}
+.leaderboard-dialog-footer .text-button{min-height:44px}
+.leaderboard-full-pager{display:flex;align-items:center;gap:8px;margin-left:auto}
+.leaderboard-full-pager .community-page{font-size:12px;min-width:54px}
+.alias-dialog{width:620px}
+.alias-description{font-size:13px;line-height:1.8;color:var(--muted);margin:4px 0 23px}
+.alias-form{min-width:0}
+.alias-form>label{display:block;font-size:13px;margin:0 0 9px;color:var(--ink)}
+.alias-form input{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:16px;line-height:1.5}
+.alias-form input:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
+.alias-form input[aria-invalid="true"]{border-color:var(--error)}
+.alias-input-help{display:flex;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;gap:7px 16px;margin-top:10px;color:var(--muted);font-size:11px;line-height:1.7}
+.alias-input-help p{margin:0;max-width:360px}
+.alias-input-help output{display:block;white-space:nowrap;font-size:10px;color:var(--faint)}
+.alias-current{font-size:12px;line-height:1.7;margin:15px 0 0;color:var(--muted);overflow-wrap:anywhere}
+.alias-message{font-size:13px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere;margin:14px 0 0;color:var(--lime)}
+.alias-recovery{display:flex;flex-wrap:wrap;gap:4px 16px}
+.alias-recovery .text-button{min-height:44px;white-space:normal;font-size:12px;text-align:left}
+.alias-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px;padding-top:15px;border-top:1px solid var(--line)}
+.alias-actions .button{min-height:44px}
+@media(min-width:1600px) and (min-height:850px){
+ .leaderboard-more{font-size:12px}.leaderboard-preview .leaderboard-entry{grid-template-columns:26px minmax(0,1fr) minmax(38px,78px);min-height:50px}
+ .leaderboard-preview{min-height:250px}.leaderboard-preview #leaderboard-status{min-height:250px;font-size:13px}
+ .my-rank-caption{font-size:10px}.my-rank-entry .leaderboard-points{font-size:12px}.my-rank-guest p,.my-rank-status{font-size:12px}
+ .own-idea-badge{font-size:10px}
+}
+@media(max-width:799px){
+ .leaderboard-preview .leaderboard-entry{grid-template-columns:26px minmax(0,1fr) minmax(45px,90px);gap:10px}
+ .leaderboard-preview #leaderboard-status,.my-rank-guest p{font-size:13px}.leaderboard-more{font-size:12px}
+ .my-rank-entry{grid-template-columns:26px minmax(0,1fr) minmax(36px,76px) 44px;gap:8px}
+ .my-rank-caption{font-size:10px}.my-rank-entry .leaderboard-points,.my-rank-status{font-size:12px}
+ .community-author{width:100%}.own-idea-badge{font-size:11px;padding-inline:6px}
+ .leaderboard-columns,.leaderboard-full-list .leaderboard-entry{grid-template-columns:32px minmax(0,1fr) minmax(48px,76px);gap:9px}
+ .leaderboard-full-list .community-alias,.leaderboard-full-list .leaderboard-points{font-size:12px}
+ .alias-dialog .content-dialog-heading{gap:8px}.alias-dialog .content-dialog-heading h2{font-size:22px}
+ .alias-form input{font-size:16px}.alias-actions{gap:8px}
+}

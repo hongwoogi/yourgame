@@ -1059,8 +1059,8 @@ const copy = {
     "투표 마감"
   ],
   "yourIdea": [
-    "Your idea",
-    "내 제안"
+    "My idea",
+    "내 의견"
   ],
   "upvote": [
     "Upvote",
@@ -1353,7 +1353,42 @@ const copy = {
   "compactStep4": [
     "Play & repeat",
     "플레이·다시 제안"
-  ]
+  ],
+  "leaderboardViewAll": ["View all", "전체 순위"],
+  "leaderboardTopNote": ["Top 5 · Contributions to released versions.", "상위 5명 · 공개된 게임에 반영된 기여입니다."],
+  "fullLeaderboard": ["Full leaderboard", "전체 기여도 순위"],
+  "closeLeaderboard": ["Close leaderboard", "전체 순위 닫기"],
+  "leaderboardTotal": ["{total} participants", "참여자 {total}명"],
+  "leaderboardPage": ["{page} / {pages}", "{page} / {pages}"],
+  "leaderboardPrevious": ["Previous ranking page", "이전 순위 페이지"],
+  "leaderboardNext": ["Next ranking page", "다음 순위 페이지"],
+  "retryLeaderboard": ["Try loading again", "다시 불러오기"],
+  "leaderboardUnavailable": ["Couldn't load the ranking. Please try again. Your idea draft is unchanged.", "순위를 불러오지 못했습니다. 다시 시도해 주세요. 제안 초안은 유지됩니다."],
+  "leaderboardInvalid": ["Couldn't verify this ranking page. Please try loading it again.", "순위 응답을 확인하지 못했습니다. 다시 불러와 주세요."],
+  "rankLabel": ["Rank", "순위"],
+  "rankAria": ["Rank {rank}", "{rank}위"],
+  "pointsLabel": ["Points", "기여도"],
+  "myRank": ["My rank", "내 순위"],
+  "myRankLoginNote": ["Log in to see your rank.", "로그인하면 내 순위를 볼 수 있어요."],
+  "myRankLoading": ["Loading your rank…", "내 순위를 불러오는 중…"],
+  "myRankUnavailable": ["Your rank is unavailable. Try refreshing.", "내 순위를 확인하지 못했습니다."],
+  "myRankNotListed": ["Not currently in the public ranking.", "현재 공개 순위에 표시되지 않습니다."],
+  "refreshMyRank": ["Refresh your rank", "내 순위 새로고침"],
+  "ownVoteExplanation": ["You can't vote on your own idea.", "내 의견에는 투표할 수 없습니다."],
+  "editAlias": ["Change public display name", "공개 별명 변경"],
+  "closeAlias": ["Close display name settings", "별명 설정 닫기"],
+  "aliasLabel": ["Public display name", "공개 별명"],
+  "aliasDescription": ["This name appears on your ideas and the leaderboard. It does not change your Google account. Different people can use the same name.", "의견과 기여도 순위에 표시되는 별명입니다. Google 계정 이름은 바뀌지 않으며, 다른 사람과 같은 별명도 쓸 수 있습니다."],
+  "aliasRules": ["2–24 characters, up to 96 UTF-8 bytes. Letters, numbers, spaces, _ . and - only.", "2~24자, UTF-8 최대 96바이트. 글자·숫자·공백과 _ . -만 사용할 수 있습니다."],
+  "aliasCount": ["{count} / {maxCount} characters · {bytes} / {maxBytes} bytes", "{count} / {maxCount}자 · {bytes} / {maxBytes}바이트"],
+  "aliasCurrent": ["Current name: {alias}", "현재 별명: {alias}"],
+  "aliasSaving": ["Saving your name… Closing this dialog won't cancel the request.", "별명을 저장하고 있어요. 창을 닫아도 요청은 계속 처리됩니다."],
+  "aliasSaved": ["Your public display name was updated.", "공개 별명을 변경했어요."],
+  "aliasConflict": ["Your profile changed in another session. Keep this draft and reload the profile before saving again.", "다른 접속에서 프로필이 변경됐습니다. 작성한 별명을 유지한 채 프로필을 다시 불러온 뒤 저장해 주세요."],
+  "aliasReload": ["Keep draft and reload profile", "별명 초안 유지하고 프로필 다시 읽기"],
+  "aliasRefreshed": ["Profile refreshed. Your draft is unchanged; review the current name before saving.", "프로필을 다시 읽었습니다. 별명 초안은 그대로입니다. 현재 별명을 확인한 뒤 저장해 주세요."],
+  "saveAlias": ["Save name", "별명 저장"],
+  "closeAliasButton": ["Close", "닫기"]
 };
 
 i18n.register('public', {

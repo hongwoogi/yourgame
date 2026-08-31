@@ -1,5 +1,6 @@
 import { i18n } from './i18n.js';
 import './public-messages.js';
+import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from './profile-policy.js';
 
 (() => {
   'use strict';
@@ -48,6 +49,13 @@ import './public-messages.js';
     'my-contribution', 'my-contribution-summary', 'community-prev', 'community-next', 'community-page',
     'community-feedback', 'community-feedback-message', 'community-retry',
     'idea-dialog', 'idea-title', 'idea-author', 'idea-body', 'close-idea',
+    'my-rank-value', 'my-rank-alias', 'my-rank-points', 'my-rank-status', 'my-rank-guest',
+    'my-rank-login', 'my-rank-loading', 'my-rank-loading-message', 'my-rank-retry', 'edit-alias',
+    'open-leaderboard', 'leaderboard-dialog', 'close-leaderboard', 'leaderboard-total',
+    'leaderboard-full-panel', 'leaderboard-full-list', 'leaderboard-full-status',
+    'leaderboard-full-retry', 'leaderboard-full-prev', 'leaderboard-full-next', 'leaderboard-full-page',
+    'alias-dialog', 'close-alias', 'alias-form', 'alias-input', 'alias-count', 'alias-current',
+    'alias-message', 'alias-retry', 'alias-reload', 'alias-cancel', 'alias-save',
   ].map((id) => [id, byId(id)]));
 
   let status = null;
@@ -62,6 +70,8 @@ import './public-messages.js';
   let communityMeSequence = 0;
   let communityMePromise = null;
   let communityMePromiseEpoch = -1;
+  let communityMeLoading = false;
+  let communityMeError = '';
   let communityFeedbackMessage = '';
   let communityAttempt = null;
   let communityMutating = false;
@@ -69,6 +79,16 @@ import './public-messages.js';
   let activeIdea = null;
   let ideaReturnFocus = null;
   let proposalsReturnFocus = null;
+  const LEADERBOARD_PAGE_SIZE = 20;
+  let fullLeaderboard = null;
+  let leaderboardOffset = 0;
+  let leaderboardLoading = false;
+  let leaderboardRefreshQueued = false;
+  let leaderboardError = '';
+  let leaderboardSequence = 0;
+  let leaderboardReturnFocus = null;
+  let aliasEditor = null;
+  let aliasReturnFocus = null;
   let csrfToken = null;
   let googleNonce = null;
   let sessionReady = false;
@@ -1245,6 +1265,8 @@ import './public-messages.js';
     communityMeSequence += 1;
     communityMutationSequence += 1;
     communityMe = null;
+    communityMeLoading = false;
+    communityMeError = '';
     communityAttempt = null;
     communityMutating = false;
     communityFeedbackMessage = '';
@@ -1253,15 +1275,24 @@ import './public-messages.js';
     ui['community-retry'].hidden = true;
     ui['my-contribution'].hidden = true;
     ui['my-contribution-summary'].textContent = '';
+    for (const id of ['my-rank-value', 'my-rank-alias', 'my-rank-points', 'my-rank-status']) {
+      ui[id].textContent = '';
+      ui[id].removeAttribute('title');
+      ui[id].removeAttribute('aria-label');
+    }
+    closeAlias({ restoreFocus: false });
+    closeLeaderboard({ restoreFocus: false });
     closeMyProposals({ restoreFocus: false });
   }
 
   function publicAuthor(value) {
     return value && typeof value.id === 'string' && value.id.length > 0
-      && typeof value.alias === 'string' && /^Player-[0-9a-f]{12}$/.test(value.alias);
+      && isValidProfileAlias(value.alias);
   }
   const pointString = value => typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value) && value.length <= 500;
   const nonnegativeInteger = value => Number.isSafeInteger(value) && value >= 0;
+  const leaderboardEntry = row => row && publicAuthor(row.author) && pointString(row.points)
+    && Number.isSafeInteger(row.rank) && row.rank > 0 && nonnegativeInteger(row.adoptedCount);
 
   function validateCommunity(data) {
     const idea = value => value && typeof value.id === 'string' && typeof value.body === 'string'
@@ -1274,8 +1305,7 @@ import './public-messages.js';
     if (!data || !Array.isArray(data.recent) || !Array.isArray(data.popular)
       || data.recent.length > 100 || data.popular.length > 100
       || !data.recent.every(idea) || !data.popular.every(idea) || !Array.isArray(data.leaderboard?.items)
-      || !data.leaderboard.items.every(row => row && publicAuthor(row.author) && pointString(row.points)
-        && Number.isSafeInteger(row.rank) && row.rank > 0 && nonnegativeInteger(row.adoptedCount))
+      || !data.leaderboard.items.every(leaderboardEntry)
       || (data.round !== null && (!data.round || typeof data.round.id !== 'string'
         || !['open', 'closed', 'waiting'].includes(data.round.status)))) {
       throw new RequestError(m('communityInvalid'));
@@ -1288,6 +1318,7 @@ import './public-messages.js';
     if (!profile || !publicAuthor(profile) || typeof profile.leaderboardVisible !== 'boolean'
       || !Number.isSafeInteger(profile.revision) || profile.revision < 1
       || !pointString(data.contribution?.points) || !nonnegativeInteger(data.contribution?.adoptedCount)
+      || !(data.contribution.rank === null || (Number.isSafeInteger(data.contribution.rank) && data.contribution.rank > 0))
       || !Array.isArray(data.votes) || !data.votes.every(vote => vote && typeof vote.publicId === 'string'
         && ['up', 'down'].includes(vote.direction) && typeof vote.roundId === 'string'
         && Number.isSafeInteger(vote.proposalRevision) && Number.isSafeInteger(vote.publicationRevision))
@@ -1306,6 +1337,7 @@ import './public-messages.js';
     const sequence = ++communitySequence;
     communityLoading = true;
     communityError = '';
+    refreshOpenLeaderboard();
     renderCommunity();
     try {
       const data = validateCommunity(await request('/api/community'));
@@ -1316,6 +1348,11 @@ import './public-messages.js';
       // A failed refresh must not keep displaying content that may have been withdrawn.
       communityData = null;
       communityError = m('communityUnavailable');
+      if (ui['leaderboard-dialog'].open) {
+        clearLeaderboardView();
+        leaderboardError = m('leaderboardUnavailable');
+        renderLeaderboardDialog();
+      }
     } finally {
       if (sequence === communitySequence) {
         communityLoading = false;
@@ -1330,6 +1367,8 @@ import './public-messages.js';
     const ownerId = user.id;
     if (!force && communityMePromise && communityMePromiseEpoch === epoch) return communityMePromise;
     const sequence = ++communityMeSequence;
+    communityMeLoading = true;
+    communityMeError = '';
     communityMePromiseEpoch = epoch;
     const promise = (async () => {
       try {
@@ -1360,6 +1399,7 @@ import './public-messages.js';
       } catch (error) {
         if (epoch !== authEpoch || sequence !== communityMeSequence) return;
         communityMe = null;
+        communityMeError = m('myRankUnavailable');
         if (error.status === 401) {
           clearPending();
           applySession({ user: null, csrfToken, googleNonce });
@@ -1372,6 +1412,11 @@ import './public-messages.js';
         renderProposals();
         renderCommunity();
         refreshIdeaDialog();
+      } finally {
+        if (epoch === authEpoch && sequence === communityMeSequence) {
+          communityMeLoading = false;
+          renderCommunity();
+        }
       }
     })();
     communityMePromise = promise;
@@ -1384,6 +1429,261 @@ import './public-messages.js';
       && vote.proposalRevision === idea.proposalRevision && vote.publicationRevision === idea.publicationRevision);
   }
 
+  function createLeaderboardRow(entry) {
+    const row = document.createElement('li');
+    row.className = 'leaderboard-entry';
+    row.dataset.authorId = entry.author.id;
+    row.classList.toggle('is-own-rank', communityMe?.profile.id === entry.author.id);
+    for (const [className, text] of [['leaderboard-rank', entry.rank.toLocaleString(i18n.intlLocale)],
+      ['community-alias', entry.author.alias], ['leaderboard-points', entry.points]]) {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = text;
+      span.title = text;
+      if (className === 'leaderboard-points') span.setAttribute('aria-label', t('pointsAria', { points: entry.points }));
+      if (className === 'leaderboard-rank') span.setAttribute('aria-label', t('rankAria', { rank: text }));
+      row.append(span);
+    }
+    return row;
+  }
+
+  function renderMyRank() {
+    const ready = Boolean(user && communityMe);
+    ui['my-rank-guest'].hidden = Boolean(user);
+    ui['my-rank-login'].disabled = !sessionReady || authenticating || submitting;
+    ui['my-rank-loading'].hidden = !user || ready;
+    ui['my-rank-loading-message'].textContent = user && !ready
+      ? localize(communityMeError || m('myRankLoading')) : '';
+    ui['my-rank-retry'].disabled = !sessionReady || communityMeLoading || authenticating;
+    ui['my-contribution'].hidden = !ready;
+    if (!ready) {
+      for (const id of ['my-rank-value', 'my-rank-alias', 'my-rank-points', 'my-rank-status', 'my-contribution-summary']) {
+        ui[id].textContent = '';
+        ui[id].removeAttribute('title');
+        ui[id].removeAttribute('aria-label');
+      }
+      return;
+    }
+    const { rank, points, adoptedCount } = communityMe.contribution;
+    ui['my-rank-value'].textContent = rank === null ? '—' : rank.toLocaleString(i18n.intlLocale);
+    ui['my-rank-value'].title = rank === null ? t('myRankNotListed') : t('rankAria', { rank });
+    ui['my-rank-value'].setAttribute('aria-label', ui['my-rank-value'].title);
+    ui['my-rank-alias'].textContent = communityMe.profile.alias;
+    ui['my-rank-alias'].title = communityMe.profile.alias;
+    ui['my-rank-points'].textContent = points;
+    ui['my-rank-points'].title = points;
+    ui['my-rank-points'].setAttribute('aria-label', t('pointsAria', { points }));
+    ui['my-rank-status'].hidden = rank !== null;
+    ui['my-rank-status'].textContent = rank === null ? t('myRankNotListed') : '';
+    ui['my-contribution-summary'].textContent = t('yourContribution', { points, count: adoptedCount });
+  }
+
+  function validateLeaderboardPage(data, offset) {
+    if (!data || !Array.isArray(data.items) || data.items.length > LEADERBOARD_PAGE_SIZE
+      || !data.items.every(leaderboardEntry) || data.offset !== offset || data.limit !== LEADERBOARD_PAGE_SIZE
+      || !nonnegativeInteger(data.total) || typeof data.hasMore !== 'boolean'
+      || data.items.length !== Math.max(0, Math.min(LEADERBOARD_PAGE_SIZE, data.total - offset))
+      || data.hasMore !== (offset + data.items.length < data.total)
+      || new Set(data.items.map(row => row.author.id)).size !== data.items.length
+      || data.items.some((row, index) => row.rank > data.total || (index > 0 && row.rank < data.items[index - 1].rank))) {
+      throw new RequestError(m('leaderboardInvalid'));
+    }
+    return data;
+  }
+
+  async function loadLeaderboardPage(offset = leaderboardOffset, { adjustPage = true } = {}) {
+    if (!ui['leaderboard-dialog'].open) return;
+    const sequence = ++leaderboardSequence;
+    const epoch = authEpoch;
+    leaderboardOffset = Math.max(0, offset);
+    const requestedOffset = leaderboardOffset;
+    leaderboardLoading = true;
+    leaderboardError = '';
+    fullLeaderboard = null;
+    renderLeaderboardDialog();
+    try {
+      const data = validateLeaderboardPage(await request('/api/community?view=leaderboard&offset='
+        + requestedOffset + '&limit=' + LEADERBOARD_PAGE_SIZE), requestedOffset);
+      if (sequence !== leaderboardSequence || epoch !== authEpoch || !ui['leaderboard-dialog'].open) return;
+      if (leaderboardRefreshQueued) return;
+      const lastOffset = Math.max(0, Math.floor((data.total - 1) / LEADERBOARD_PAGE_SIZE) * LEADERBOARD_PAGE_SIZE);
+      if (data.offset > lastOffset) {
+        if (!adjustPage) throw new RequestError(m('leaderboardInvalid'));
+        await loadLeaderboardPage(lastOffset, { adjustPage: false });
+        return;
+      }
+      fullLeaderboard = data;
+    } catch (error) {
+      if (sequence !== leaderboardSequence || epoch !== authEpoch || !ui['leaderboard-dialog'].open) return;
+      fullLeaderboard = null;
+      leaderboardError = m('leaderboardUnavailable');
+    } finally {
+      if (sequence === leaderboardSequence && epoch === authEpoch) {
+        leaderboardLoading = false;
+        if (leaderboardRefreshQueued && ui['leaderboard-dialog'].open) {
+          leaderboardRefreshQueued = false;
+          loadLeaderboardPage().catch(() => {});
+        } else renderLeaderboardDialog();
+      }
+    }
+  }
+
+  function refreshOpenLeaderboard() {
+    if (!ui['leaderboard-dialog'].open) return;
+    if (leaderboardLoading) {
+      // Coalesce refreshes behind the current read; its old snapshot is discarded.
+      leaderboardRefreshQueued = true;
+      fullLeaderboard = null;
+      renderLeaderboardDialog();
+    } else loadLeaderboardPage().catch(() => {});
+  }
+
+  function renderLeaderboardDialog() {
+    ui['leaderboard-full-panel'].setAttribute('aria-busy', String(leaderboardLoading));
+    ui['leaderboard-total'].textContent = fullLeaderboard
+      ? t('leaderboardTotal', { total: fullLeaderboard.total.toLocaleString(i18n.intlLocale) }) : '';
+    const message = leaderboardError || (leaderboardLoading ? m('leaderboardLoading')
+      : fullLeaderboard && !fullLeaderboard.items.length ? m('leaderboardEmpty') : '');
+    ui['leaderboard-full-status'].textContent = localize(message);
+    ui['leaderboard-full-status'].hidden = !message;
+    ui['leaderboard-full-status'].dataset.kind = leaderboardError ? 'error' : '';
+    ui['leaderboard-full-list'].replaceChildren();
+    for (const entry of fullLeaderboard?.items || []) ui['leaderboard-full-list'].append(createLeaderboardRow(entry));
+    ui['leaderboard-full-prev'].disabled = leaderboardLoading || !fullLeaderboard || leaderboardOffset === 0;
+    ui['leaderboard-full-next'].disabled = leaderboardLoading || !fullLeaderboard || !fullLeaderboard.hasMore;
+    ui['leaderboard-full-retry'].hidden = !leaderboardError;
+    ui['leaderboard-full-retry'].disabled = leaderboardLoading;
+    ui['leaderboard-full-page'].textContent = fullLeaderboard ? t('leaderboardPage', {
+      page: Math.floor(leaderboardOffset / LEADERBOARD_PAGE_SIZE) + 1,
+      pages: Math.max(1, Math.ceil(fullLeaderboard.total / LEADERBOARD_PAGE_SIZE)),
+    }) : '';
+  }
+
+  function openLeaderboard() {
+    if (ui['leaderboard-dialog'].open) return;
+    saveCurrentDraft();
+    leaderboardReturnFocus = document.activeElement;
+    ui['leaderboard-dialog'].showModal();
+    loadLeaderboardPage(0).catch(() => {});
+  }
+
+  function clearLeaderboardView() {
+    leaderboardSequence += 1;
+    leaderboardLoading = false;
+    leaderboardRefreshQueued = false;
+    leaderboardError = '';
+    fullLeaderboard = null;
+    renderLeaderboardDialog();
+  }
+
+  function closeLeaderboard({ restoreFocus = true } = {}) {
+    if (!restoreFocus) leaderboardReturnFocus = null;
+    clearLeaderboardView();
+    if (ui['leaderboard-dialog'].open) ui['leaderboard-dialog'].close();
+    else leaderboardReturnFocus = null;
+  }
+
+  function openAlias() {
+    if (!user || !communityMe || !sessionReady || submitting || authenticating || communityMutating
+      || ui['alias-dialog'].open) return;
+    const prior = communityAttempt?.unknown && communityAttempt.actorId === user.id
+      && communityAttempt.payload.action === 'set_profile_alias' ? communityAttempt : null;
+    if (communityAttempt?.unknown && !prior) return;
+    saveCurrentDraft();
+    aliasReturnFocus = document.activeElement;
+    aliasEditor = { actorId: user.id, profileId: communityMe.profile.id,
+      revision: prior?.payload.revision || communityMe.profile.revision, composing: false,
+      reloading: false, validationShown: false, message: '', kind: '' };
+    ui['alias-input'].value = prior?.payload.alias || communityMe.profile.alias;
+    renderAlias();
+    ui['alias-dialog'].showModal();
+    ui['alias-input'].focus();
+  }
+
+  function renderAlias() {
+    if (!aliasEditor) return;
+    if (!user || aliasEditor.actorId !== user.id || (communityMe && aliasEditor.profileId !== communityMe.profile.id)) {
+      closeAlias({ restoreFocus: false });
+      return;
+    }
+    const pendingAlias = communityAttempt?.actorId === aliasEditor.actorId
+      && communityAttempt.payload.action === 'set_profile_alias' ? communityAttempt : null;
+    const unknown = Boolean(pendingAlias?.unknown);
+    const busy = communityMutating || submitting || authenticating || aliasEditor.reloading;
+    const conflict = Boolean(communityMe && aliasEditor.revision !== communityMe.profile.revision);
+    const normalized = normalizeProfileAlias(ui['alias-input'].value);
+    const counted = ui['alias-input'].value.normalize('NFC').trim();
+    ui['alias-count'].textContent = t('aliasCount', { count: [...counted].length,
+      maxCount: PROFILE_ALIAS_LIMITS.maxCodePoints, bytes: encoder.encode(counted).length,
+      maxBytes: PROFILE_ALIAS_LIMITS.maxBytes });
+    ui['alias-input'].disabled = busy || unknown;
+    ui['alias-input'].setAttribute('aria-invalid', String(aliasEditor.validationShown && !normalized));
+    ui['alias-current'].textContent = communityMe ? t('aliasCurrent', { alias: communityMe.profile.alias }) : '';
+    const message = communityMutating && pendingAlias ? m('aliasSaving')
+      : unknown ? pendingAlias.message || m('communityUnknown')
+        : conflict ? m('aliasConflict')
+          : !communityMe ? m('communityPrivateUnavailable')
+            : aliasEditor.validationShown && !normalized ? { api: 'INVALID_PROFILE_ALIAS' } : aliasEditor.message;
+    ui['alias-message'].textContent = localize(message);
+    ui['alias-message'].hidden = !message;
+    ui['alias-message'].dataset.kind = unknown || conflict || !communityMe
+      || (aliasEditor.validationShown && !normalized) ? 'error' : aliasEditor.kind;
+    ui['alias-form'].setAttribute('aria-busy', String(communityMutating && Boolean(pendingAlias)));
+    ui['alias-save'].disabled = busy || Boolean(communityAttempt?.unknown) || !sessionReady || !communityMe
+      || conflict || aliasEditor.composing || !normalized || normalized === communityMe.profile.alias;
+    ui['alias-save'].textContent = t(communityMutating && pendingAlias ? 'saving' : 'saveAlias');
+    ui['alias-retry'].hidden = !unknown;
+    ui['alias-retry'].disabled = busy || !sessionReady;
+    ui['alias-reload'].hidden = unknown || (!conflict && Boolean(communityMe));
+    ui['alias-reload'].disabled = busy || !sessionReady;
+  }
+
+  function clearAliasEditor() {
+    aliasEditor = null;
+    ui['alias-input'].value = '';
+    ui['alias-input'].removeAttribute('aria-invalid');
+    for (const id of ['alias-current', 'alias-message', 'alias-count']) ui[id].textContent = '';
+    ui['alias-save'].disabled = true;
+    ui['alias-retry'].hidden = true;
+    ui['alias-reload'].hidden = true;
+  }
+
+  function closeAlias({ restoreFocus = true } = {}) {
+    if (!restoreFocus) aliasReturnFocus = null;
+    clearAliasEditor();
+    if (ui['alias-dialog'].open) ui['alias-dialog'].close();
+    else aliasReturnFocus = null;
+  }
+
+  async function reloadAliasProfile() {
+    if (!aliasEditor || communityMutating || communityAttempt?.unknown || aliasEditor.reloading) return;
+    const editor = aliasEditor;
+    const epoch = authEpoch;
+    editor.reloading = true;
+    renderAlias();
+    await loadCommunityMe({ force: true });
+    if (editor !== aliasEditor || epoch !== authEpoch || user?.id !== editor.actorId) return;
+    editor.reloading = false;
+    if (communityMe && communityMe.profile.id === editor.profileId) {
+      editor.revision = communityMe.profile.revision;
+      editor.message = m('aliasRefreshed');
+      editor.kind = '';
+    }
+    renderAlias();
+  }
+
+  function reflectAlias(profileId, alias) {
+    if (!profileId || !isValidProfileAlias(alias)) return;
+    if (communityMe?.profile.id === profileId) communityMe.profile.alias = alias;
+    for (const idea of [...(communityData?.recent || []), ...(communityData?.popular || [])]) {
+      if (idea.author.id === profileId) idea.author.alias = alias;
+    }
+    for (const row of [...(communityData?.leaderboard.items || []), ...(fullLeaderboard?.items || [])]) {
+      if (row.author.id === profileId) row.author.alias = alias;
+    }
+    renderCommunity();
+  }
+
   function updateCommunityControls() {
     const busy = communityMutating || submitting || authenticating;
     for (const button of document.querySelectorAll('[data-community-action]')) {
@@ -1393,6 +1693,10 @@ import './public-messages.js';
     ui['community-retry'].hidden = !communityAttempt?.unknown;
     ui['community-retry'].disabled = busy || !user || !sessionReady
       || communityAttempt?.actorId !== user?.id;
+    ui['edit-alias'].disabled = busy || !user || !sessionReady || !communityMe
+      || (Boolean(communityAttempt?.unknown) && communityAttempt.payload.action !== 'set_profile_alias');
+    renderMyRank();
+    renderAlias();
     refreshIdeaDialog();
   }
 
@@ -1416,6 +1720,8 @@ import './public-messages.js';
     ui['community-page'].textContent = t('feedPage', { page: communityPage + 1, pages });
     ui['community-feed-list'].replaceChildren();
     for (const idea of rows.slice(communityPage * 3, communityPage * 3 + 3)) {
+      const mine = communityMe?.profile.id === idea.author.id;
+      const ownNoteId = 'own-vote-' + communityPage + '-' + ui['community-feed-list'].childElementCount;
       const article = document.createElement('article');
       article.className = 'community-entry';
       article.dataset.publicId = idea.id;
@@ -1424,19 +1730,28 @@ import './public-messages.js';
       const alias = document.createElement('strong');
       alias.className = 'community-alias';
       alias.textContent = idea.author.alias;
+      alias.title = idea.author.alias;
+      const authorLine = document.createElement('div');
+      authorLine.className = 'community-author';
+      authorLine.append(alias);
+      if (mine) {
+        const badge = document.createElement('span');
+        badge.className = 'own-idea-badge';
+        badge.textContent = t('yourIdea');
+        authorLine.append(badge);
+      }
       const time = document.createElement('time');
       time.dateTime = idea.createdAt;
       time.textContent = proposalDate(idea.createdAt);
       const details = document.createElement('div');
       details.className = 'community-entry-details';
       details.append(time);
-      header.append(alias, details);
+      header.append(authorLine, details);
       const body = document.createElement('p');
       body.className = 'community-body';
       body.textContent = idea.body;
       const voting = document.createElement('div');
       voting.className = 'community-votes';
-      const mine = communityMe?.profile.id === idea.author.id;
       const vote = voteFor(idea);
       const open = idea.votingOpen && communityData.round?.status === 'open'
         && idea.roundId === communityData.round.id;
@@ -1452,6 +1767,7 @@ import './public-messages.js';
           || (Boolean(user) && (!communityMe || !communityMe.voteQuota || communityMe.voteQuota.roundId !== idea.roundId
             || (!vote && communityMe.voteQuota.remaining <= 0))));
         button.setAttribute('aria-pressed', String(selected));
+        if (mine) button.setAttribute('aria-describedby', ownNoteId);
         button.setAttribute('aria-label', t('voteCountAria', { action: t(selected
           ? direction === 'up' ? 'removeUpvote' : 'removeDownvote'
           : direction === 'up' ? 'upvote' : 'downvote'), count }));
@@ -1464,10 +1780,10 @@ import './public-messages.js';
         button.addEventListener('click', () => castVote(idea, direction));
         voting.append(button);
       }
-      if (mine || !open) {
+      if (!open) {
         const note = document.createElement('span');
         note.className = 'vote-note';
-        note.textContent = t(mine ? 'yourIdea' : 'votingClosed');
+        note.textContent = t('votingClosed');
         details.append(note);
       }
       const read = document.createElement('button');
@@ -1480,6 +1796,13 @@ import './public-messages.js';
       read.addEventListener('click', () => openIdea(idea, read));
       voting.append(read);
       article.append(header, body, voting);
+      if (mine) {
+        const note = document.createElement('span');
+        note.className = 'sr-only';
+        note.id = ownNoteId;
+        note.textContent = t('ownVoteExplanation');
+        article.append(note);
+      }
       ui['community-feed-list'].append(article);
     }
     ui['community-vote-note'].hidden = !communityData;
@@ -1488,27 +1811,14 @@ import './public-messages.js';
       : !communityMe.voteQuota?.roundId || communityMe.voteQuota.roundId !== communityData?.round?.id
         || communityData?.round?.status !== 'open' ? t('votingWaiting')
       : t('voteQuota', { remaining: communityMe.voteQuota.remaining, limit: communityMe.voteQuota.limit }) + ' · ' + t('voteQuotaNote');
-    const leaders = communityData?.leaderboard.items || [];
+    const leaders = (communityData?.leaderboard.items || []).slice(0, 5);
     ui['leaderboard-status'].hidden = Boolean(communityData && leaders.length);
     ui['leaderboard-status'].textContent = localize(communityError || (!communityData ? m('leaderboardLoading') : m('leaderboardEmpty')));
     ui['leaderboard-status'].dataset.kind = communityError ? 'error' : '';
     ui['leaderboard-list'].replaceChildren();
-    for (const entry of leaders) {
-      const row = document.createElement('li');
-      row.className = 'leaderboard-entry';
-      for (const [className, text] of [['leaderboard-rank', String(entry.rank)], ['community-alias', entry.author.alias], ['leaderboard-points', entry.points]]) {
-        const span = document.createElement('span');
-        span.className = className;
-        span.textContent = text;
-        if (className === 'leaderboard-points') span.setAttribute('aria-label', t('pointsAria', { points: entry.points }));
-        row.append(span);
-      }
-      ui['leaderboard-list'].append(row);
-    }
-    ui['my-contribution'].hidden = !user || !communityMe;
-    ui['my-contribution-summary'].textContent = user && communityMe
-      ? t('yourContribution', { points: communityMe.contribution.points, count: communityMe.contribution.adoptedCount }) : '';
+    for (const entry of leaders) ui['leaderboard-list'].append(createLeaderboardRow(entry));
     ui['community-feedback-message'].textContent = localize(communityFeedbackMessage);
+    renderLeaderboardDialog();
     updateCommunityControls();
   }
 
@@ -1586,8 +1896,10 @@ import './public-messages.js';
   async function performCommunityAction(action, successKey, { retry = false } = {}) {
     if (communityMutating || submitting || authenticating || !user || !sessionReady) return;
     if (!retry && communityAttempt?.unknown) { communityFeedback(m('communityRetryFirst'), 'error'); return; }
-    const attempt = retry ? communityAttempt : { payload: { ...action, requestId: crypto.randomUUID() }, successKey, actorId: user.id, unknown: false };
+    const attempt = retry ? communityAttempt : { payload: { ...action, requestId: crypto.randomUUID() },
+      successKey, actorId: user.id, publicProfileId: communityMe?.profile.id || null, unknown: false };
     if (!attempt || attempt.actorId !== user.id) return;
+    const changingAlias = attempt.payload.action === 'set_profile_alias';
     const epoch = authEpoch;
     const sequence = ++communityMutationSequence;
     communityAttempt = attempt;
@@ -1596,6 +1908,7 @@ import './public-messages.js';
     communitySequence += 1;
     communityLoading = false;
     communityMeSequence += 1;
+    communityMeLoading = false;
     updateCommunityControls();
     renderProposals();
     try {
@@ -1603,8 +1916,13 @@ import './public-messages.js';
       if (epoch !== authEpoch || sequence !== communityMutationSequence || user?.id !== attempt.actorId) return;
       if (result?.ok !== true) throw new RequestError(m('communityResultInvalid'));
       communityAttempt = null;
-      communityData = null;
-      closeIdea();
+      if (changingAlias) {
+        reflectAlias(attempt.publicProfileId, attempt.payload.alias);
+        closeAlias();
+      } else {
+        communityData = null;
+        closeIdea();
+      }
       communityFeedback(m(attempt.successKey));
       await Promise.allSettled([loadCommunity(), loadCommunityMe({ force: true })]);
     } catch (error) {
@@ -1638,6 +1956,10 @@ import './public-messages.js';
           await refreshSession().catch(() => { sessionReady = false; });
         }
         await Promise.allSettled([loadCommunity(), loadCommunityMe({ force: true })]);
+      }
+      if (changingAlias && aliasEditor?.actorId === attempt.actorId) {
+        aliasEditor.message = communityFeedbackMessage;
+        aliasEditor.kind = 'error';
       }
     } finally {
       if (sequence === communityMutationSequence) {
@@ -1673,6 +1995,76 @@ import './public-messages.js';
     communityPage += 1;
     renderCommunity();
   });
+  ui['my-rank-login'].addEventListener('click', () => { openLogin(false); });
+  ui['my-rank-retry'].addEventListener('click', () => { loadCommunityMe({ force: true }).catch(() => {}); });
+  ui['open-leaderboard'].addEventListener('click', openLeaderboard);
+  ui['close-leaderboard'].addEventListener('click', () => closeLeaderboard());
+  ui['leaderboard-full-retry'].addEventListener('click', () => { loadLeaderboardPage().catch(() => {}); });
+  ui['leaderboard-full-prev'].addEventListener('click', () => {
+    if (!leaderboardLoading && fullLeaderboard && leaderboardOffset > 0) {
+      loadLeaderboardPage(leaderboardOffset - LEADERBOARD_PAGE_SIZE).catch(() => {});
+    }
+  });
+  ui['leaderboard-full-next'].addEventListener('click', () => {
+    if (!leaderboardLoading && fullLeaderboard?.hasMore) {
+      loadLeaderboardPage(leaderboardOffset + LEADERBOARD_PAGE_SIZE).catch(() => {});
+    }
+  });
+  ui['leaderboard-dialog'].addEventListener('cancel', event => { event.preventDefault(); closeLeaderboard(); });
+  ui['leaderboard-dialog'].addEventListener('close', () => {
+    if (ui['leaderboard-dialog'].open) return;
+    clearLeaderboardView();
+    const target = leaderboardReturnFocus;
+    leaderboardReturnFocus = null;
+    if (target?.isConnected && !target.disabled && target.getClientRects().length) target.focus();
+  });
+  ui['edit-alias'].addEventListener('click', openAlias);
+  ui['close-alias'].addEventListener('click', () => closeAlias());
+  ui['alias-cancel'].addEventListener('click', () => closeAlias());
+  ui['alias-retry'].addEventListener('click', () => performCommunityAction(null, null, { retry: true }));
+  ui['alias-reload'].addEventListener('click', () => { reloadAliasProfile().catch(() => {}); });
+  ui['alias-dialog'].addEventListener('cancel', event => { event.preventDefault(); closeAlias(); });
+  ui['alias-dialog'].addEventListener('close', () => {
+    if (ui['alias-dialog'].open) return;
+    clearAliasEditor();
+    const target = aliasReturnFocus;
+    aliasReturnFocus = null;
+    if (target?.isConnected && !target.disabled && target.getClientRects().length) target.focus();
+  });
+  ui['alias-input'].addEventListener('compositionstart', () => {
+    if (aliasEditor) { aliasEditor.composing = true; renderAlias(); }
+  });
+  ui['alias-input'].addEventListener('compositionend', () => {
+    if (aliasEditor) { aliasEditor.composing = false; aliasEditor.validationShown = true; renderAlias(); }
+  });
+  ui['alias-input'].addEventListener('input', () => {
+    if (aliasEditor) {
+      aliasEditor.message = '';
+      aliasEditor.kind = '';
+      aliasEditor.validationShown = !aliasEditor.composing;
+      renderAlias();
+    }
+  });
+  ui['alias-form'].addEventListener('submit', event => {
+    event.preventDefault();
+    if (!aliasEditor || aliasEditor.composing || aliasEditor.reloading || !user || !sessionReady
+      || !communityMe || aliasEditor.actorId !== user.id || aliasEditor.profileId !== communityMe.profile.id) return;
+    aliasEditor.validationShown = true;
+    const alias = normalizeProfileAlias(ui['alias-input'].value);
+    if (!alias || aliasEditor.revision !== communityMe.profile.revision || alias === communityMe.profile.alias) {
+      renderAlias();
+      return;
+    }
+    aliasEditor.message = '';
+    performCommunityAction({ action: 'set_profile_alias', alias, revision: aliasEditor.revision }, 'aliasSaved');
+  });
+  for (const [dialog, close] of [[ui['leaderboard-dialog'], closeLeaderboard], [ui['alias-dialog'], closeAlias]]) {
+    dialog.addEventListener('click', event => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+    });
+  }
   ui['open-my-proposals'].addEventListener('click', openMyProposals);
   ui['close-my-proposals'].addEventListener('click', () => closeMyProposals());
   ui['my-proposals-dialog'].addEventListener('close', () => {

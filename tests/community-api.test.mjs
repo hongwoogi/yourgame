@@ -114,7 +114,7 @@ test('private community state requires a live owner session while generated alia
   assert.equal(response.body.ownerId, login.session.user.id);
   assert.equal(response.body.profile.leaderboardVisible, true);
   assert.equal(response.body.profile.visibilitySource, 'service_default');
-  assert.deepEqual(response.body.contribution, { points: '0', adoptedCount: 0 });
+  assert.deepEqual(response.body.contribution, { points: '0', adoptedCount: 0, rank: 1 });
   assert.equal(response.body.voteQuota.remaining, 3);
   assert.deepEqual(response.body.votes, []);
   assert.equal((await request(f.handler, '/api/community')).body.leaderboard.items[0].author.id, response.body.profile.id);
@@ -196,7 +196,7 @@ test('a confirmed vote is idempotent, separate from submission quota, and cannot
   const own = await request(f.handler, '/api/community?view=me', signedHeaders(voter));
   assert.equal(own.body.voteQuota.used, 1);
   assert.equal(own.body.voteQuota.remaining, 2);
-  assert.deepEqual(own.body.contribution, { points: '0', adoptedCount: 0 });
+  assert.deepEqual(own.body.contribution, { points: '0', adoptedCount: 0, rank: 1 });
   assert.equal((await f.store.listProposals(voter.session.user.id)).quota.remaining, before.quota.remaining);
   assert.equal(publicResult.text.includes(voter.session.user.id), false);
   assert.equal(publicResult.text.includes('Private voter'), false);

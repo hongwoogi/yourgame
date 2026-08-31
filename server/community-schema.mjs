@@ -4,6 +4,7 @@ import { INITIAL_CUTOFF } from './config.mjs';
 import {
   PUBLICATION_POLICY_VERSION, COMMUNITY_DEFAULT_ACTIVE_SQL, COMMUNITY_DEFAULT_READY_SQL,
   COMMUNITY_DEFAULT_TRIGGER_NAMES, PUBLIC_PUBLICATIONS_SQL, PUBLIC_VOTES_SQL, COMMUNITY_VOTE_LIMIT,
+  COMMUNITY_PROFILE_NAMES_VERSION, COMMUNITY_PROFILE_NAMES_READY_SQL,
 } from './community-policy.mjs';
 
 export const COMMUNITY_SCHEMA_VERSION = 1;
@@ -81,12 +82,16 @@ export async function initializeCommunityDatabase(client) {
   // Preparation is deliberately inactive. A deployment operator must review
   // and activate this policy separately; ordinary initialization is not consent.
   await client.batch(COMMUNITY_PUBLIC_DEFAULT_SCHEMA, 'write');
+  // Fresh/local initialization includes the additive display-name table. An
+  // existing production database uses prepareCommunityProfiles(), never a full
+  // initialization or another public-default policy activation.
+  await client.batch(COMMUNITY_PROFILE_NAMES_SCHEMA, 'write');
   await checkCommunitySchema(client);
 }
 
 export async function checkCommunitySchema(client) {
   try {
-    const result = await client.execute(`SELECT (SELECT value FROM community_meta WHERE key = 'schema_version') AS version,
+    const result = await client.execute({ sql: `SELECT (SELECT value FROM community_meta WHERE key = 'schema_version') AS version,
       (SELECT revision FROM community_profiles LIMIT 1) AS profile_check,
       (SELECT closes_at FROM community_rounds LIMIT 1) AS round_check,
       (SELECT revision FROM community_publications LIMIT 1) AS publication_check,
@@ -101,17 +106,104 @@ export async function checkCommunitySchema(client) {
       (SELECT policy_version FROM community_publication_defaults LIMIT 1) AS publication_default_check,
       (SELECT id FROM community_default_events LIMIT 1) AS default_event_check,
       (SELECT id FROM community_policy_transitions LIMIT 1) AS transition_check,
+      (SELECT alias FROM community_profile_names LIMIT 1) AS display_alias_check,
+      (SELECT revision FROM community_profile_names LIMIT 1) AS display_revision_check,
+      ${COMMUNITY_PROFILE_NAMES_READY_SQL} AS display_names_ready,
+      ${profileDefinitionsCompatibleSql} AS display_names_compatible,
       (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
         'community_profile_identity_immutable', 'community_publication_identity_immutable',
         'community_events_no_update', 'community_events_no_delete', 'community_events_no_replace',
-        'community_requests_no_update', 'community_requests_no_delete', 'community_requests_no_replace')) AS immutable_triggers`);
+        'community_requests_no_update', 'community_requests_no_delete', 'community_requests_no_replace')) AS immutable_triggers`,
+      args: profileDefinitionArgs });
     if (Number(result.rows[0]?.version) !== COMMUNITY_SCHEMA_VERSION || Number(result.rows[0]?.immutable_triggers) !== 8
-        || Number(result.rows[0]?.defaults_version) !== 1 || !['inactive', 'active'].includes(result.rows[0]?.defaults_state)) {
+        || Number(result.rows[0]?.defaults_version) !== 1 || !['inactive', 'active'].includes(result.rows[0]?.defaults_state)
+        || Number(result.rows[0]?.display_names_ready) !== 1 || Number(result.rows[0]?.display_names_compatible) !== 1) {
       throw new Error('Incomplete community storage.');
     }
   } catch {
     throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community storage is temporarily unavailable.');
   }
+}
+
+export const COMMUNITY_PROFILE_NAME_DDL = [
+  `CREATE TABLE IF NOT EXISTS community_profile_names (
+    user_id TEXT NOT NULL PRIMARY KEY REFERENCES community_profiles(user_id),
+    alias TEXT NOT NULL CHECK(length(alias) BETWEEN 2 AND 24 AND length(CAST(alias AS BLOB)) <= 96),
+    revision INTEGER NOT NULL CHECK(revision >= 2), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TRIGGER IF NOT EXISTS community_profile_name_identity_immutable
+    BEFORE UPDATE OF user_id, created_at ON community_profile_names
+    BEGIN SELECT RAISE(ABORT, 'display name identity is immutable'); END`,
+  `CREATE TRIGGER IF NOT EXISTS community_profile_names_no_delete BEFORE DELETE ON community_profile_names
+    BEGIN SELECT RAISE(ABORT, 'display name history cannot be removed'); END`,
+];
+
+const profileObjectNames = ['community_profile_names', 'community_profile_name_identity_immutable', 'community_profile_names_no_delete'];
+const normalizedDefinition = sql => sql.toLowerCase().replace(/[ \t\r\n]/g, '').replaceAll('ifnotexists', '');
+const normalizeDefinitionSql = `replace(replace(replace(replace(replace(lower(COALESCE(sql, '')),
+  ' ', ''), char(9), ''), char(10), ''), char(13), ''), 'ifnotexists', '')`;
+const profileDefinitionArgs = COMMUNITY_PROFILE_NAME_DDL.map(normalizedDefinition);
+const profileDefinitionsCompatibleSql = `NOT EXISTS(SELECT 1 FROM sqlite_master
+  WHERE lower(name) IN (${profileObjectNames.map(name => `'${name}'`).join(', ')}) AND NOT (
+    ${profileObjectNames.map((name, index) => `(lower(name) = '${name}' AND type = '${index === 0 ? 'table' : 'trigger'}'
+      AND ${normalizeDefinitionSql} = ?)`).join(' OR ')}))`;
+
+export const COMMUNITY_PROFILE_NAMES_SCHEMA = [
+  ...COMMUNITY_PROFILE_NAME_DDL,
+  { sql: 'INSERT INTO community_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING',
+    args: ['profile_names_schema_version', COMMUNITY_PROFILE_NAMES_VERSION] },
+];
+
+export async function prepareCommunityProfiles(client, { expectedServiceRevision } = {}) {
+  if (!Number.isSafeInteger(expectedServiceRevision) || expectedServiceRevision < 1) {
+    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'An exact service revision is required.');
+  }
+  const initial = (await client.execute({ sql: `SELECT *, ${COMMUNITY_DEFAULT_READY_SQL} AS ready,
+    (SELECT value FROM community_meta WHERE key = 'profile_names_schema_version') AS names_version,
+    ${profileDefinitionsCompatibleSql} AS names_compatible FROM service_control WHERE id = 1`, args: profileDefinitionArgs })).rows[0];
+  if (!initial || Number(initial.ready) !== 1
+      || Number(initial.names_compatible) !== 1
+      || (initial.names_version != null && Number(initial.names_version) !== COMMUNITY_PROFILE_NAMES_VERSION)) {
+    throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Prepare compatible community storage first.');
+  }
+  if (Number(initial.revision) !== expectedServiceRevision) {
+    throw new ApiError(409, 'REVISION_CONFLICT', 'Service controls changed before preparation.');
+  }
+  if (initial.mode !== 'active' || Number(initial.proposals_enabled) !== 1 || Number(initial.development_enabled) !== 1) {
+    throw new ApiError(409, 'PROPOSALS_PAUSED', 'Preparation requires active participation and development.');
+  }
+  const allowed = `(${COMMUNITY_DEFAULT_READY_SQL} AND EXISTS(SELECT 1 FROM service_control
+    WHERE id = 1 AND mode = 'active' AND proposals_enabled = 1 AND development_enabled = 1
+      AND revision = ${expectedServiceRevision}) AND NOT EXISTS(SELECT 1 FROM community_meta
+      WHERE key = 'profile_names_schema_version' AND value != ${COMMUNITY_PROFILE_NAMES_VERSION}))`;
+  let result;
+  try {
+    result = await client.batch([
+      // The existing metadata NOT NULL constraint is the transaction guard.
+      // A stale/paused service yields NULL and aborts BEFORE any schema changes,
+      // even when this metadata key already exists. No original row is changed.
+      { sql: `INSERT INTO community_meta(key, value) SELECT 'profile_names_schema_version',
+        CASE WHEN ${allowed} AND ${profileDefinitionsCompatibleSql} THEN ${COMMUNITY_PROFILE_NAMES_VERSION} ELSE NULL END
+        ON CONFLICT(key) DO NOTHING`, args: profileDefinitionArgs },
+      ...COMMUNITY_PROFILE_NAME_DDL,
+      `SELECT ${COMMUNITY_PROFILE_NAMES_READY_SQL} AS ready,
+        (SELECT COUNT(*) FROM community_profile_names) AS display_names,
+        (SELECT alias FROM community_profile_names LIMIT 1) AS alias_check,
+        (SELECT revision FROM community_profile_names LIMIT 1) AS revision_check,
+        (SELECT created_at FROM community_profile_names LIMIT 1) AS created_check,
+        (SELECT updated_at FROM community_profile_names LIMIT 1) AS updated_check`,
+    ], 'write');
+  } catch (error) {
+    if (/^SQLITE_CONSTRAINT(?:_|$)/.test(String(error?.code || ''))
+        && String(error?.message || '').includes('community_meta.value')) {
+      throw new ApiError(409, 'REVISION_CONFLICT', 'Service controls changed during preparation.');
+    }
+    throw error;
+  }
+  const checked = result.at(-1).rows[0];
+  if (Number(checked?.ready) !== 1) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Display name preparation is incomplete.');
+  return { prepared: true, schemaVersion: COMMUNITY_PROFILE_NAMES_VERSION, serviceRevision: expectedServiceRevision,
+    displayNames: Number(checked.display_names), generatedAliasesChanged: false, pointsIssued: false };
 }
 
 const uuidSql = `(lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2)

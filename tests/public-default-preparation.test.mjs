@@ -236,7 +236,11 @@ test('inactive preparation commits preserve every original row and repeated prep
   assert.equal(result.committed, true);
   assert.equal(result.policyState, 'inactive');
   assert.equal(result.serviceControlPreserved, true);
-  assert.deepEqual(result.schemaAdded, { tables: 6, triggers: COMMUNITY_DEFAULT_TRIGGER_NAMES.length });
+  // A fresh/local installation also prepares the additive display-name table;
+  // it must not create a custom name or change a generated profile identity.
+  assert.deepEqual(result.schemaAdded, { tables: 7, triggers: COMMUNITY_DEFAULT_TRIGGER_NAMES.length + 2 });
+  assert.equal((await f.client.execute("SELECT value FROM community_meta WHERE key = 'profile_names_schema_version'")).rows[0].value, 1);
+  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM community_profile_names')).rows[0].n, 0);
   assert.deepEqual(result.counts, { users: 1, proposals: 1, bodyHistory: 1, safetyReviews: 1, contributionAwards: 0,
     profiles: 1, publications: 0, votes: 0 });
   assert.ok(Object.values(result.policyCounts).every(value => value === 0));

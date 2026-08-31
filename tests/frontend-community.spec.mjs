@@ -29,7 +29,7 @@ function privateCommunity(session = accountA) {
   return { ownerId: session.user?.id || accountA.user.id,
     profile: { id: second ? 'public-profile-b' : 'public-profile-a', alias: second ? ALIAS_B : ALIAS,
       leaderboardVisible: Boolean(session.user), revision: 1, visibilitySource: 'service_default' },
-    contribution: { points: '0', adoptedCount: 0 },
+    contribution: { points: '0', adoptedCount: 0, rank: session.user ? 1 : null },
     voteQuota: { roundId: 'initial', limit: 3, used: 0, remaining: 3, closesAt: CLOSE },
     votes: [], publications: [] };
 }
@@ -51,6 +51,7 @@ async function fixture(page, options = {}) {
       proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } } },
     posts: [], patches: [], actions: [], effects: [], receipts: new Map(), publicReads: 0, meReads: 0,
     sessionReads: 0, loginCalls: 0, publicFailure: false, meFailure: false, sessionFailure: false,
+    leaderboardReads: [], leaderboardFailure: false,
     ...options };
   state.me ||= privateCommunity(state.session);
   const publishDefault = proposal => {
@@ -66,8 +67,20 @@ async function fixture(page, options = {}) {
     }
   };
   state.proposals.forEach(publishDefault);
+  const leaderboardSnapshot = () => {
+    const me = state.me;
+    const items = structuredClone(state.leaders).filter(item => me.profile.leaderboardVisible || item.author.id !== me.profile.id);
+    for (const item of items) if (item.author.id === me.profile.id) item.author.alias = me.profile.alias;
+    if (me.profile.leaderboardVisible && !items.some(item => item.author.id === me.profile.id)) {
+      items.push({ rank: items.length + 1, author: { id: me.profile.id, alias: me.profile.alias },
+        points: me.contribution.points, adoptedCount: me.contribution.adoptedCount });
+    }
+    return items;
+  };
   const meSnapshot = () => {
     const result = structuredClone(state.me);
+    result.contribution.rank = result.profile.leaderboardVisible
+      ? leaderboardSnapshot().find(row => row.author.id === result.profile.id)?.rank ?? null : null;
     result.publications = result.publications.map(publication => ({ ...publication,
       eligible: publication.requested && state.proposals.some(idea => idea.id === publication.proposalId
         && idea.revision === publication.proposalRevision) }));
@@ -82,9 +95,7 @@ async function fixture(page, options = {}) {
         createdAt: idea.createdAt, upvotes: 0, downvotes: 0, votingOpen: state.round?.status === 'open', roundId: state.round?.id || null };
     });
     const recent = [...structuredClone(state.ideas), ...own];
-    const items = structuredClone(state.leaders);
-    if (mine.profile.leaderboardVisible) items.push({ rank: items.length + 1,
-      author: { id: mine.profile.id, alias: mine.profile.alias }, ...mine.contribution });
+    const items = leaderboardSnapshot();
     return { recent, popular: [...recent].sort((a, b) => b.upvotes - b.downvotes - (a.upvotes - a.downvotes)),
       leaderboard: { items: items.slice(0, 10) }, round: state.round, scoring: state.scoring, serverTime: new Date(state.serverTime).toISOString() };
   };
@@ -167,6 +178,18 @@ async function fixture(page, options = {}) {
       if (!authenticated) return failure('LOGIN_REQUIRED', 401);
       return reply(snapshot);
     }
+    if (url.pathname === '/api/community' && request.method() === 'GET' && url.searchParams.get('view') === 'leaderboard') {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      const limit = Number(url.searchParams.get('limit') || 20);
+      state.leaderboardReads.push({ offset, limit });
+      const all = leaderboardSnapshot();
+      const snapshot = { items: all.slice(offset, offset + limit), offset, limit, total: all.length, hasMore: offset + limit < all.length };
+      const wait = state.holdNextLeaderboard;
+      state.holdNextLeaderboard = null;
+      if (wait) { wait.started(); await wait.promise; }
+      return state.leaderboardFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503)
+        : reply(state.leaderboardTransform ? state.leaderboardTransform(snapshot) : snapshot);
+    }
     if (url.pathname === '/api/community' && request.method() === 'GET') {
       state.publicReads += 1;
       return state.publicFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503) : reply(publicSnapshot());
@@ -196,6 +219,10 @@ async function fixture(page, options = {}) {
       } else if (payload.action === 'set_profile_visibility') {
         state.me.profile.leaderboardVisible = payload.visible;
         state.me.profile.revision += 1;
+      } else if (payload.action === 'set_profile_alias') {
+        if (payload.revision !== state.me.profile.revision) return failure('COMMUNITY_REVISION_CONFLICT', 409);
+        state.me.profile.alias = payload.alias;
+        state.me.profile.revision += 1;
       } else if (payload.action === 'vote') {
         const prior = state.me.votes.find(vote => vote.publicId === payload.publicId);
         const idea = state.ideas.find(item => item.id === payload.publicId);
@@ -211,6 +238,9 @@ async function fixture(page, options = {}) {
       }
       state.effects.push(payload);
       state.receipts.set(payload.requestId, JSON.stringify(payload));
+      const responseWait = state.holdNextActionResponse;
+      state.holdNextActionResponse = null;
+      if (responseWait) { responseWait.started(); await responseWait.promise; }
       if (state.malformedAfterNextCommit) {
         state.malformedAfterNextCommit = false;
         return route.fulfill({ contentType: 'application/json', status: 200, body: '{"ok":tr' });
@@ -242,6 +272,395 @@ async function refreshCommunity(page) {
 
 const voteButton = (page, id = 'public-idea-1', direction = 'up') =>
   page.locator(`[data-public-id="${id}"] [data-direction="${direction}"]`);
+
+function rankedPlayers(count) {
+  return Array.from({ length: count }, (_, index) => ({ rank: index + 1,
+    author: { id: 'ranked-profile-' + index, alias: 'Player-' + (index + 100).toString(16).padStart(12, '0') },
+    points: String(1000 - index), adoptedCount: index % 3 }));
+}
+
+test('the top five keep shared ranks and repeat my own public rank separately', async ({ page }) => {
+  const me = privateCommunity(accountA);
+  me.profile.alias = 'Shared display name';
+  me.contribution.points = '998';
+  const leaders = rankedPlayers(8);
+  leaders[1].rank = 1;
+  leaders[2].author = { id: me.profile.id, alias: me.profile.alias };
+  const state = await fixture(page, { session: structuredClone(accountA), me, leaders });
+  await expect(page.locator('#leaderboard-list .leaderboard-rank')).toHaveText(['1', '1', '3', '4', '5']);
+  await expect(page.locator('#leaderboard-list .leaderboard-entry')).toHaveCount(5);
+  await expect(page.locator('#leaderboard-list [data-author-id="public-profile-a"]')).toHaveCount(1);
+  await expect(page.locator('#my-rank-value')).toHaveText('3');
+  await expect(page.locator('#my-rank-alias')).toHaveText(me.profile.alias);
+  await expect(page.locator('#my-rank-points')).toHaveText('998');
+  await expect(page.locator('.contribution-board')).not.toContainText(accountA.user.name);
+  state.me.profile.leaderboardVisible = false;
+  await refreshCommunity(page);
+  await expect(page.locator('#my-rank-value')).toHaveText('—');
+  await expect(page.locator('#my-rank-status')).toContainText('Not currently');
+  await expect(page.locator('#my-rank-alias')).toHaveText(me.profile.alias);
+  await page.locator('#logout-button').click();
+  await expect(page.locator('#my-contribution')).toBeHidden();
+  await expect(page.locator('#my-rank-alias')).toHaveText('');
+  await expect(page.locator('#my-rank-points')).toHaveText('');
+  await expect(page.locator('#my-rank-guest')).toBeVisible();
+  const target = await page.locator('#my-rank-login').boundingBox();
+  expect(target.width).toBeGreaterThanOrEqual(44);
+  expect(target.height).toBeGreaterThanOrEqual(44);
+});
+
+test('My idea badges and self-vote protection use public IDs even when names match', async ({ page }) => {
+  const me = privateCommunity(accountA);
+  me.profile.alias = 'Same Name';
+  const state = await fixture(page, { session: structuredClone(accountA), me, proposals: [ownIdea()],
+    ideas: [sharedIdea(1, { author: { id: 'another-public-profile', alias: 'Same Name' } })] });
+  const mine = page.locator('[data-public-id="public-owned-private-idea-a"]');
+  const other = page.locator('[data-public-id="public-idea-1"]');
+  await expect(mine.locator('.own-idea-badge')).toHaveText('My idea');
+  await expect(other.locator('.own-idea-badge')).toHaveCount(0);
+  for (const direction of ['up', 'down']) {
+    const button = mine.locator('[data-direction="' + direction + '"]');
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAccessibleDescription("You can't vote on your own idea.");
+    await button.evaluate(element => { element.disabled = false; element.click(); });
+  }
+  expect(state.actions).toHaveLength(0);
+  await other.locator('[data-direction="up"]').click();
+  await expect.poll(() => state.actions.length).toBe(1);
+  expect(state.actions[0].payload.publicId).toBe('public-idea-1');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(mine.locator('.own-idea-badge')).toHaveText('내 의견');
+  await expect(mine.locator('[data-direction="up"]')).toHaveAccessibleDescription('내 의견에는 투표할 수 없습니다.');
+});
+
+test('anonymous full ranking paginates on the server and preserves locale, draft and dialog focus', async ({ page }) => {
+  const leaders = rankedPlayers(27);
+  const state = await fixture(page, { leaders });
+  await page.locator('#prompt').fill('Keep this idea while browsing rankings.');
+  await page.locator('#open-leaderboard').click();
+  await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(20);
+  await expect(page.locator('#leaderboard-total')).toHaveText('27 participants');
+  expect(state.leaderboardReads).toEqual([{ offset: 0, limit: 20 }]);
+  await expect(page.locator('#leaderboard-full-prev')).toBeDisabled();
+  await page.locator('#leaderboard-full-next').click();
+  await expect(page.locator('#leaderboard-full-list .leaderboard-rank')).toHaveText(['21', '22', '23', '24', '25', '26', '27']);
+  await expect(page.locator('#leaderboard-full-next')).toBeDisabled();
+  const reads = state.leaderboardReads.length;
+  await page.locator('#leaderboard-language-select').selectOption('ko');
+  await expect(page.locator('#leaderboard-total')).toHaveText('참여자 27명');
+  await expect(page.locator('#leaderboard-full-list .community-alias')).toHaveText(leaders.slice(20).map(row => row.author.alias));
+  expect(state.leaderboardReads).toHaveLength(reads);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#leaderboard-dialog')).toBeHidden();
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  await expect(page.locator('#open-leaderboard')).toBeFocused();
+  await expect(page.locator('#prompt')).toHaveValue('Keep this idea while browsing rankings.');
+  await page.locator('#open-leaderboard').click();
+  await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(20);
+  const rect = await page.locator('#leaderboard-dialog').boundingBox();
+  await page.mouse.click(rect.x - 3, rect.y + 5);
+  await expect(page.locator('#leaderboard-dialog')).toBeHidden();
+  await expect(page.locator('#open-leaderboard')).toBeFocused();
+  expect(state.loginCalls).toBe(0);
+  expect(state.actions).toHaveLength(0);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('open rankings refresh withdrawn rows, recover a shrunken last page and discard read failures', async ({ page }) => {
+  const state = await fixture(page, { leaders: rankedPlayers(27) });
+  await page.locator('#open-leaderboard').click();
+  await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(20);
+  await page.locator('#leaderboard-full-next').click();
+  await expect(page.locator('#leaderboard-full-page')).toHaveText('2 / 2');
+  state.leaders = state.leaders.slice(0, 19);
+  await page.clock.runFor(46000);
+  await expect(page.locator('#leaderboard-full-page')).toHaveText('1 / 1');
+  await expect(page.locator('#leaderboard-total')).toHaveText('19 participants');
+  await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(19);
+  expect(state.leaderboardReads.slice(-2)).toEqual([{ offset: 20, limit: 20 }, { offset: 0, limit: 20 }]);
+  state.publicFailure = true;
+  await page.clock.runFor(46000);
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  await expect(page.locator('#leaderboard-full-status')).toContainText("Couldn't load");
+  await expect(page.locator('#leaderboard-full-retry')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('PRIVATE_INTERNAL_EVIDENCE');
+  state.publicFailure = false;
+  state.leaderboardFailure = true;
+  await page.locator('#leaderboard-full-retry').click();
+  await expect(page.locator('#leaderboard-full-retry')).toBeEnabled();
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  state.leaderboardFailure = false;
+  state.leaders = [];
+  await page.locator('#leaderboard-full-retry').click();
+  await expect(page.locator('#leaderboard-total')).toHaveText('0 participants');
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  await expect(page.locator('#leaderboard-full-status')).toBeVisible();
+  expect(state.actions).toHaveLength(0);
+});
+
+test('late ranking responses and malformed page metadata cannot replace the current dialog', async ({ page }) => {
+  const held = gate();
+  const state = await fixture(page, { leaders: rankedPlayers(25), holdNextLeaderboard: held });
+  await page.locator('#open-leaderboard').click();
+  await held.began;
+  await page.locator('#close-leaderboard').click();
+  state.leaders = rankedPlayers(3);
+  await page.locator('#open-leaderboard').click();
+  await expect(page.locator('#leaderboard-total')).toHaveText('3 participants');
+  held.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(3);
+  await expect(page.locator('#leaderboard-total')).toHaveText('3 participants');
+  await page.locator('#close-leaderboard').click();
+  const olderRead = gate();
+  state.holdNextLeaderboard = olderRead;
+  await page.locator('#open-leaderboard').click();
+  await olderRead.began;
+  const beforeRefresh = state.leaderboardReads.length;
+  const beforePublicRefresh = state.publicReads;
+  state.leaders = rankedPlayers(2);
+  // Exercise a refresh while the first read is pending, without expiring its
+  // 18-second request timeout. Periodic withdrawal/shrink has a separate test.
+  await page.locator('#community-refresh').dispatchEvent('click');
+  await expect.poll(() => state.publicReads).toBeGreaterThan(beforePublicRefresh);
+  expect(state.leaderboardReads).toHaveLength(beforeRefresh);
+  const latestRead = gate();
+  state.holdNextLeaderboard = latestRead;
+  olderRead.release();
+  await latestRead.began;
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  latestRead.release();
+  await expect(page.locator('#leaderboard-total')).toHaveText('2 participants');
+  expect(state.leaderboardReads).toHaveLength(beforeRefresh + 1);
+  state.leaders = rankedPlayers(3);
+  for (const corrupt of [
+    data => ({ ...data, hasMore: true }),
+    data => ({ ...data, items: data.items.slice(0, 2) }),
+    data => ({ ...data, items: [data.items[0], data.items[0], data.items[2]] }),
+    data => ({ ...data, items: [data.items[2], data.items[1], data.items[0]] }),
+    data => ({ ...data, items: [{ ...data.items[0], rank: 4 }, ...data.items.slice(1)] }),
+  ]) {
+    await page.locator('#close-leaderboard').click();
+    state.leaderboardTransform = corrupt;
+    await page.locator('#open-leaderboard').click();
+    await expect(page.locator('#leaderboard-full-status')).toHaveAttribute('data-kind', 'error');
+    await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+    await expect(page.locator('#leaderboard-full-next')).toBeDisabled();
+    await expect(page.locator('#leaderboard-full-retry')).toBeVisible();
+  }
+});
+
+test('changing a public name normalizes its payload and updates an open reader without touching the idea draft or IME', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA), proposals: [ownIdea()] });
+  const draft = '조합 중인 제안 초안은 별명과 별개입니다.';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#prompt').dispatchEvent('compositionstart');
+  await page.locator('#edit-alias').click();
+  await expect(page.locator('#alias-input')).toHaveValue(ALIAS);
+  await expect(page.locator('#alias-dialog')).not.toContainText(accountA.user.name);
+  const raw = '  Cafe\u0301 Hero  ';
+  await page.locator('#alias-input').fill(raw);
+  await page.locator('#alias-input').dispatchEvent('compositionstart');
+  await page.locator('#alias-form').evaluate(form => form.requestSubmit());
+  expect(state.actions).toHaveLength(0);
+  await page.locator('#alias-language-select').selectOption('ko');
+  await expect(page.locator('#alias-input')).toHaveValue(raw);
+  await expect(page.locator('#alias-save')).toBeDisabled();
+  await page.locator('#alias-input').dispatchEvent('compositionend');
+  const held = gate();
+  state.holdNextActionResponse = held;
+  await page.locator('#alias-save').click();
+  await held.began;
+  await page.locator('#close-alias').click();
+  await page.locator('[data-public-id="public-owned-private-idea-a"] .community-read').click();
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  held.release();
+  await expect(page.locator('#idea-author')).toContainText('Café Hero');
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  await expect(page.locator('#idea-body')).toHaveText(state.proposals[0].body);
+  await expect(page.locator('#my-rank-alias')).toHaveText('Café Hero');
+  await expect(page.locator('#leaderboard-list .community-alias')).toHaveText('Café Hero');
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  expect(state.actions).toHaveLength(1);
+  expect(state.actions[0].payload).toMatchObject({ action: 'set_profile_alias', alias: 'Café Hero', revision: 1 });
+  expect(state.actions[0].language).toBe('ko');
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  await page.locator('#close-idea').click();
+  await page.locator('#prompt').dispatchEvent('compositionend');
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  await page.locator('#open-leaderboard').click();
+  await expect(page.locator('#leaderboard-full-list .community-alias')).toHaveText('Café Hero');
+});
+
+test('invalid names never send and profile conflicts preserve the draft until explicit refresh', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA) });
+  await page.locator('#edit-alias').click();
+  for (const value of ['<img src=x>', 'A\u200bB', 'A'.repeat(25)]) {
+    await page.locator('#alias-input').fill(value);
+    await expect(page.locator('#alias-input')).toHaveAttribute('aria-invalid', 'true');
+    await page.locator('#alias-form').evaluate(form => form.requestSubmit());
+  }
+  expect(state.actions).toHaveLength(0);
+  await page.locator('#alias-input').fill('My chosen name');
+  state.nextActionError = { code: 'INVALID_PROFILE_ALIAS', status: 422 };
+  await page.locator('#alias-save').click();
+  await expect(page.locator('#alias-message')).toContainText('2–24');
+  await expect(page.locator('#alias-input')).toHaveValue('My chosen name');
+  state.nextActionError = { code: 'COMMUNITY_REVISION_CONFLICT', status: 409,
+    change() { state.me.profile.alias = 'Another session'; state.me.profile.revision = 2; } };
+  await page.locator('#alias-save').click();
+  await expect(page.locator('#alias-current')).toContainText('Another session');
+  await expect(page.locator('#alias-input')).toHaveValue('My chosen name');
+  await expect(page.locator('#alias-save')).toBeDisabled();
+  await page.locator('#alias-form').evaluate(form => form.requestSubmit());
+  expect(state.actions).toHaveLength(2);
+  await page.locator('#alias-reload').click();
+  await expect(page.locator('#alias-save')).toBeEnabled();
+  await expect(page.locator('#alias-input')).toHaveValue('My chosen name');
+  await page.locator('#alias-save').click();
+  await expect(page.locator('#alias-dialog')).toBeHidden();
+  await expect(page.locator('#my-rank-alias')).toHaveText('My chosen name');
+  expect(state.actions[2].payload.revision).toBe(2);
+  expect(state.effects).toHaveLength(1);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('an unknown name change keeps the same request through locale changes and dialog reopen', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA), malformedAfterNextCommit: true });
+  await page.locator('#prompt').fill('Do not send this idea when confirming my name.');
+  await page.locator('#edit-alias').click();
+  await page.locator('#alias-input').fill('Kept request');
+  await page.locator('#alias-save').click();
+  await expect(page.locator('#alias-retry')).toBeVisible();
+  await expect(page.locator('#alias-input')).toHaveValue('Kept request');
+  await expect(page.locator('#alias-input')).toBeDisabled();
+  const first = structuredClone(state.actions[0].payload);
+  await page.locator('#alias-language-select').selectOption('ko');
+  await expect(page.locator('#alias-retry')).toHaveText('같은 요청 결과 다시 확인');
+  await page.locator('#close-alias').click();
+  await page.locator('#edit-alias').click();
+  await expect(page.locator('#alias-input')).toHaveValue('Kept request');
+  state.nextActionError = { code: 'COMMUNITY_RATE_LIMITED', status: 429 };
+  await page.locator('#alias-retry').click();
+  await expect(page.locator('#alias-retry')).toBeEnabled();
+  await expect(page.locator('#alias-input')).toBeDisabled();
+  expect(state.actions[1].payload).toEqual(first);
+  await page.locator('#alias-retry').click();
+  await expect(page.locator('#alias-dialog')).toBeHidden();
+  await expect(page.locator('#my-rank-alias')).toHaveText('Kept request');
+  expect(state.actions[2].payload).toEqual(first);
+  expect(state.effects).toHaveLength(1);
+  expect(state.posts).toHaveLength(0);
+  await expect(page.locator('#prompt')).toHaveValue('Do not send this idea when confirming my name.');
+});
+
+test('account changes close name and ranking dialogs and ignore late former-account responses', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA), leaders: rankedPlayers(5) });
+  const held = gate();
+  state.holdNextActionResponse = held;
+  await page.locator('#edit-alias').click();
+  await page.locator('#alias-input').fill('Former account name');
+  await page.locator('#alias-save').click();
+  await held.began;
+  state.session = structuredClone(accountB);
+  state.me = privateCommunity(accountB);
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'yourgame.auth-pulse.v1', newValue: 'account-changed' })));
+  await expect(page.locator('#alias-dialog')).toBeHidden();
+  await expect(page.locator('#alias-input')).toHaveValue('');
+  await expect(page.locator('#my-rank-alias')).toHaveText(ALIAS_B);
+  held.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#my-rank-alias')).toHaveText(ALIAS_B);
+  await expect(page.locator('#community-retry')).toBeHidden();
+  const rankingHeld = gate();
+  state.holdNextLeaderboard = rankingHeld;
+  await page.locator('#open-leaderboard').click();
+  await rankingHeld.began;
+  state.session = structuredClone(anonymous);
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'yourgame.auth-pulse.v1', newValue: 'logged-out' })));
+  await expect(page.locator('#leaderboard-dialog')).toBeHidden();
+  rankingHeld.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#leaderboard-full-list > *')).toHaveCount(0);
+  await expect(page.locator('#my-rank-alias')).toHaveText('');
+  await expect(page.locator('#my-rank-guest')).toBeVisible();
+  expect(state.actions).toHaveLength(1);
+});
+
+test('long public names and large scores fit every desktop frame and narrow ranking dialog', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const me = privateCommunity(accountA);
+  me.profile.alias = '가'.repeat(24);
+  me.contribution.points = '-' + '9'.repeat(130) + '.5';
+  const leaders = rankedPlayers(25).map((row, index) => ({ ...row,
+    author: { ...row.author, alias: '아주긴공개별명이화면밖으로넘치지않도록확인합니다'.slice(0, 24) },
+    points: (BigInt('9'.repeat(130)) - BigInt(index)).toString() + '.5' }));
+  const ideas = Array.from({ length: 6 }, (_, index) => sharedIdea(index + 1, {
+    body: 'A long public idea. '.repeat(100), author: index === 0
+      ? { id: me.profile.id, alias: me.profile.alias } : leaders[index].author,
+  }));
+  const state = await fixture(page, { session: { ...structuredClone(accountA), user: { ...accountA.user, name: 'PRIVATE_LONG_NAME_'.repeat(10) } },
+    me, leaders, ideas, proposals: [ownIdea()] });
+  for (const locale of ['en', 'ko']) {
+    await page.locator('#language-select').selectOption(locale);
+    for (const [width, height] of [[1280, 720], [1366, 768], [1600, 900], [1920, 1080], [320, 740], [360, 780], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      // Allow the test clock's animation frames and dynamic viewport units to settle.
+      await page.clock.runFor(50);
+      if (width >= 1280) await expect.poll(() => page.evaluate(() =>
+        document.documentElement.scrollHeight <= innerHeight + 1)).toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const geometry = await page.evaluate(() => {
+        const root = document.documentElement;
+        const masthead = document.querySelector('.masthead').getBoundingClientRect();
+        const headerTargets = [...document.querySelectorAll('.masthead button,.masthead select,.masthead a')]
+          .map(element => element.getBoundingClientRect()).filter(rect => rect.width && rect.height);
+        const essentials = [...document.querySelectorAll('.game-preview,.community-section,#prompt-form,.contribution-board,.process-section,.my-rank-slot')]
+          .map(element => element.getBoundingClientRect());
+        return { noHorizontalOverflow: root.scrollWidth <= root.clientWidth + 1,
+          pageFits: root.scrollHeight <= innerHeight + 1,
+          essentialsInside: essentials.every(rect => rect.top >= 0 && rect.bottom <= innerHeight + 1),
+          headerOneLine: headerTargets.every(rect => rect.top >= masthead.top && rect.bottom <= masthead.bottom + 1),
+          editTouch: document.querySelector('#edit-alias').getBoundingClientRect().width >= 44
+            && document.querySelector('#edit-alias').getBoundingClientRect().height >= 44 };
+      });
+      expect(geometry.noHorizontalOverflow, locale + ' ' + width).toBe(true);
+      expect(geometry.headerOneLine, locale + ' ' + width).toBe(true);
+      expect(geometry.editTouch, locale + ' ' + width).toBe(true);
+      if (width >= 1280) {
+        expect(geometry.pageFits, locale + ' ' + width).toBe(true);
+        expect(geometry.essentialsInside, locale + ' ' + width).toBe(true);
+      }
+      if ([1280, 1366, 320, 390].includes(width)) await page.screenshot({
+        path: testInfo.outputPath('ranking-' + locale + '-' + width + '.png'), fullPage: width < 800 });
+      await page.locator('#open-leaderboard').click();
+      await expect(page.locator('#leaderboard-full-list .leaderboard-entry')).toHaveCount(20);
+      expect(await page.locator('#leaderboard-dialog').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight + 1
+          && element.scrollWidth <= element.clientWidth + 1;
+      }), 'ranking modal ' + locale + ' ' + width).toBe(true);
+      if (width === 390) await page.locator('#leaderboard-dialog').screenshot({ path: testInfo.outputPath('full-ranking-' + locale + '-390.png') });
+      await page.locator('#close-leaderboard').click();
+      await page.locator('#edit-alias').click();
+      await expect(page.locator('#alias-input')).toHaveValue(me.profile.alias);
+      expect(await page.locator('#alias-dialog').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight + 1
+          && element.scrollWidth <= element.clientWidth + 1
+          && parseFloat(getComputedStyle(document.getElementById('alias-input')).fontSize) >= 16;
+      }), 'name dialog ' + locale + ' ' + width).toBe(true);
+      if (width === 320) await page.locator('#alias-dialog').screenshot({ path: testInfo.outputPath('alias-' + locale + '-320.png') });
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#alias-dialog')).toBeHidden();
+      await expect(page.locator('#edit-alias')).toBeFocused();
+    }
+  }
+  expect(state.actions).toHaveLength(0);
+});
 
 test('blank preview and empty feeds remain honest in the compact desktop and mobile layout', async ({ page }, testInfo) => {
   const state = await fixture(page);
@@ -353,7 +772,8 @@ test('the default-public leaderboard preserves exact point strings and uses only
   me.contribution = { points: '-123456789012345678901234567890.5', adoptedCount: 2 };
   const state = await fixture(page, { session: structuredClone(accountA), me, proposals: [ownIdea()] });
   await expect(page.locator('#my-contribution-summary')).toContainText(me.contribution.points);
-  await expect(page.locator('.leaderboard-points')).toHaveText(me.contribution.points);
+  await expect(page.locator('#leaderboard-list .leaderboard-points')).toHaveText(me.contribution.points);
+  await expect(page.locator('#my-rank-points')).toHaveText(me.contribution.points);
   await expect(page.locator('.contribution-board')).not.toContainText(accountA.user.name);
   await expect(page.locator('.community-section')).not.toContainText(accountA.user.name);
   await expect(page.locator('#leaderboard-privacy, #publication-dialog')).toHaveCount(0);
@@ -361,7 +781,7 @@ test('the default-public leaderboard preserves exact point strings and uses only
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.locator('.contribution-board').screenshot({ path: testInfo.outputPath('contribution-exact-points-320.png') });
   await page.locator('#language-select').selectOption('ko');
-  await expect(page.locator('.leaderboard-points')).toHaveText(me.contribution.points);
+  await expect(page.locator('#leaderboard-list .leaderboard-points')).toHaveText(me.contribution.points);
   expect(state.actions).toHaveLength(0);
   expect(state.posts).toHaveLength(0);
 });
@@ -643,10 +1063,10 @@ test('voting does not invent contribution points when a scoring policy exists', 
   await expect(page.locator('#community-scoring')).toHaveCount(0);
   await voteButton(page).click();
   await expect(voteButton(page)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('.leaderboard-points')).toHaveText('0');
+  await expect(page.locator('#leaderboard-list .leaderboard-points')).toHaveText('0');
   await page.locator('#language-select').selectOption('ko');
   await expect(page.locator('#my-contribution-summary')).toContainText('0');
-  expect(state.me.contribution).toEqual({ points: '0', adoptedCount: 0 });
+  expect(state.me.contribution).toEqual({ points: '0', adoptedCount: 0, rank: 1 });
   expect(state.effects).toHaveLength(1);
 });
 
@@ -712,7 +1132,7 @@ test('an open idea reader clears a replaced, withdrawn or unavailable source on 
   expect(state.actions).toHaveLength(0);
 });
 
-test('a populated desktop workspace fits 16:9 without hiding voting, the composer or ten leaderboard rows', async ({ page }, testInfo) => {
+test('a populated desktop workspace fits 16:9 with the top five and a separate personal rank', async ({ page }, testInfo) => {
   test.setTimeout(60000);
   const ideas = Array.from({ length: 6 }, (_, index) => sharedIdea(index + 1,
     { body: '한글과 English idea. '.repeat(60), upvotes: 9876 + index, downvotes: 1234 }));
@@ -729,7 +1149,7 @@ test('a populated desktop workspace fits 16:9 without hiding voting, the compose
       await page.clock.runFor(50);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollHeight <= innerHeight)).toBe(true);
-      await expect(page.locator('.leaderboard-entry')).toHaveCount(10);
+      await expect(page.locator('#leaderboard-list .leaderboard-entry')).toHaveCount(5);
       const geometry = await page.evaluate(() => {
         const rect = selector => document.querySelector(selector).getBoundingClientRect();
         const inside = box => box.top >= 0 && box.left >= 0 && box.right <= innerWidth + .5 && box.bottom <= innerHeight + .5;
@@ -803,7 +1223,7 @@ for (const scenario of [
           if (pageNumber === 2) await page.locator('#community-next').click();
           await expect(page.locator('#community-page')).toHaveText(`${pageNumber} / 2`);
           await expect(page.locator('.community-entry')).toHaveCount(3);
-          await expect(page.locator('.leaderboard-entry')).toHaveCount(10);
+          await expect(page.locator('#leaderboard-list .leaderboard-entry')).toHaveCount(5);
           await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
           const geometry = await page.evaluate(() => {
             const inside = element => { const box = element.getBoundingClientRect();
@@ -837,7 +1257,7 @@ for (const scenario of [
             await expect(page.locator('.vote-note')).toHaveCount(3);
             await expect(page.locator('.vote-button:enabled')).toHaveCount(0);
           } else if (pageNumber === 2) {
-            await expect(page.locator('.vote-note')).toHaveCount(1);
+            await expect(page.locator('.own-idea-badge')).toHaveCount(1);
             await expect(page.locator('[data-public-id="public-owned-private-idea-a"] .vote-button:enabled')).toHaveCount(0);
           }
         }

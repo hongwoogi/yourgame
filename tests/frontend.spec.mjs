@@ -77,7 +77,7 @@ async function fixture(page, options = {}) {
       return reply({ ownerId: state.session.user?.id || null,
         profile: { id: 'public-browser-profile', alias: 'Player-000000000001', leaderboardVisible: true, visibilitySource: 'service_default', revision: 1 },
         publicationPolicy: { version: 'public-default-v1', defaultPublic: true },
-        contribution: { points: '0', adoptedCount: 0 },
+        contribution: { points: '0', adoptedCount: 0, rank: null },
         voteQuota: { roundId: 'initial', limit: 3, used: 0, remaining: 3, closesAt: CUTOFF },
         votes: [], publications: [] });
     }

@@ -6,7 +6,9 @@ import { bodyDigest } from './safety-store.mjs';
 import {
   PUBLICATION_POLICY_VERSION, PUBLICATION_POLICY_DTO, COMMUNITY_DEFAULT_READY_SQL,
   PUBLIC_PUBLICATIONS_SQL as PUBLICATIONS, PUBLIC_VOTES_SQL as VOTES, COMMUNITY_VOTE_LIMIT,
+  COMMUNITY_PROFILE_NAMES_READY_SQL, profileDisplayAlias,
 } from './community-policy.mjs';
+import { normalizeProfileAlias } from '../public/profile-policy.js';
 
 export { COMMUNITY_VOTE_LIMIT } from './community-policy.mjs';
 export const COMMUNITY_RATE_LIMIT = 30;
@@ -15,6 +17,7 @@ const ID = /^[A-Za-z0-9_-]{8,128}$/;
 const fields = {
   set_publication: ['proposalId', 'proposalRevision', 'publicationRevision', 'visible'],
   set_profile_visibility: ['visible', 'revision'],
+  set_profile_alias: ['alias', 'revision'],
   vote: ['publicId', 'proposalRevision', 'publicationRevision', 'roundId', 'direction'],
 };
 const iso = value => value == null ? null : new Date(Number(value)).toISOString();
@@ -85,8 +88,10 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
       remaining: round?.status === 'open' ? Math.max(0, COMMUNITY_VOTE_LIMIT - used) : 0, closesAt: round?.closesAt ?? null };
   }
   function idea(row) {
+    const alias = profileDisplayAlias(row.alias, row.custom_alias);
+    if (alias === null) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public profile information is unavailable.');
     return { id: row.public_id, body: row.body, proposalRevision: Number(row.proposal_revision), publicationRevision: Number(row.revision),
-      author: { id: row.author_public_id, alias: row.alias }, createdAt: iso(row.proposal_created_at),
+      author: { id: row.author_public_id, alias }, createdAt: iso(row.proposal_created_at),
       upvotes: Number(row.upvotes), downvotes: Number(row.downvotes), votingOpen: Number(row.voting_open) === 1, roundId: row.voting_round_id ?? null };
   }
 
@@ -94,9 +99,10 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const select = `${CTE}, counts AS (SELECT public_id,
       SUM(CASE WHEN direction = 'up' THEN 1 ELSE 0 END) AS upvotes,
       SUM(CASE WHEN direction = 'down' THEN 1 ELSE 0 END) AS downvotes FROM valid_votes GROUP BY public_id)
-      SELECT ep.*, COALESCE(c.upvotes, 0) AS upvotes, COALESCE(c.downvotes, 0) AS downvotes,
+      SELECT ep.*, pn.alias AS custom_alias, COALESCE(c.upvotes, 0) AS upvotes, COALESCE(c.downvotes, 0) AS downvotes,
         r.id AS voting_round_id, (${PARTICIPATION} AND ${databaseClockSql} >= r.opens_at AND ${databaseClockSql} < r.closes_at) AS voting_open
       FROM eligible_publications ep LEFT JOIN counts c ON c.public_id = ep.public_id
+      LEFT JOIN community_profile_names pn ON pn.user_id = ep.author_user_id
       LEFT JOIN community_rounds r ON r.proposal_round_id = ep.proposal_round_id`;
     const result = await client.batch([
       roundStatement(),
@@ -115,8 +121,10 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const userId = session?.user?.id || '';
     const result = await client.batch([
       actor(session),
-      { sql: `SELECT pr.*, CASE WHEN c.event_id IS NULL THEN 'service_default' ELSE 'author_choice' END AS visibility_source
+      { sql: `SELECT pr.*, pn.alias AS custom_alias,
+          CASE WHEN c.event_id IS NULL THEN 'service_default' ELSE 'author_choice' END AS visibility_source
         FROM community_profiles pr LEFT JOIN community_visibility_choices c ON c.kind = 'profile' AND c.target_id = pr.user_id
+        LEFT JOIN community_profile_names pn ON pn.user_id = pr.user_id
         WHERE pr.user_id = ?`, args: [userId] },
       roundStatement(),
       { sql: `${CTE} SELECT * FROM valid_votes WHERE user_id = ? ORDER BY updated_at DESC, public_id DESC`, args: [userId] },
@@ -133,10 +141,12 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     assertReady(result[2].rows[0]);
     const profile = result[1].rows[0];
     if (!profile || !result[2].rows[0]) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
+    const alias = profileDisplayAlias(profile.alias, profile.custom_alias);
+    if (alias === null) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public profile information is unavailable.');
     const votes = result[3].rows.map(row => ({ publicId: row.public_id, direction: row.direction,
       proposalRevision: Number(row.proposal_revision), publicationRevision: Number(row.publication_revision), roundId: row.round_id }));
     const used = votes.filter(vote => vote.roundId === result[2].rows[0].id).length;
-    return { ownerId: userId, profile: { id: profile.public_id, alias: profile.alias,
+    return { ownerId: userId, profile: { id: profile.public_id, alias,
       leaderboardVisible: Number(profile.leaderboard_visible) === 1, revision: Number(profile.revision), visibilitySource: profile.visibility_source },
       publicationPolicy: PUBLICATION_POLICY_DTO,
       voteQuota: voteQuota(result[2].rows[0], used), votes,
@@ -171,6 +181,12 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const allowed = new Set(['action', 'requestId', ...fields[input.action]]);
     if (Object.keys(input).some(key => !allowed.has(key))) throw invalid();
     const requestId = id(input.requestId);
+    let normalizedAlias;
+    if (input.action === 'set_profile_alias') {
+      normalizedAlias = normalizeProfileAlias(input.alias);
+      if (normalizedAlias === null) throw new ApiError(422, 'INVALID_PROFILE_ALIAS', 'Choose a valid public display name.');
+      revision(input.revision);
+    }
     await ensureProfile(session);
     const userId = session.user.id;
     const payloadHash = hash(canonical(input));
@@ -185,7 +201,8 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     let event;
     let expectedRevision;
     let preparationError;
-    const serviceNeeded = input.action === 'vote' || input.visible === true;
+    const additionalWrites = [];
+    const serviceNeeded = input.action === 'vote' || input.action === 'set_profile_alias' || input.visible === true;
     if (input.action === 'set_profile_visibility') {
       if (typeof input.visible !== 'boolean') throw invalid();
       expectedRevision = revision(input.revision);
@@ -195,6 +212,21 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
         args: [Number(input.visible), userId, expectedRevision, ...commonArgs] };
       event = { sql: `SELECT public_id AS target_id, json_object('leaderboardVisible', leaderboard_visible, 'revision', revision) AS details
         FROM community_profiles WHERE user_id = ? AND changes() = 1`, args: [userId] };
+    } else if (input.action === 'set_profile_alias') {
+      expectedRevision = revision(input.revision);
+      target = { sql: `SELECT revision, ${COMMUNITY_PROFILE_NAMES_READY_SQL} AS names_ready
+        FROM community_profiles WHERE user_id = ?`, args: [userId] };
+      primary = { sql: `UPDATE community_profiles SET revision = revision + 1, updated_at = ${databaseClockSql}
+        WHERE user_id = ? AND revision = ? AND ${common} AND ${PARTICIPATION} AND ${COMMUNITY_PROFILE_NAMES_READY_SQL}`,
+        args: [userId, expectedRevision, ...commonArgs] };
+      additionalWrites.push({ sql: `INSERT INTO community_profile_names(user_id, alias, revision, created_at, updated_at)
+        SELECT user_id, ?, revision, ${databaseClockSql}, ${databaseClockSql} FROM community_profiles
+        WHERE user_id = ? AND changes() = 1
+        ON CONFLICT(user_id) DO UPDATE SET alias = excluded.alias, revision = excluded.revision, updated_at = excluded.updated_at`,
+        args: [normalizedAlias, userId] });
+      event = { sql: `SELECT pr.public_id AS target_id, json_object('alias', pn.alias, 'revision', pr.revision) AS details
+        FROM community_profiles pr JOIN community_profile_names pn ON pn.user_id = pr.user_id
+        WHERE pr.user_id = ? AND pn.revision = pr.revision AND changes() = 1`, args: [userId] };
     } else if (input.action === 'set_publication') {
       id(input.proposalId); revision(input.proposalRevision); expectedRevision = revision(input.publicationRevision, 0);
       if (typeof input.visible !== 'boolean') throw invalid();
@@ -271,7 +303,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     }
 
     const results = await writeBatch(client, [actor(session), lookup, target,
-      'SELECT * FROM service_control WHERE id = 1', primary,
+      'SELECT * FROM service_control WHERE id = 1', primary, ...additionalWrites,
       { sql: `INSERT INTO community_events(id, actor_user_id, action, target_id, details_json, payload_hash, created_at)
         SELECT ?, ?, ?, target_id, details, ?, ${databaseClockSql} FROM (${event.sql})`,
         args: [eventId, userId, input.action, payloadHash, ...event.args] },
@@ -280,7 +312,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
         FROM community_events WHERE id = ?`, args: [requestId, eventId] }, lookup,
     ]);
     assertActor(results[0].rows[0]);
-    const receipt = results[7].rows[0];
+    const receipt = results.at(-1).rows[0];
     if (receipt) {
       if (receipt.payload_hash !== payloadHash) throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', 'This request ID was used for different content.');
       return JSON.parse(receipt.response_json);
@@ -292,7 +324,10 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
       if (current.user_id !== userId) throw new ApiError(403, 'NOT_PROPOSAL_OWNER', 'Only the author can change publication.');
       throw preparationError || conflict();
     }
-    if (input.action === 'set_profile_visibility') throw conflict();
+    if (input.action === 'set_profile_alias' && Number(current?.names_ready) !== 1) {
+      throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Display name storage is unavailable.');
+    }
+    if (input.action === 'set_profile_visibility' || input.action === 'set_profile_alias') throw conflict();
     if (!current) throw unavailable();
     if (current.author_user_id === userId) throw new ApiError(403, 'SELF_VOTE_FORBIDDEN', 'You cannot vote on your own proposal.');
     if (!current.round_id || current.round_id !== input.roundId || Number(current.now_ms) < Number(current.opens_at)
