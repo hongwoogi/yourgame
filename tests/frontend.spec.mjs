@@ -293,6 +293,78 @@ test('header login keeps a draft and never implies Send', async ({ page }) => {
   expect(state.posts).toHaveLength(0);
 });
 
+for (const dismissal of ['close button', 'Escape']) {
+  test(`${dismissal} removes the dismissed Google button while preserving drafts and rejecting its old callback`, async ({ page }) => {
+    const state = await fixture(page);
+    const draft = '닫은 로그인으로 전송하지 않고 브라우저에 보존할 초안';
+    await page.locator('#prompt').fill(draft);
+    await page.locator('#submit-button').click();
+    await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+    await page.evaluate(() => { window.dismissedGoogleCallback = window.testGoogleOptions.callback; });
+    if (dismissal === 'Escape') await page.keyboard.press('Escape');
+    else await page.locator('#close-login').click();
+    await expect(page.locator('#login-dialog')).toBeHidden();
+    await expect(page.locator('#google-signin > *')).toHaveCount(0);
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+
+    // A popup may deliver its result after dismissal, including after a new
+    // login opens. Neither stale delivery may authenticate or submit anything.
+    await page.evaluate(() => window.dismissedGoogleCallback({ credential: 'browser-fixture-only' }));
+    expect(state.loginCalls).toBe(0);
+    await page.locator('#login-button').click();
+    await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+    await page.evaluate(() => window.dismissedGoogleCallback({ credential: 'browser-fixture-only' }));
+    expect(state.loginCalls).toBe(0);
+    expect(state.posts).toHaveLength(0);
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    await googleLogin(page);
+    await expect(page.locator('#logout-button')).toBeVisible();
+    await expect(page.locator('#google-signin > *')).toHaveCount(0);
+    await expect(page.locator('#prompt')).toHaveValue(draft);
+    expect(state.loginCalls).toBe(1);
+    expect(state.posts).toHaveLength(0);
+  });
+}
+
+test('a queued close after immediate reopen preserves the fresh Google button and new Send intent', async ({ page }) => {
+  const state = await fixture(page);
+  const draft = '새로 연 로그인에서 명시적으로 한 번만 전송할 초안';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#login-button').click();
+  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+  await page.evaluate(() => {
+    const dialog = document.getElementById('login-dialog');
+    window.queuedCloseSawOpen = false;
+    dialog.addEventListener('close', () => { window.queuedCloseSawOpen = dialog.open; }, { once: true });
+    // Native close queues its event. Reopen for a different purpose in the same
+    // task, before that event can run.
+    document.getElementById('close-login').click();
+    document.getElementById('submit-button').click();
+  });
+  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.queuedCloseSawOpen)).toBe(true);
+  const pending = await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'));
+  expect(pending).not.toBeNull();
+  const afterLateClose = await page.evaluate(() => {
+    const dialog = document.getElementById('login-dialog');
+    const button = document.querySelector('#google-signin > button');
+    const callback = window.testGoogleOptions.callback;
+    // Also deliver a delayed close after the new provider button has rendered,
+    // so the test does not depend on response-versus-event timing.
+    dialog.dispatchEvent(new Event('close'));
+    return { open: dialog.open, buttonPreserved: button === document.querySelector('#google-signin > button'),
+      callbackPreserved: callback === window.testGoogleOptions.callback,
+      pending: sessionStorage.getItem('yourgame.pending.v1') };
+  });
+  expect(afterLateClose).toEqual({ open: true, buttonPreserved: true, callbackPreserved: true, pending });
+  await googleLogin(page);
+  await expect.poll(() => state.posts.length).toBe(1);
+  await expect(page.locator('#prompt')).toHaveValue('');
+  expect(state.loginCalls).toBe(1);
+  expect(state.posts[0].body).toBe(draft);
+});
+
 test('header login waits for delayed initial status without a false Google configuration error', async ({ page }, testInfo) => {
   let releaseStatus;
   const statusGate = new Promise(resolve => { releaseStatus = resolve; });

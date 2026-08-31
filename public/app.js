@@ -1186,6 +1186,10 @@ import './public-messages.js';
     else { clearPending(); googleGeneration += 1; }
   });
   ui['login-dialog'].addEventListener('close', () => {
+    if (ui['login-dialog'].open) return;
+    ui['google-signin'].replaceChildren();
+    googleButtonGeneration = -1;
+    googleButtonWidth = 0;
     if (!preservePendingOnClose) clearPending();
     preservePendingOnClose = false;
     loginPurpose = 'login';
