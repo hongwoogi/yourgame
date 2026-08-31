@@ -44,6 +44,8 @@ function gate() {
 
 async function fixture(page, options = {}) {
   const state = { session: structuredClone(anonymous), proposals: [], quota: { remaining: 3, limit: 3, nextAvailableAt: null },
+    serverTime: START,
+    collection: { id: 'initial', status: 'open', closesAt: CLOSE, releaseAt: RELEASE, initialClosed: false },
     ideas: [], leaders: [], round: { id: 'initial', status: 'open', closesAt: CLOSE, limit: 3 },
     scoring: { status: 'pending_confirmation', policyVersion: null, issuanceEnabled: false,
       proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } } },
@@ -84,9 +86,9 @@ async function fixture(page, options = {}) {
     if (mine.profile.leaderboardVisible) items.push({ rank: items.length + 1,
       author: { id: mine.profile.id, alias: mine.profile.alias }, ...mine.contribution });
     return { recent, popular: [...recent].sort((a, b) => b.upvotes - b.downvotes - (a.upvotes - a.downvotes)),
-      leaderboard: { items: items.slice(0, 10) }, round: state.round, scoring: state.scoring, serverTime: new Date(START).toISOString() };
+      leaderboard: { items: items.slice(0, 10) }, round: state.round, scoring: state.scoring, serverTime: new Date(state.serverTime).toISOString() };
   };
-  await page.clock.install({ time: new Date(START) });
+  await page.clock.install({ time: new Date(state.serverTime) });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.route('https://accounts.google.com/gsi/client*', route => route.fulfill({ contentType: 'text/javascript', body: `
     window.google = {accounts:{id:{
@@ -105,8 +107,8 @@ async function fixture(page, options = {}) {
     const reply = (data, status = 200) => route.fulfill({ contentType: 'application/json', status, body: JSON.stringify(data) });
     const failure = (code, status) => reply({ error: { code, message: 'PRIVATE_INTERNAL_EVIDENCE' } }, status);
     if (url.pathname === '/api/locale') return reply({ locale: 'en', source: 'country' });
-    if (url.pathname === '/api/status') return reply({ serverTime: new Date(START).toISOString(),
-      collection: { id: 'initial', status: 'open', closesAt: CLOSE, releaseAt: RELEASE, initialClosed: false },
+    if (url.pathname === '/api/status') return reply({ serverTime: new Date(state.serverTime).toISOString(),
+      collection: state.collection,
       firstReleaseAt: RELEASE, googleClientId: 'fixture.apps.googleusercontent.com',
       limits: { bytes: 2000, submissions: 3, windowSeconds: 3600 }, game: { published: false } });
     if (url.pathname === '/api/session') {
@@ -133,7 +135,7 @@ async function fixture(page, options = {}) {
     }
     if (url.pathname === '/api/proposals' && request.method() === 'GET') {
       return reply({ ownerId: state.session.user?.id || null, proposals: state.proposals,
-        quota: state.quota, serverTime: new Date(START).toISOString() });
+        quota: state.quota, serverTime: new Date(state.serverTime).toISOString() });
     }
     if (url.pathname === '/api/proposals' && request.method() === 'POST') {
       const payload = request.postDataJSON();
@@ -757,3 +759,96 @@ test('a populated desktop workspace fits 16:9 without hiding voting, the compose
   expect(state.posts).toHaveLength(0);
   expect(state.actions).toHaveLength(0);
 });
+
+for (const scenario of [
+  { name: 'own idea', own: true, serverTime: START },
+  { name: 'closed voting after 23:00 KST', own: false, serverTime: Date.parse(CLOSE) + 5 * 60000 },
+  { name: 'delayed first release', own: false, serverTime: Date.parse(RELEASE) + 5 * 60000 },
+]) {
+  test(`${scenario.name} keeps the full desktop workspace visible with readable vote state`, async ({ page }, testInfo) => {
+    test.setTimeout(60000);
+    const body = 'Synthetic layout source text. '.repeat(80).slice(0, 2000);
+    expect(new TextEncoder().encode(body).length).toBe(2000);
+    const session = structuredClone(accountA);
+    session.user.name = 'A long synthetic account name 긴 이름 '.repeat(10);
+    session.user.isAdmin = true;
+    const me = privateCommunity(session);
+    if (!scenario.own) me.voteQuota = null;
+    const ideas = Array.from({ length: scenario.own ? 5 : 6 }, (_, index) => sharedIdea(index + 1, {
+      body, upvotes: 9876 + index, downvotes: 1234,
+      votingOpen: scenario.own,
+      // Frozen first-round ideas and waiting next-round ideas are both readable.
+      roundId: scenario.own || index % 2 === 0 ? 'initial' : null,
+    }));
+    const leaders = Array.from({ length: 10 }, (_, index) => ({ rank: index + 1,
+      author: { id: 'geometry-leader-' + index, alias: 'Player-' + (index + 100).toString(16).padStart(12, '0') },
+      points: String(10000 - index * 11) + '.5', adoptedCount: 3,
+    }));
+    const state = await fixture(page, { session, me, ideas, leaders, serverTime: scenario.serverTime,
+      proposals: scenario.own ? [ownIdea(body)] : [],
+      ...(scenario.own ? {} : { round: null,
+        collection: { id: 'pending', status: 'open', closesAt: null, releaseAt: null, initialClosed: true } }),
+    });
+    await page.locator('#prompt').fill(body);
+    await expect(page.locator('#admin-link')).toHaveAttribute('href', '/master');
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.name));
+    for (const locale of ['en', 'ko']) {
+      await page.locator('#language-select').selectOption(locale);
+      for (const [width, height] of [[1280, 720], [1366, 768], [1600, 900], [1920, 1080]]) {
+        await page.setViewportSize({ width, height });
+        await page.clock.runFor(50);
+        if (!(await page.locator('#community-prev').isDisabled())) await page.locator('#community-prev').click();
+        for (let pageNumber = 1; pageNumber <= 2; pageNumber += 1) {
+          if (pageNumber === 2) await page.locator('#community-next').click();
+          await expect(page.locator('#community-page')).toHaveText(`${pageNumber} / 2`);
+          await expect(page.locator('.community-entry')).toHaveCount(3);
+          await expect(page.locator('.leaderboard-entry')).toHaveCount(10);
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+          const geometry = await page.evaluate(() => {
+            const inside = element => { const box = element.getBoundingClientRect();
+              return box.top >= 0 && box.left >= 0 && box.right <= innerWidth + .5 && box.bottom <= innerHeight + .5; };
+            const voting = document.querySelector('.community-section').getBoundingClientRect();
+            const composer = document.querySelector('.submission-section').getBoundingClientRect();
+            const essentials = document.querySelectorAll('.masthead,.hero,.game-preview,.community-section,#prompt-form,.contribution-board,.process-section,.community-entry,.leaderboard-entry');
+            const controls = document.querySelectorAll('.vote-button,.community-read,#community-prev,#community-next,#submit-button,#open-my-proposals');
+            return {
+              allSectionsVisible: [...essentials].every(inside),
+              pageFits: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
+              votingAboveComposer: voting.bottom <= composer.top,
+              controlsUsable: [...controls].every(element => { const box = element.getBoundingClientRect(); return box.width >= 44 && box.height >= 44; }),
+              readSharesVoteRow: [...document.querySelectorAll('.community-entry')].every(entry => {
+                const vote = entry.querySelector('.vote-button').getBoundingClientRect();
+                const read = entry.querySelector('.community-read').getBoundingClientRect();
+                return Math.abs(vote.top - read.top) <= .5 && Math.abs(vote.bottom - read.bottom) <= .5;
+              }),
+              stateNotesReadable: [...document.querySelectorAll('.vote-note')].every(element => inside(element)
+                && getComputedStyle(element).display !== 'none' && getComputedStyle(element).visibility === 'visible'
+                && element.clientHeight >= 10 && element.textContent.trim().length > 0),
+              noDocumentClipping: !['hidden', 'clip'].includes(getComputedStyle(document.body).overflowY)
+                && !['hidden', 'clip'].includes(getComputedStyle(document.documentElement).overflowY),
+            };
+          });
+          expect(geometry, `${scenario.name} ${locale} ${width} page ${pageNumber}`).toEqual({
+            allSectionsVisible: true, pageFits: true, votingAboveComposer: true, controlsUsable: true,
+            readSharesVoteRow: true, stateNotesReadable: true, noDocumentClipping: true,
+          });
+          if (!scenario.own) {
+            await expect(page.locator('.vote-note')).toHaveCount(3);
+            await expect(page.locator('.vote-button:enabled')).toHaveCount(0);
+          } else if (pageNumber === 2) {
+            await expect(page.locator('.vote-note')).toHaveCount(1);
+            await expect(page.locator('[data-public-id="public-owned-private-idea-a"] .vote-button:enabled')).toHaveCount(0);
+          }
+        }
+        await page.screenshot({ path: testInfo.outputPath(`state-${locale}-${width}.png`), fullPage: true });
+      }
+    }
+    await expect(page.locator('#prompt')).toHaveValue(body);
+    expect(errors).toEqual([]);
+    expect(state.posts).toHaveLength(0);
+    expect(state.patches).toHaveLength(0);
+    expect(state.actions).toHaveLength(0);
+    expect(state.loginCalls).toBe(0);
+  });
+}
