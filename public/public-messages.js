@@ -1015,8 +1015,8 @@ const copy = {
     "아직 공개된 제안이 없어요. 첫 아이디어를 남겨주세요."
   ],
   "leaderboardEmpty": [
-    "No contribution points yet. The first game is still being prepared.",
-    "아직 기여도 기록이 없어요. 첫 게임을 준비 중입니다."
+    "No contribution points have been issued yet.",
+    "아직 발행된 기여도 점수가 없습니다."
   ],
   "communityUnavailable": [
     "Couldn't load the community. You can still write or edit your own ideas. Try Refresh shortly.",

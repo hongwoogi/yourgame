@@ -310,6 +310,9 @@ html[lang="en"] .prompt-heading h2,html[lang="en"] .process-heading h2,html[lang
 .preview-ratio{flex:none;padding:6px 8px;border:1px solid var(--line);color:var(--faint);font:10px/1.4 Consolas,monospace}
 .preview-surface{width:100%;max-width:390px;margin-inline:auto;outline:1px solid var(--line);background:#fff;aspect-ratio:9 / 16;overflow:hidden}
 #game-preview-canvas{display:block;width:100%;height:100%;background:#fff}
+#game-preview-canvas[hidden]{display:none}
+#live-game-frame{display:block;border:0;width:100%;height:100%;background:#10251f}
+#live-game-frame[hidden]{display:none}
 .preview-state{font-size:10px;letter-spacing:1px;line-height:1.8;color:var(--lime);margin:16px 0 7px}
 .preview-note{font-size:12px;line-height:1.9;color:var(--muted);margin:0;max-width:390px}
 .play-workspace>.submission-section{min-width:0}

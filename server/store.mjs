@@ -17,6 +17,7 @@ import { COMMUNITY_DEFAULT_READY_SQL } from './community-policy.mjs';
 import { createCommunityStore } from './community-store.mjs';
 import { checkContributionSchema } from './contribution-schema.mjs';
 import { createContributionStore } from './contribution-store.mjs';
+import { createGamePublicationStore } from './game-publication-store.mjs';
 import {
   EDIT_REVIEW_COOLDOWN_MS, PROPOSAL_ATTEMPT_LIMIT, PROPOSAL_ATTEMPT_WINDOW_MS,
 } from './safety-policy.mjs';
@@ -104,6 +105,7 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
     community: createCommunityStore(client, { databaseClockSql }),
     contribution: createContributionStore(client, { databaseClockSql }),
     getService: admin.getService,
+    getPublicGame: availableVersions => createGamePublicationStore(client).getPublicGame(availableVersions),
     async health() {
       await checkSchema(client);
       await checkAdminSchema(client);

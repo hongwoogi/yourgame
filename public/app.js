@@ -2,6 +2,7 @@ import { i18n } from './i18n.js';
 import './public-messages.js';
 import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from './profile-policy.js';
 import { countdownParts, formatReleaseDate } from './release-time.js';
+import { createGameHost } from './game-host.js';
 
 (() => {
   'use strict';
@@ -63,6 +64,8 @@ import { countdownParts, formatReleaseDate } from './release-time.js';
   ].map((id) => [id, byId(id)]));
 
   let status = null;
+  const gameHost = createGameHost({ surface: document.querySelector('.preview-surface'),
+    placeholder: ui['game-preview-canvas'], note: document.querySelector('#preview-note span[data-i18n]') });
   let user = null;
   let communityData = null;
   let communityError = '';
@@ -459,6 +462,7 @@ import { countdownParts, formatReleaseDate } from './release-time.js';
     ui['release-date-time'].title = t('releaseTimezoneTitle');
     const published = status?.game?.published === true;
     const operations = operatingState();
+    gameHost.update({ game: status?.game, locale: i18n.locale, active: statusReady && operations.mode === 'active' });
     const releasePaused = operations.mode !== 'active' || (!published && operations.developmentPaused);
     ui.countdown.hidden = remaining === 0 || published || releasePaused;
     ui['release-message'].hidden = remaining > 0 && !published && !releasePaused;

@@ -6,6 +6,7 @@ import { ADMIN_AUTH_MAX_AGE_MS, ADMIN_EMAIL, SERVICE_MODES, serviceView } from '
 import { INITIAL_CUTOFF } from './config.mjs';
 import { SAFETY_POLICY_VERSION, SAFETY_STATUSES, assertScreenedBody, validateDevelopmentBrief } from './safety-policy.mjs';
 import { SAFETY_COLUMNS, SAFETY_JOINS, approvedSafetySql, bodyDigest, safetyBindingsSql, safetyView } from './safety-store.mjs';
+import { RELEASE_RECEIPT_SQL, releaseBindingDigest, releaseInputDigest, verifyReleaseReview } from './game-release-store.mjs';
 
 export const INITIAL_RUN_ID = 'initial-round-2026-09-01';
 
@@ -572,14 +573,23 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
   }
 
   async function updateRun({ id, revision: expectedRevision, workerId, status, summary, commitSha,
-    proposalIds, roundId, serviceRevision, bindings }) {
+    proposalIds, roundId, serviceRevision, bindings, releaseReviewId, releaseBinding }) {
     identifier(id); revision(expectedRevision); identifier(workerId);
     oneOf(status, ['running', 'failed', 'completed', 'cancelled']);
-    // This service has no trusted artifact-review issuer or isolated runner yet.
-    // Approved proposal bindings are necessary inputs, not a game safety review.
-    // Keep the service boundary closed too; CLI-only checks are insufficient.
+    let releaseCheck = '', releaseArgs = [];
+    // Missing receipt retains the previous fail-closed result. The preflight
+    // authenticates its shape; the same predicate is rechecked atomically below.
     if (status === 'completed') {
-      throw new ApiError(409, 'RELEASE_REVIEW_UNAVAILABLE', '게임 산출물의 안전 검증 경로가 준비되지 않아 완료를 기록할 수 없습니다.');
+      if (!releaseReviewId || !releaseBinding || !Number.isSafeInteger(serviceRevision) || serviceRevision < 1
+        || !['initial', 'pending'].includes(roundId) || !Array.isArray(bindings) || !bindings.length) {
+        throw new ApiError(409, 'RELEASE_REVIEW_UNAVAILABLE', '게임 산출물의 정확한 검토 기록이 필요합니다.');
+      }
+      const releaseDigest = releaseBindingDigest(releaseBinding);
+      const bindingsDigest = releaseInputDigest(bindings);
+      await verifyReleaseReview(client, { reviewId: releaseReviewId, runId: id, ...releaseBinding });
+      releaseCheck = `AND EXISTS (${RELEASE_RECEIPT_SQL} AND r.id=? AND r.run_id=? AND r.release_digest=?
+        AND r.bindings_digest=? AND r.worker_id=? AND r.run_revision=? AND r.service_revision=? AND r.round_id=?)`;
+      releaseArgs = [releaseReviewId, id, releaseDigest, bindingsDigest, workerId, expectedRevision, serviceRevision, roundId];
     }
     if (summary !== undefined) summary = textValue(summary, 2000);
     if (commitSha !== undefined && commitSha !== null && (typeof commitSha !== 'string' || !/^[a-f0-9]{7,64}$/i.test(commitSha))) throw invalid('커밋 식별자를 확인해 주세요.');
@@ -609,9 +619,9 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
           WHERE id = ? AND revision = ? AND worker_id = ? AND status = 'running'
             ${terminalStop ? '' : `AND cancel_requested = 0 AND EXISTS
               (SELECT 1 FROM service_control WHERE id = 1 AND mode = 'active' AND development_enabled = 1
-                ${serviceRevision === undefined ? '' : 'AND revision = ?'}) ${snapshotCheck} ${bindingsCheck}`}`,
+                ${serviceRevision === undefined ? '' : 'AND revision = ?'}) ${snapshotCheck} ${bindingsCheck} ${releaseCheck}`}`,
         args: [status, summary ?? null, commitSha ?? null, id, expectedRevision, workerId,
-          ...(!terminalStop && serviceRevision !== undefined ? [serviceRevision] : []), ...(!terminalStop ? [...snapshotArgs, ...bindingsArgs] : [])],
+          ...(!terminalStop && serviceRevision !== undefined ? [serviceRevision] : []), ...(!terminalStop ? [...snapshotArgs, ...bindingsArgs, ...releaseArgs] : [])],
       },
       {
         sql: `INSERT INTO admin_audit(id, created_at, action, target_id, reason, actor_name)

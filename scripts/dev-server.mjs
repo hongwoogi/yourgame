@@ -27,6 +27,12 @@ export const devServer = http.createServer(async (req, res) => {
         ? header.value.replace('; upgrade-insecure-requests', '') : header.value);
     }
     const url = new URL(req.url, process.env.APP_ORIGIN);
+    // Match exact public runtime overrides just as the deployment configuration
+    // does. No API/auth asset receives anonymous CORS or frame permission.
+    for (const entry of config.headers || []) {
+      if (entry.source !== url.pathname) continue;
+      for (const header of entry.headers) res.setHeader(header.key, header.value);
+    }
     // These local aliases use the same exact API rewrites as production. Keep
     // req.url intact so a legacy bookmark's query reaches its redirect handler.
     const rewrite = config.rewrites?.find(entry => entry.source === url.pathname

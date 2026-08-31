@@ -71,7 +71,7 @@ export function validateCandidate(candidate, { snapshot, runId } = {}) {
 export async function inspectCandidate(file, { snapshot, runId, privateRoot = PRIVATE_ROOT } = {}) {
   const resolved = await resolvePrivateFile(file, { privateRoot });
   const info = await lstat(resolved);
-  if (!info.isFile() || info.size > 1024 * 1024) throw candidateError('INVALID_GAME_CANDIDATE');
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > 1024 * 1024) throw candidateError('INVALID_GAME_CANDIDATE');
   let candidate;
   try { candidate = JSON.parse(await readFile(resolved, 'utf8')); }
   catch { throw candidateError('INVALID_GAME_CANDIDATE'); }
@@ -122,16 +122,25 @@ export async function inspectCandidate(file, { snapshot, runId, privateRoot = PR
     fileCount: candidate.files.length, artifactBytesChecked: true };
 }
 
-export async function checkGameRelease({ snapshot, runId, candidateFile, privateRoot = PRIVATE_ROOT } = {}) {
+export async function checkGameRelease({ snapshot, runId, candidateFile, privateRoot = PRIVATE_ROOT, reviewId, reviewStore } = {}) {
   validateSnapshot(snapshot);
   if (!ID.test(runId || '')) throw candidateError('INVALID_ARGUMENTS');
   const candidate = candidateFile ? await inspectCandidate(candidateFile, { snapshot, runId, privateRoot }) : null;
+  if (candidate && reviewId && typeof reviewStore?.verifyReview === 'function') {
+    const receipt = await reviewStore.verifyReview({ reviewId, runId, candidateId: candidate.candidateId,
+      policyVersion: candidate.policyVersion, snapshotDigest: candidate.snapshotDigest,
+      sourceDigest: candidate.sourceDigest, assetsDigest: candidate.assetsDigest });
+    return { ok: true, scope: 'generated_game_release', allowed: true, releaseAllowed: true,
+      reviewId: receipt.reviewId, releaseBinding: receipt.releaseBinding, candidate,
+      prerequisites: { trustedReviewIssuer: true, isolatedGameRunner: true, artifactExecutionReview: true },
+      trustedApplicationDeploymentAffected: false, gamePublishedByThisCommand: false };
+  }
   // Deliberately no caller-supplied "approved" flag, unsigned review JSON,
   // self-signature, or CLI override. Those are not independent safety evidence.
   // A future trusted issuer must bind policy + snapshot + source/assets bytes to
   // content review, execution verification and an enforced isolation boundary.
-  // That issuer and the game runner do not exist yet. This is a prerequisite,
-  // not a permanent prohibition on game publication or a block on trusted app fixes.
+  // Only the separately issued immutable DB receipt can open this branch. A
+  // standalone caller without the trusted receipt reader stays fail-closed.
   return { ok: true, scope: 'generated_game_release', allowed: false, releaseAllowed: false,
     error: 'RELEASE_REVIEW_UNAVAILABLE', blockedReason: 'release_review_unavailable',
     candidate, policyVersion: SAFETY_POLICY_VERSION, snapshotDigest: snapshot.snapshotDigest,

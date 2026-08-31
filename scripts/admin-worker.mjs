@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readConfig } from '../server/config.mjs';
 import { openDatabase } from '../server/database.mjs';
 import { createAdminStore } from '../server/admin-store.mjs';
+import { createGameReleaseStore } from '../server/game-release-store.mjs';
 import { checkAdminSchema } from '../server/admin-schema.mjs';
 import { checkSnapshot, readSnapshot, safeIntakeCounts, snapshotBindings } from './export-initial-round.mjs';
 import { checkGameRelease } from './check-game-release.mjs';
@@ -17,8 +18,8 @@ const COMMANDS = {
   'retry-failed': ['run-id', 'revision', 'worker-id'],
   gate: ['run-id', 'snapshot', 'service-revision'],
   'input-gate': ['run-id', 'snapshot', 'service-revision'],
-  'release-gate': ['run-id', 'snapshot', 'service-revision', 'candidate'],
-  update: ['run-id', 'revision', 'worker-id', 'status', 'summary-file', 'commit-sha', 'snapshot', 'candidate'],
+  'release-gate': ['run-id', 'snapshot', 'service-revision', 'candidate', 'review-id'],
+  update: ['run-id', 'revision', 'worker-id', 'status', 'summary-file', 'commit-sha', 'snapshot', 'candidate', 'review-id'],
 };
 const workerError = code => Object.assign(new Error(code), { workerCode: code });
 
@@ -43,7 +44,7 @@ export function parseWorkerArguments(args) {
     }
     result[key] = value;
   }
-  for (const key of ['run-id', 'worker-id']) {
+  for (const key of ['run-id', 'worker-id', 'review-id']) {
     if (result[key] !== undefined && !ID.test(result[key])) throw workerError('INVALID_ARGUMENTS');
   }
   for (const key of ['revision', 'service-revision']) {
@@ -102,7 +103,7 @@ function legacyGateReport() {
     gamePublishedByThisCommand: false };
 }
 
-export async function runWorkerCommand(options, { store, loadSnapshot = async name => readSnapshot(await privateFile(name, '.json')),
+export async function runWorkerCommand(options, { store, reviewStore, loadSnapshot = async name => readSnapshot(await privateFile(name, '.json')),
   loadSummary = async name => {
     const file = await privateFile(name, '.txt');
     if ((await stat(file)).size > 8000) throw workerError('INVALID_PRIVATE_FILE');
@@ -127,7 +128,8 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
     }
     if (options.command === 'release-gate' && state.allowed) {
       const release = await checkGameRelease({ snapshot: checkedSnapshot, runId: options['run-id'],
-        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined });
+        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined,
+        reviewId: options['review-id'], reviewStore });
       return { command: options.command, ...state, ...release, inputReady: true };
     }
     return { ok: true, command: options.command, ...state,
@@ -170,7 +172,7 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
   }
   if (options.command !== 'update') throw workerError('INVALID_ARGUMENTS');
   const terminalStop = ['failed', 'cancelled'].includes(options.status);
-  let snapshot, state;
+  let snapshot, state, verifiedRelease;
   if (!terminalStop) {
     snapshot = options.snapshot ? await loadSnapshot(options.snapshot) : undefined;
     state = safeWorkerState(snapshot
@@ -180,8 +182,10 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
       inputReady: false, releaseAllowed: false, gamePublishedByThisCommand: false };
     if (options.status === 'completed') {
       const release = await checkGameRelease({ snapshot, runId: options['run-id'],
-        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined });
+        candidateFile: options.candidate ? await privateFile(options.candidate, '.json') : undefined,
+        reviewId: options['review-id'], reviewStore });
       if (!release.allowed) return { command: options.command, ...state, ...release, inputReady: true, updated: false };
+      verifiedRelease = release;
     }
   }
   const summary = options['summary-file'] ? await loadSummary(options['summary-file']) : undefined;
@@ -190,6 +194,7 @@ export async function runWorkerCommand(options, { store, loadSnapshot = async na
     summary, commitSha: options['commit-sha'], serviceRevision: state?.service.revision,
     proposalIds: snapshot?.proposals.map(row => row.id), roundId: snapshot?.roundId,
     bindings: snapshot ? snapshotBindings(snapshot) : undefined,
+    releaseReviewId: verifiedRelease?.reviewId, releaseBinding: verifiedRelease?.releaseBinding,
   });
   return { ok: true, command: 'update', scope: 'work_status_only', updated: true, run: safeRun(run),
     inputReady: Boolean(snapshot), releaseAllowed: false, gamePublishedByThisCommand: false };
@@ -210,7 +215,7 @@ async function main() {
     }
     client = await openDatabase(readConfig(), { initialize: false });
     await checkAdminSchema(client);
-    const report = await runWorkerCommand(options, { store: createAdminStore(client) });
+    const report = await runWorkerCommand(options, { store: createAdminStore(client), reviewStore: createGameReleaseStore(client) });
     console.log(JSON.stringify(report));
     process.exitCode = report.allowed === false ? 2 : 0;
   } catch (error) {

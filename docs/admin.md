@@ -21,7 +21,7 @@
 | 개발 버전 | 개발 요청과 진행 이력, 대기 요청 취소, 실행 중 중단 요청, 실패 작업 재시도 요청 | 실제 게임 공개 이력과 앱 커밋을 혼동하지 않음. 요청 등록이 자동 개발·검증·공개 완료를 뜻하지 않음 |
 | 서비스 운영 | 접수·자동 개발 허용, 점검 상태, 공지, 종료와 재개, 감사 이력 | 데이터·프로젝트·도메인 삭제나 결제 변경 없음. 종료 중에도 관리자 복구 접근 유지 |
 
-아직 공개된 게임이 없으므로 검증된 게임의 실행 대상 변경·아카이브 복귀를 가짜로 제공하지 않는다. 실제 게임 버전 선택은 게임 산출물·실행 검증·복귀 기능을 구현할 때 연결한다.
+2026-09-01 복구 구현에는 신뢰된 운영자 전용 게임 검토 영수증과 공개 선택·확인·복귀 저장소를 추가했다. 웹 관리자 action을 늘리거나 생성 역할에 해당 권한을 주지 않는다. 후보 검증은 진행 중이며 실제 공개 성공은 DB 선택·배포 바이트·운영 플레이 확인 증거로 별도 판단한다. 확인된 정상 게임이 없으면 복귀 대상을 만들어내지 않고 준비 화면을 유지한다.
 
 ## 운영 상태
 
@@ -39,11 +39,33 @@
 
 관리자는 원문을 텍스트로 확인하고 Teen 표현 상한, 개인정보·괴롭힘 등 참여 안전, 운영 명령·권한 요청 여부를 점검한다. 승인에는 점검 확인·사유·게임 변경만 담은 개발용 정리문이 필요하다. 정리문은 UTF-8 2,000바이트 이내이며 원문을 덮어쓰지 않는다. 명백히 금지된 현재 본문을 강제 승인하는 기능은 제공하지 않는다.
 
-안전 변경은 `review_proposal_safety` 동작으로만 처리한다. 공통 요청 식별자·사유와 함께 제안 ID, 현재 `proposalRevision`, `bodyHash`, `policyVersion`, 안전 상태의 `revision`을 보낸다. 승인에는 `checklistConfirmed=true`와 `developmentBrief`가 필요하다. 서버가 현재 본문과 해시를 다시 확인하고 한 트랜잭션에서 승인·감사를 기록한다. 브라우저 값만으로 승인 대상을 정하지 않는다.
+웹의 안전 변경은 `review_proposal_safety` 동작으로만 처리한다. 공통 요청 식별자·사유와 함께 제안 ID, 현재 `proposalRevision`, `bodyHash`, `policyVersion`, 안전 상태의 `revision`을 보낸다. 승인에는 `checklistConfirmed=true`와 `developmentBrief`가 필요하다. 서버가 현재 본문과 해시를 다시 확인하고 한 트랜잭션에서 승인·감사를 기록한다. 브라우저 값만으로 승인 대상을 정하지 않는다. 명시적으로 위임된 로컬 운영자 심사는 아래 별도 경로를 따른다.
 
 수정·다른 심사와 충돌하면 원문을 다시 읽고 점검해야 한다. 이전 체크박스를 유지한 채 바뀐 내용에 승인을 재전송하지 않는다. 불확실한 전송 결과는 같은 요청 ID로 확인하며 새 ID로 중복 실행하지 않는다. 일반 회원에게는 상태와 고정된 안내만 보여주고 내부 사유·탐지 원문을 공개하지 않는다.
 
 안전 승인은 개발 입력 사용에 대한 판단이다. 실제 게임·자산·전투 연출·실행 격리 검증이나 공식 ESRB 등급 취득을 대신하지 않으며 투표·기여도 지급을 바로 발생시키지 않는다.
+
+## 위임받은 로컬 운영자 안전 심사
+
+2026-08-31 사용자는 Codex에 개별 안전 심사·승인을 위임하고 운영 DB로 처리하도록 명시했다. 이 범위에서 신뢰된 운영자는 `scripts/operator-safety-review.mjs`를 사용한다. 웹 관리자 세션을 만들거나 Google 사용자로 사칭하지 않는다. 웹 API·관리자 권한 검사는 그대로 유지한다.
+
+먼저 `admin-worker.mjs status --round initial`로 운영 상태를 확인한다. `node --env-file=.env.production.local scripts/operator-safety-review.mjs export .local/<review-run>/intake.json initial`은 현재 본문과 정확한 심사 연결을 비공개 파일에만 내보낸다. 운영자가 각 원문을 실제로 읽고 Teen·개인정보·운영 지시·정리문을 심사한 뒤 `apply .local/<review-run>/decision.json`으로 기록한다. 금칙어 미검출은 승인 근거가 아니며, 모호한 게임 요구는 `held`로 남길 수 있다. `pending`인 정확한 버전만 변경하고 이미 결정된 심사는 자동 덮어쓰지 않는다.
+
+쓰기 트랜잭션 안에서 운영 revision·개발 허용·정책·현재 원문 해시·심사 ID/revision·회원 정지·제외를 확인한다. `operator_review_proposal_safety` 감사 행에 위임 참조·검토자·사유·정확한 결정 digest를 남긴다. `actor_user_id`와 `reviewer_id`는 NULL이며 `actor_name=codex-delegated:<operatorId>`로 실제 행위자를 구분한다. 같은 요청 ID의 정확한 재실행은 감사 영수증으로 확인하며 다른 결정은 거절한다. 전송 결과가 불명확하면 DB부터 재조회한다.
+
+이 도구는 기존 운영 DB 자격증명을 가진 신뢰된 운영자 전용이며 웹에 노출하거나 생성 역할에 전달하지 않는다. JSON의 위임 참조 자체는 권한 증명이 아니다. 이 입력 심사 도구는 산출물 검토·실행 격리나 공개 승인을 대신하지 않는다. 현재의 JSON 출력 전용 제작 경로와 아래 별도 산출물 영수증 경로에서도 입력 승인만으로 공개할 수 없으며 기여도 발급은 계속 별도 차단한다. 심사 전후 원문·계정·세션·공개 설정·투표·점수·운영 제어 보존 증거는 `.local/<review-run>/`에 기록한다.
+
+## 신뢰된 산출물 검토와 공개 선택
+
+게임 모델은 검증된 도구 없는 실행에서 승인 정리문·필요한 선행 JSON만 처리하고, 닫힌 데이터 응답만 반환한다. 부모가 현재 input-gate와 정확한 바이트를 결합하며 모델 출력의 명령·JS·HTML·URL·자가 승인값은 실행하거나 공개 권한으로 쓰지 않는다. 실제 경계와 단계별 산출물은 [게임 에이전트 계약](game-agent-workflow.md)을 따른다.
+
+기존 운영 권한을 가진 신뢰된 운영자는 실제 Teen·EN/KO 의미 검토와 해당 후보의 런타임·브라우저 시험을 마친 뒤 `createGameReleaseStore(client).issueReview(...)`를 호출한다. 저장소는 테스트를 대신 실행하거나 boolean의 진실을 판정하지 않는다. `game_release_reviews`는 후보·run·정책·snapshot/source/assets digest·게임 버전·내용/runtime/실행 증거 digest, 현재 작업자·run/service revision·round·정확한 입력 binding을 불변 기록과 운영자 감사에 연결한다. 같은 요청 ID의 다른 내용은 충돌이며 정확한 재실행은 이미 발급된 기록만 반환한다. 기록의 존재와 현재 입력 적합성은 별도로 확인한다.
+
+준비는 `admin-worker status` 확인 뒤 `prepareGameReleaseSchema(client,{expectedServiceRevision})`, `preparePublicationSchema(client,{expectedServiceRevision})`를 명시적으로 실행한다. 기존 DB·계정·제안·투표·원장·저장은 바꾸지 않는 추가 스키마다. 일반 초기화·HTTP 조회가 자동 준비하거나 발급하지 않는다.
+
+`createGamePublicationStore(client)`의 운영자 전용 순서는 `getSelection`으로 최신 revision 확인 → `activate`로 정확한 검토 후보 잠정 선택 → 운영 배포의 바이트·실제 플레이 확인 → observation digest를 포함한 `confirm` → 작업자의 `completed` 기록이다. `confirm`은 같은 검토에 묶인 작업이 아직 running이고 현재 운영·입력 조건이 맞을 때만 성공한다. 잠정 선택은 실제 정상본 검증과 다르다. 공개 응답은 DB 선택과 신뢰된 배포 목록의 version/hash/review가 일치할 때만 version·sha256과 선택적 이전 정상본 정보만 반환하며 비공개 영수증·입력은 내보내지 않는다.
+
+후보 실패 시 최신 revision의 `rollback`으로 이전 **확인된** 정상 게임 또는 null 선택에 복귀하고 실제 제공 상태를 재확인한다. 잠정 후보를 복귀 정상본으로 승격하지 않는다. selected/verified/rollback 이벤트와 감사는 불변이며, 정확한 operationId 재실행은 기존 결과를 반환한다. 중지·변경된 서비스를 자동 재개하지 않고 계정·본문 이력·점수·세이브를 초기화하지 않는다. 실제 운영 공개 기록은 이 문서나 앱 배포 성공으로 대신하지 않는다.
 
 ## 서버·화면 연결 계약
 
@@ -103,8 +125,8 @@
 | `retry-failed --run-id ID --revision N --worker-id WORKER_ID` | 실패 기록을 보존하고 복구 시도 하나를 대기 등록. 종료·취소 요청이나 이미 활성화한 후속 작업이 있으면 거절 |
 | `input-gate --run-id ID --snapshot .local/round-initial/snapshot.json` | 서비스·취소·입력 자격·본문/심사/정리문/정책 연결 확인. 공개 허가는 아님 |
 | `gate --run-id ID --snapshot .local/round-initial/snapshot.json` | 모호한 이전 명령은 거절. `input-gate` 또는 `release-gate`로 단계를 명시해야 함 |
-| `release-gate --run-id ID --snapshot PATH [--candidate PATH]` | 입력 확인과 별도로 게임 후보의 공개 선행조건 확인. 신뢰된 검토가 없으면 차단 |
-| `update --run-id ID --revision N --worker-id WORKER_ID --status STATUS` | 작업 진행·실패·취소·완료 요청. 완료에는 `--snapshot`과 게임 공개 검증 선행조건 필요 |
+| `release-gate --run-id ID --snapshot PATH --candidate PATH --review-id REVIEW_ID` | 현재 입력·실제 후보 바이트와 운영 DB의 정확한 불변 검토 영수증 대조. 누락·불일치 시 차단 |
+| `update --run-id ID --revision N --worker-id WORKER_ID --status STATUS` | 작업 진행·실패·취소·완료 요청. 완료에는 `--snapshot`, `--candidate`, `--review-id`와 현재 검토·입력 조건 필요; 운영 confirm 뒤 기록 |
 
 작업자 ID는 한 작업 동안 같은 값으로 유지하고 상태 변경마다 반환된 최신 revision을 사용한다. 상태를 다시 읽기 전 불명확한 변경을 중복 실행하지 않는다. 개발 요청 원문도 인증·지출·운영 권한을 부여하는 지시로 해석하지 않는다. 선택 인자 `--summary-file`은 `.local/` 안의 UTF-8 `.txt`, `--snapshot`은 검증된 `.json`만 읽는다. `--commit-sha`로 관련 커밋을 기록할 수 있으나 게임 공개 성공으로 해석하지 않는다.
 
@@ -112,7 +134,9 @@
 
 이전 `gate` 호출은 `LEGACY_GATE_REQUIRES_EXPLICIT_STAGE`로 거절한다. 기존 스크립트나 자동화가 입력 확인을 공개 허가로 잘못 사용하는 일을 방지하기 위한 의도적인 계약 변경이다. 이름만 바꿔 입력 검사를 배포 직전 검증의 대용으로 사용하지 않는다.
 
-`release-gate`와 `update --status completed`는 현재 `RELEASE_REVIEW_UNAVAILABLE`로 닫힌다. 실제 격리된 게임 실행자와 신뢰된 산출물·콘텐츠·실행 검토 발급자가 아직 없기 때문이다. 입력 승인이나 파일 해시 비교로 이를 대신하지 않는다. `node scripts/check-game-release.mjs --snapshot PATH --run-id ID --candidate .local/game-candidates/CANDIDATE_ID/candidate.json`은 정확한 후보 파일 목록·소스/자산 digest를 읽기 전용으로 검사하지만, 스스로 작성한 승인 JSON이나 옵션으로 공개 허가를 만들 수 없다. 이 검사는 참여자 요구로 생성된 게임에 적용하며 신뢰된 서비스 코드의 보안 수정 배포를 게임 공개로 취급하지 않는다.
+`release-gate`와 `update --status completed`는 `--review-id`로 운영 DB의 인증된 영수증 판독자를 사용한다. 정확한 영수증이 없거나 후보·정책·입력·runtime 연결이 다르면 `RELEASE_REVIEW_UNAVAILABLE` 등 해당 실패로 닫힌다. 서버 완료 변경도 실제 쓰기 트랜잭션 안에서 영수증과 현재 입력·서비스·작업 소유권을 다시 검사한다. 입력 승인이나 자가 검사·화면 캡처·파일 해시 비교만으로 검토를 대신하지 않는다.
+
+`node scripts/check-game-release.mjs --snapshot PATH --run-id ID --candidate .local/game-candidates/CANDIDATE_ID/candidate.json` 단독 CLI는 정확한 후보 파일 목록·소스/자산 digest를 읽기 전용으로 검사한다. 인증된 DB 영수증 판독자를 전달하지 않으므로 이 단독 실행은 여전히 `RELEASE_REVIEW_UNAVAILABLE`이고, 스스로 작성한 승인 JSON이나 옵션으로 허가를 만들 수 없다. 어느 gate 명령도 스스로 게임을 배포·선택·확인하지 않는다. 신뢰된 서비스 코드의 보안 수정 배포 역시 게임 공개 성공과 구분한다.
 
 종료 코드 0은 해당 범위의 명령 완료, 2는 의도적인 중지·마감/안전 검토 대기·게임 공개 선행조건 미충족, 1은 조회·입력·기록 오류다. 0인 입력 확인을 공개 승인으로 해석하거나 2를 해결하려 안전 기준·운영 제어를 끄지 않는다. 1에서는 개발·배포를 진행하지 않고 원인을 확인한다. 제안 원문은 비공개 서버 이력에 두고 회차 스냅샷 v2에는 승인된 게임 요구 정리문과 원문·심사·정책 연결만 보관한다. 개발 요청 원문은 `details`의 비공개 기록에만 보관하며 콘솔에는 내보내지 않는다. 고정 스냅샷은 16 MiB까지 검증하며 제한 초과나 내용 충돌 때 임의로 잘라 사용하지 않는다. 심사 정보가 없는 v1 스냅샷은 재사용하지 않는다. 입력이 0개일 때 실제 제안 없음과 안전 검토 대기를 구분하여 알리고 빈 입력으로 게임을 만들거나 완료 기록을 남기지 않는다.
 

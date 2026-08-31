@@ -15,6 +15,7 @@ import { SAFETY_POLICY_VERSION } from './safety-policy.mjs';
 import { LOCALE_VARY, localizeProposalPayload, requestLocale } from './localization.mjs';
 import { apiErrorMessage } from '../public/error-messages.js';
 import { publicContributionPolicy } from './contribution-policy.mjs';
+import { publishedGames } from './published-games.mjs';
 
 const BODY_LIMIT = 16 * 1024;
 const METHODS = {
@@ -232,7 +233,9 @@ export function createApiHandler({
 
         if (route === '/api/status') {
           const time = now();
-          const service = await (await resolveStore()).getService();
+          const db = await resolveStore();
+          const service = await db.getService();
+          const game = db.getPublicGame ? await db.getPublicGame(publishedGames) : { published: false };
           const collection = currentCollection(time);
           if (!proposalsAllowed(service)) collection.status = service.mode === 'ended' ? 'ended' : 'paused';
           return respond(res, 200, {
@@ -244,7 +247,7 @@ export function createApiHandler({
             limits: { bytes: MAX_BYTES, submissions: SUBMISSION_LIMIT, windowSeconds: WINDOW_MS / 1000 },
             // Publication requires an actual verified game artifact. Time alone
             // never changes this value to true.
-            game: { published: false },
+            game,
             rating: { target: 'Teen', official: false, policyVersion: SAFETY_POLICY_VERSION },
           });
         }
@@ -252,10 +255,12 @@ export function createApiHandler({
         if (route === '/api/health') {
           let database = config.databaseUrl || store || getStore ? 'unavailable' : 'unconfigured';
           let service = null;
+          let game = { published: false };
           try {
             const db = await resolveStore();
             await db.health();
             service = await db.getService();
+            if (db.getPublicGame) game = await db.getPublicGame(publishedGames);
             database = 'ok';
           } catch (error) {
             safeLog(log, 'health_database_error', route, requestId, error);
@@ -265,7 +270,7 @@ export function createApiHandler({
           return respond(res, healthy ? 200 : 503, {
             status: healthy ? 'ok' : 'degraded', database, authConfigured,
             version: config.version, serverTime: new Date(now()).toISOString(),
-            collectionOpen: service ? proposalsAllowed(service) : false, gamePublished: false,
+            collectionOpen: service ? proposalsAllowed(service) : false, gamePublished: game.published === true,
             serviceMode: service?.mode ?? 'unknown',
             developmentEnabled: service ? service.mode === 'active' && service.developmentEnabled : false,
           });
