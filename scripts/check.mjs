@@ -58,6 +58,10 @@ if (process.argv.includes('--test')) {
     .filter((name) => name.endsWith('.test.mjs'))
     .map((name) => path.join(root, 'tests', name));
   if (!tests.length) throw new Error('Deployment requires the server and health tests.');
-  const result = spawnSync(process.execPath, ['--test', ...tests], { stdio: 'inherit', windowsHide: true });
+  // Concurrent native libsql test processes intermittently terminate with
+  // 0xC0000005 on Windows even after their assertions pass. Serialize files on
+  // that host; tests' own multi-client/process concurrency remains unchanged.
+  const scheduling = process.platform === 'win32' ? ['--test-concurrency=1'] : [];
+  const result = spawnSync(process.execPath, ['--test', ...scheduling, ...tests], { stdio: 'inherit', windowsHide: true });
   if (result.status !== 0) process.exit(result.status || 1);
 }
