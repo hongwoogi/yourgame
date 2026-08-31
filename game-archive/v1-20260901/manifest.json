@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "kind": "game-source-snapshot",
+  "version": "v1-20260901",
+  "files": [
+    {
+      "path": "game.json",
+      "bytes": 18360,
+      "sha256": "d68b76398947f35c022cfcc0bac5af308bf0558cbbf33330ee4663f54acd7fb3"
+    },
+    {
+      "path": "runtime/public/app.js",
+      "bytes": 109676,
+      "sha256": "990655db8983ac98b5e56e2ffeac99f0c6e26ece8cca44fd03a2b49a5ea7259b"
+    },
+    {
+      "path": "runtime/public/game-bundle.js",
+      "bytes": 3049,
+      "sha256": "fbb70f451c431051cb65632d7b462751ec7571641fed3bfc1522704e6aedfaaf"
+    },
+    {
+      "path": "runtime/public/game-frame.html",
+      "bytes": 743,
+      "sha256": "846c6d98b0639a57664455dc4cc4e8320557edcbd6d51f0673b58ea5ea4ea185"
+    },
+    {
+      "path": "runtime/public/game-host.js",
+      "bytes": 6647,
+      "sha256": "05ce6db52f031294b691e264961c215cbeac32df484023334b7f3e99ff794316"
+    },
+    {
+      "path": "runtime/public/game-runtime-engine.js",
+      "bytes": 13586,
+      "sha256": "eed8c1f10b7a098a84805560419aaabced6b9bf50bc6a1f107f335a1ea9fdd43"
+    },
+    {
+      "path": "runtime/public/game-runtime-frame.js",
+      "bytes": 14546,
+      "sha256": "38a4355e943a0afd1f354b0ae06c6cbe21cd6f91d1c603ab121b778a23038874"
+    },
+    {
+      "path": "runtime/public/game-runtime.css",
+      "bytes": 4968,
+      "sha256": "4381965abbb3f519cb63cd0e837ca317f75d56e31ee10eb68d493db2d7e9b631"
+    },
+    {
+      "path": "runtime/public/game-save-bridge.js",
+      "bytes": 3470,
+      "sha256": "346a6e445a6a4e40536b36dd538c4d9833a23746308ffc1f607eba401c0b2bed"
+    },
+    {
+      "path": "runtime/public/game-save-store.js",
+      "bytes": 8063,
+      "sha256": "37e0c88773c7c8f69dae4be1dd62adc54878961a66a1f3dc9f05bffcc5bc4ed1"
+    },
+    {
+      "path": "runtime/public/index.html",
+      "bytes": 27175,
+      "sha256": "65ebe4f840b324cf7656257894dd3487f3dc9f7f7174c95d9863040617738190"
+    },
+    {
+      "path": "runtime/public/styles.css",
+      "bytes": 68248,
+      "sha256": "71f877331d263c2c544a47d17488cde86248577ddf6087d7a9e65f4388e6ef11"
+    },
+    {
+      "path": "runtime/vercel.json",
+      "bytes": 3873,
+      "sha256": "53e8c4bc6660443a1a4fed35212943647254c8f535a0909ce5405a02b3441c1b"
+    }
+  ]
+}

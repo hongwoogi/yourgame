@@ -2,6 +2,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { checkGameArchive, checkArchiveRetention } from './game-archive.mjs';
+import { publishedGames } from '../server/published-games.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const sourceFiles = [];
@@ -48,7 +50,9 @@ for (const [file, source] of [['public/index.html', html], ['server/admin-page.h
     if (i18n.t(match[1]) === '[' + match[1] + ']') throw new Error(`Missing translation ${match[1]} in ${file}.`);
   }
 }
-console.log(`Checked ${sourceFiles.length} JavaScript files and deployment configuration.`);
+const archive = await checkGameArchive({ registeredGames: publishedGames });
+await checkArchiveRetention();
+console.log(`Checked ${sourceFiles.length} JavaScript files, deployment configuration, and ${archive.archivedVersions} archived game versions.`);
 if (process.argv.includes('--test')) {
   const tests = (await readdir(path.join(root, 'tests')))
     .filter((name) => name.endsWith('.test.mjs'))

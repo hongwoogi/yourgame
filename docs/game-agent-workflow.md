@@ -169,6 +169,8 @@ candidate.json의 형식은 기존 `scripts/check-game-release.mjs`가 유일한
 
 ## 매일 업데이트
 
+모든 검토 게임의 신뢰된 가져오기는 `copyReviewedGame`을 사용한다. `game-archive/<version>/`에 게임 데이터와 검토한 런타임 원본·해시 목록을 누적하고 `public/games/<version>/game.json`과 함께 커밋한다. 기존 버전 폴더·manifest·공개 데이터를 삭제하거나 변경하지 않는다. 내용이 바뀌면 새 버전이다. `npm run archive:check`와 build가 무결성·누락 및 Git checkout의 현재/부모 커밋 대비 보존을 검사한다. 소스 보관은 운영 confirm이나 공개 승인 영수증을 대체하지 않는다. 상세 보관 계약은 [게임 버전 보관소](../game-archive/README.md)를 따른다.
+
 일일 마감·자정 공개와 중복 방지는 [일일 공개 절차](daily-release-runbook.md)를 따른다. 날짜별 승인 스냅샷과 `daily-game-YYYY-MM-DD` 루트 실행을 사용하고, 현재 검증 게임을 baseline으로 전달한다. 재시도는 원래 루트의 자정 공개 시각을 상속한다. 마감 뒤 들어온 의견·미승인 원문·최초 공개 전용 보정 지시는 새로운 회차 입력이 아니다. 예약은 운영자를 깨우는 실행 수단이며 게임 역할의 승인·배포 권한을 확대하지 않는다.
 
 ## 실패, 재시도와 정상본 보존

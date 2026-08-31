@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101510">
+  <meta name="description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Propose ideas, vote on what comes next, and follow the first game as it takes shape.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" data-i18n-content="public.pageTitle" content="yourga.me — One roguelike, shaped by your prompts">
+  <meta property="og:description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Propose ideas, vote on what comes next, and follow the first game as it takes shape.">
+  <meta property="og:locale" content="en_US">
+  <title data-i18n="public.pageTitle">yourga.me — One roguelike, shaped by your prompts</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23101510'/%3E%3Cpath d='M10 10h7v7h6v-7h7v13h-7v7h-7V20h-6z' fill='%23d0ef8a'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/language-control.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body data-app="yourgame">
+  <a class="skip-link" href="#prompt" data-i18n="public.skipLink">Skip to the idea form</a>
+  <div class="desktop-app">
+    <header class="masthead wrap">
+      <a class="wordmark" href="/" aria-label="yourga.me home" data-i18n-aria-label="public.home">
+        <svg class="brand-mark" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M3 3h7v7h8V3h7v14h-7v8h-8V17H3V3Z" fill="currentColor"/></svg>
+        <span>yourga<span class="wordmark-dot">.</span>me</span>
+      </a>
+      <div class="masthead-right">
+        <span class="experiment-label" data-i18n="public.mastheadTagline">A ROGUELIKE WE MAKE TOGETHER</span>
+        <label class="language-control">
+          <span class="sr-only" data-i18n="public.language">Language</span>
+          <select id="language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language">
+            <option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option>
+          </select>
+        </label>
+        <div id="account-area" class="account-area">
+          <span id="user-name" class="user-name" hidden></span>
+          <a class="button button-quiet admin-link" id="admin-link" href="/master" hidden aria-label="Admin" data-i18n-aria-label="public.admin" title="Admin" data-i18n-title="public.admin"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 12h7M12 8.5v7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span class="button-copy" data-i18n="public.admin">Admin</span></a>
+          <button class="button button-quiet" id="login-button" type="button" disabled aria-label="Log in" data-i18n-aria-label="public.logIn" title="Log in" data-i18n-title="public.logIn"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 4h6v16h-6M3 12h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="button-copy" data-i18n="public.logIn">Log in</span> <span class="account-arrow" aria-hidden="true">↗</span></button>
+          <button class="button button-quiet" id="logout-button" type="button" hidden aria-label="Log out" data-i18n-aria-label="public.logOut" title="Log out" data-i18n-title="public.logOut"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 4H4v16h6m0-8h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="button-copy" data-i18n="public.logOut">Log out</span></button>
+        </div>
+      </div>
+    </header>
+    <main class="wrap" id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title"><span data-i18n="public.heroLead">Your prompts.</span> <span class="hero-accent" data-i18n="public.heroAccent">One evolving roguelike.</span></h1>
+          <p class="hero-description" data-i18n="public.heroDescription">One single-player roguelike. Your ideas shape what comes next.</p>
+        </div>
+        <div class="release-panel">
+          <h2 class="countdown-title" id="countdown-title">Until the first release</h2>
+          <div class="countdown" id="countdown" aria-label="Time until the planned first release" aria-live="off">
+            <div class="time-unit"><span id="count-hours">00</span><small data-i18n="public.hours">hours</small></div><span class="time-separator" aria-hidden="true">:</span>
+            <div class="time-unit"><span id="count-minutes">00</span><small data-i18n="public.minutes">min</small></div><span class="time-separator" aria-hidden="true">:</span>
+            <div class="time-unit"><span id="count-seconds">00</span><small data-i18n="public.seconds">sec</small></div>
+          </div>
+          <p id="release-message" class="release-message" hidden></p>
+          <div class="release-date"><time id="release-date-time" datetime="2026-09-01T00:00:00+09:00" data-i18n="public.targetDate" data-i18n-title="public.releaseTimezoneTitle" title="Washington, D.C. (Eastern Time)">Aug 31, 2026 / 11:00 AM EDT</time></div>
+          <p class="release-note" id="release-note">Checking the server time.</p>
+        </div>
+      </section>
+      <div class="connection-notice" id="connection-notice" role="status" hidden><p id="connection-message"></p><button type="button" id="retry-connection" class="text-button"><span class="button-copy" data-i18n="public.reconnect">Reconnect</span> <span aria-hidden="true">↻</span></button></div>
+      <section class="service-notice" id="service-notice" role="status" aria-live="polite" aria-labelledby="service-title" hidden><h2 id="service-title">Service notice</h2><p id="service-message" hidden></p><p id="service-detail"></p></section>
+
+      <div class="play-workspace">
+        <section class="game-preview" aria-labelledby="preview-title">
+          <div class="preview-heading"><h2 id="preview-title" data-i18n="public.previewTitle">The game space</h2><span class="preview-ratio" aria-label="9 to 16 aspect ratio" data-i18n-aria-label="public.previewAspect">9:16</span></div>
+          <div class="preview-surface"><canvas id="game-preview-canvas" width="720" height="1280" role="img" aria-label="Empty white game preview. No playable game is available." data-i18n-aria-label="public.previewAria" aria-describedby="preview-note"><span data-i18n="public.previewFallback">This is a blank preview, not a playable game.</span></canvas></div>
+          <p id="preview-note" class="preview-note"><span class="status-dot" aria-hidden="true"></span><span data-i18n="public.previewNote">Preview only. The first game is on its way.</span></p>
+        </section>
+
+        <div class="participation-column">
+          <section class="community-section" aria-labelledby="community-title">
+            <div class="community-feed-top">
+              <h2 id="community-title" data-i18n="public.communityTitle">Voting</h2>
+              <button id="open-ideas" class="text-button ideas-more" type="button" aria-haspopup="dialog" aria-controls="ideas-dialog"><span data-i18n="public.ideasViewAll">View all</span><span aria-hidden="true">↗</span></button>
+              <div class="community-tabs" role="tablist" aria-label="Community feed order" data-i18n-aria-label="public.feedOrder"><button id="feed-recent-tab" class="community-tab" type="button" role="tab" aria-selected="true" aria-controls="community-feed-panel" data-feed-sort="recent" data-i18n="public.recentIdeas">Recent</button><button id="feed-popular-tab" class="community-tab" type="button" role="tab" aria-selected="false" aria-controls="community-feed-panel" data-feed-sort="popular" tabindex="-1" data-i18n="public.popularIdeas">Popular</button></div>
+              <div class="community-pager"><button id="community-prev" class="icon-button" type="button" aria-label="Previous ideas" data-i18n-aria-label="public.feedPrevious" disabled><span aria-hidden="true">←</span></button><span id="community-page" class="community-page" aria-live="polite">1 / 1</span><button id="community-next" class="icon-button" type="button" aria-label="Next ideas" data-i18n-aria-label="public.feedNext" disabled><span aria-hidden="true">→</span></button></div>
+              <button id="community-refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh" data-i18n-aria-label="public.refreshCommunity" data-i18n-title="public.refreshCommunity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.4 6.4a8 8 0 0 1 12.8 2.2M17.6 17.6A8 8 0 0 1 4.8 15.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
+            <p id="community-vote-note" class="community-vote-note" hidden></p>
+            <div id="community-feed-panel" role="tabpanel" aria-labelledby="feed-recent-tab" aria-busy="true"><p id="community-feed-status" class="community-empty" role="status">Loading ideas…</p><div id="community-feed-list" class="community-feed-list"></div></div>
+            <div id="community-feedback" class="community-feedback" role="status" aria-live="polite" hidden><p id="community-feedback-message"></p><button id="community-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button></div>
+          </section>
+
+          <section class="submission-section" aria-labelledby="submission-title">
+            <div class="collection-line"><p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">Checking submissions</span></p><p id="collection-deadline" class="collection-deadline">Closes Aug 31 · 23:00 KST</p></div>
+            <form id="prompt-form" class="prompt-form" novalidate>
+              <div class="prompt-heading"><h2 id="submission-title"><label for="prompt" data-i18n="public.formTitle">Your next idea</label></h2><div class="quota" id="quota-container"><span id="quota-status">Log in to share an idea</span><small id="quota-note">3 ideas per rolling 60 minutes</small></div></div>
+              <div id="edit-banner" class="edit-banner" hidden><span><span data-i18n="public.editingLabel">Editing your idea</span><span class="muted">· <span data-i18n="public.editingNoSlot">No submission slot used</span></span></span><button id="cancel-edit" class="text-button" type="button"><span class="button-copy" data-i18n="public.cancelEdit">Cancel edit</span> <span aria-hidden="true">×</span></button></div>
+              <textarea id="prompt" name="prompt" rows="3" data-i18n-placeholder="public.placeholder" placeholder="What would make this roguelike more fun?" aria-describedby="prompt-hint byte-count public-idea-notice" spellcheck="false" autocomplete="off"></textarea>
+              <div class="prompt-bottom-line"><p id="prompt-hint">Small ideas welcome. Specific details help.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
+              <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden data-i18n="public.reloadEdit">Load the latest version</button><button id="copy-edit" type="button" class="text-button" hidden data-i18n="public.copyEdit">Use as a new idea</button></div></div>
+              <div class="prompt-actions"><p class="submission-rules"><span id="public-idea-notice" data-i18n="public.ideasPublic">Ideas are public.</span><br><span data-i18n="public.editRule">Edit until the round closes · No deletion</span></p><div class="prompt-buttons"><button id="open-my-proposals" class="button button-quiet my-ideas-button" type="button" aria-haspopup="dialog" aria-controls="my-proposals-dialog" hidden><span data-i18n="public.myIdeas">My ideas</span><span id="proposal-count" class="proposal-count">0</span></button><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">Send idea</span><svg id="submit-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div></div>
+            </form>
+          </section>
+        </div>
+
+        <aside class="contribution-board" aria-labelledby="leaderboard-title">
+          <div class="board-heading"><h2 id="leaderboard-title" data-i18n="public.leaderboardTitle">Leaderboard</h2><button id="open-leaderboard" class="text-button leaderboard-more" type="button" aria-haspopup="dialog" aria-controls="leaderboard-dialog"><span data-i18n="public.leaderboardViewAll">View all</span><span aria-hidden="true">↗</span></button></div>
+          <p class="leaderboard-note" data-i18n="public.leaderboardTopNote">Top 5 · Contributions to released versions.</p>
+          <div class="leaderboard-preview"><p id="leaderboard-status" class="community-empty" role="status">Loading contributions…</p><ol id="leaderboard-list" class="leaderboard-list"></ol></div>
+          <div class="my-rank-slot">
+            <div id="my-contribution" class="my-contribution" hidden>
+              <div class="my-rank-entry"><span id="my-rank-value" class="leaderboard-rank"></span><span class="my-rank-identity"><span class="my-rank-caption" data-i18n="public.myRank">My rank</span><strong id="my-rank-alias" class="community-alias"></strong></span><span id="my-rank-points" class="leaderboard-points"></span><button id="edit-alias" class="icon-button" type="button" aria-label="Change public display name" title="Change public display name" data-i18n-aria-label="public.editAlias" data-i18n-title="public.editAlias" aria-haspopup="dialog" aria-controls="alias-dialog"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15v5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button></div>
+              <p id="my-rank-status" class="my-rank-status" hidden></p><p id="my-contribution-summary" class="sr-only"></p>
+            </div>
+            <div id="my-rank-guest" class="my-rank-guest"><p data-i18n="public.myRankLoginNote">Log in to see your rank.</p><button id="my-rank-login" class="text-button" type="button" data-i18n="public.logIn">Log in</button></div>
+            <div id="my-rank-loading" class="my-rank-guest" hidden><p id="my-rank-loading-message" role="status">Loading your rank…</p><button id="my-rank-retry" class="icon-button" type="button" aria-label="Refresh your rank" data-i18n-aria-label="public.refreshMyRank"><span aria-hidden="true">↻</span></button></div>
+          </div>
+        </aside>
+      </div>
+
+      <section class="process-section" aria-labelledby="process-title">
+        <h2 id="process-title" data-i18n="public.compactProcessTitle">The planned cycle</h2>
+        <ol class="process-flow" aria-label="The development cycle, from submissions to feedback on the next round" data-i18n-aria-label="public.processAria">
+          <li class="process-step"><span class="flow-number" aria-hidden="true">01</span><span data-i18n="public.compactStep1">Ideas &amp; planning</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">02</span><span class="codex-label" data-i18n="public.compactStep2">Codex builds</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">03</span><span data-i18n="public.compactStep3">Test &amp; release</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">04</span><span data-i18n="public.compactStep4">Play &amp; repeat</span><span class="flow-repeat" aria-hidden="true">↺</span></li>
+        </ol>
+      </section>
+    </main>
+  </div>
+  <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title" aria-describedby="login-description">
+    <label class="language-control dialog-language"><span class="sr-only" data-i18n="public.language">Language</span><select id="login-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label>
+    <button class="dialog-close" id="close-login" type="button" aria-label="Close login dialog" data-i18n-aria-label="public.closeLogin"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+    <span class="login-mark" aria-hidden="true">✳</span><p class="index-label" data-i18n="public.loginEyebrow">LET'S MAKE IT YOUR GAME</p><h2 id="login-title">Make your idea<br>part of the game.</h2>
+    <p id="login-description">Log in with Google to share an idea.<br>You can submit up to 3 ideas in any 60-minute period.</p>
+    <div class="google-button-area" id="google-button-area"><div id="google-signin"></div></div><p class="login-message" id="login-message" role="status" aria-live="polite">Preparing Google login.</p>
+    <button id="retry-google" class="text-button" type="button" hidden data-i18n="public.retryGoogle">Try preparing login again</button><p class="login-draft-note" id="login-draft-note">Your draft stays in this browser.</p>
+  </dialog>
+  <dialog id="my-proposals-dialog" class="content-dialog my-proposals-dialog" aria-labelledby="my-proposals-title">
+    <div class="content-dialog-heading"><h2 id="my-proposals-title" data-i18n="public.myIdeas">My ideas</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="my-ideas-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-my-proposals" class="dialog-close" type="button" aria-label="Close my ideas" data-i18n-aria-label="public.closeMyIdeas"><span aria-hidden="true">×</span></button></div>
+    <div class="my-proposals" id="my-proposals" hidden><div id="proposal-list" class="proposal-list"></div></div>
+  </dialog>
+  <dialog id="idea-dialog" class="content-dialog idea-dialog" aria-labelledby="idea-title" aria-describedby="idea-author">
+    <div class="content-dialog-heading"><h2 id="idea-title" data-i18n="public.ideaTitle">Community idea</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="idea-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-idea" class="dialog-close" type="button" aria-label="Close idea" data-i18n-aria-label="public.closeIdea"><span aria-hidden="true">×</span></button></div>
+    <p id="idea-author" class="idea-author"></p><p id="idea-body" class="idea-body"></p>
+  </dialog>
+  <dialog id="ideas-dialog" class="content-dialog ideas-dialog" aria-labelledby="ideas-title">
+    <div class="ideas-dialog-header">
+      <div class="content-dialog-heading"><h2 id="ideas-title" data-i18n="public.allIdeas">All ideas</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="ideas-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-ideas" class="dialog-close" type="button" aria-label="Close all ideas" data-i18n-aria-label="public.closeIdeas"><span aria-hidden="true">×</span></button></div>
+      <div class="ideas-toolbar"><div class="community-tabs" role="tablist" aria-label="Community feed order" data-i18n-aria-label="public.feedOrder"><button id="ideas-recent-tab" class="community-tab" type="button" role="tab" aria-selected="true" aria-controls="ideas-panel" data-ideas-sort="recent" data-i18n="public.recentIdeas">Recent</button><button id="ideas-popular-tab" class="community-tab" type="button" role="tab" aria-selected="false" aria-controls="ideas-panel" data-ideas-sort="popular" tabindex="-1" data-i18n="public.popularIdeas">Popular</button></div><p id="ideas-total" role="status"></p><button id="ideas-refresh" class="icon-button" type="button" aria-label="Refresh ideas" title="Refresh ideas" data-i18n-aria-label="public.refreshIdeas" data-i18n-title="public.refreshIdeas"><span aria-hidden="true">↻</span></button></div>
+      <p id="ideas-vote-note" class="community-vote-note"></p>
+      <div id="ideas-feedback" class="community-feedback" role="status" aria-live="polite" hidden><p id="ideas-feedback-message"></p><button id="ideas-action-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button></div>
+    </div>
+    <div id="ideas-panel" class="ideas-panel" role="tabpanel" aria-labelledby="ideas-recent-tab" aria-busy="false" tabindex="0"><p id="ideas-status" class="community-empty" role="status"></p><div id="ideas-list" class="ideas-list"></div></div>
+    <div class="ideas-dialog-footer"><button id="ideas-retry" class="text-button" type="button" data-i18n="public.retryIdeas" hidden>Try loading ideas again</button><div class="ideas-pager"><button id="ideas-prev" class="icon-button" type="button" aria-label="Previous ideas page" data-i18n-aria-label="public.ideasPrevious" disabled><span aria-hidden="true">←</span></button><span id="ideas-page" class="community-page" aria-live="polite"></span><button id="ideas-next" class="icon-button" type="button" aria-label="Next ideas page" data-i18n-aria-label="public.ideasNext" disabled><span aria-hidden="true">→</span></button></div></div>
+  </dialog>
+  <dialog id="leaderboard-dialog" class="content-dialog leaderboard-dialog" aria-labelledby="leaderboard-dialog-title" aria-describedby="leaderboard-total">
+    <div class="content-dialog-heading"><h2 id="leaderboard-dialog-title" data-i18n="public.fullLeaderboard">Full leaderboard</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="leaderboard-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-leaderboard" class="dialog-close" type="button" aria-label="Close leaderboard" data-i18n-aria-label="public.closeLeaderboard"><span aria-hidden="true">×</span></button></div>
+    <p id="leaderboard-total" class="leaderboard-total" role="status"></p>
+    <div id="leaderboard-full-panel" aria-busy="false"><div class="leaderboard-columns" aria-hidden="true"><span data-i18n="public.rankLabel">Rank</span><span data-i18n="public.aliasLabel">Public display name</span><span data-i18n="public.pointsLabel">Points</span></div><p id="leaderboard-full-status" class="leaderboard-full-status" role="status"></p><ol id="leaderboard-full-list" class="leaderboard-list leaderboard-full-list"></ol></div>
+    <div class="leaderboard-dialog-footer"><button id="leaderboard-full-retry" class="text-button" type="button" data-i18n="public.retryLeaderboard" hidden>Try loading again</button><div class="leaderboard-full-pager"><button id="leaderboard-full-prev" class="icon-button" type="button" aria-label="Previous ranking page" data-i18n-aria-label="public.leaderboardPrevious" disabled><span aria-hidden="true">←</span></button><span id="leaderboard-full-page" class="community-page" aria-live="polite"></span><button id="leaderboard-full-next" class="icon-button" type="button" aria-label="Next ranking page" data-i18n-aria-label="public.leaderboardNext" disabled><span aria-hidden="true">→</span></button></div></div>
+  </dialog>
+  <dialog id="alias-dialog" class="content-dialog alias-dialog" aria-labelledby="alias-title" aria-describedby="alias-description">
+    <div class="content-dialog-heading"><h2 id="alias-title" data-i18n="public.editAlias">Change public display name</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="alias-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-alias" class="dialog-close" type="button" aria-label="Close display name settings" data-i18n-aria-label="public.closeAlias"><span aria-hidden="true">×</span></button></div>
+    <p id="alias-description" class="alias-description" data-i18n="public.aliasDescription">This name appears on your ideas and the leaderboard. It does not change your Google account.</p>
+    <form id="alias-form" class="alias-form" novalidate>
+      <label for="alias-input" data-i18n="public.aliasLabel">Public display name</label><input id="alias-input" name="alias" type="text" autocomplete="off" spellcheck="false" aria-describedby="alias-help alias-count alias-current alias-message">
+      <div class="alias-input-help"><p id="alias-help" data-i18n="public.aliasRules">2–24 characters, up to 96 UTF-8 bytes. Letters, numbers, spaces, _ . and - only.</p><output id="alias-count" for="alias-input"></output></div>
+      <p id="alias-current" class="alias-current"></p><p id="alias-message" class="alias-message" role="status" aria-live="polite" hidden></p>
+      <div class="alias-recovery"><button id="alias-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button><button id="alias-reload" class="text-button" type="button" hidden data-i18n="public.aliasReload">Keep draft and reload profile</button></div>
+      <div class="alias-actions"><button id="alias-cancel" class="button button-quiet" type="button" data-i18n="public.closeAliasButton">Close</button><button id="alias-save" class="button button-primary" type="submit" data-i18n="public.saveAlias">Save name</button></div>
+    </form>
+  </dialog>
+  <noscript><div class="noscript-notice">Enable JavaScript to submit ideas and log in with Google.</div></noscript>
+</body>
+</html>

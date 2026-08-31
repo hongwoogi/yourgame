@@ -1,0 +1,692 @@
+{
+  "schemaVersion": 1,
+  "config": {
+    "schemaVersion": 1,
+    "gameVersion": "v1-20260901",
+    "handSize": 4,
+    "heroes": [
+      {
+        "id": "yann-lecun",
+        "stats": {
+          "health": 38,
+          "food": 8,
+          "gold": 6,
+          "morale": 9
+        },
+        "deck": [
+          "watch-beacon",
+          "granary-charter",
+          "stone-rampart",
+          "village-council",
+          "watch-beacon",
+          "relief-caravan",
+          "granary-charter",
+          "guild-forge",
+          "stone-rampart",
+          "fair-levy",
+          "watch-beacon",
+          "crown-bastion"
+        ]
+      },
+      {
+        "id": "elon-musk",
+        "stats": {
+          "health": 36,
+          "food": 7,
+          "gold": 8,
+          "morale": 7
+        },
+        "deck": [
+          "stone-rampart",
+          "guild-forge",
+          "watch-beacon",
+          "fair-levy",
+          "stone-rampart",
+          "granary-charter",
+          "guild-forge",
+          "crown-bastion",
+          "watch-beacon",
+          "relief-caravan",
+          "fair-levy",
+          "stone-rampart"
+        ]
+      },
+      {
+        "id": "demis-hassabis",
+        "stats": {
+          "health": 35,
+          "food": 8,
+          "gold": 6,
+          "morale": 8
+        },
+        "deck": [
+          "watch-beacon",
+          "stone-rampart",
+          "granary-charter",
+          "village-council",
+          "watch-beacon",
+          "guild-forge",
+          "relief-caravan",
+          "stone-rampart",
+          "granary-charter",
+          "crown-bastion",
+          "watch-beacon",
+          "fair-levy"
+        ]
+      },
+      {
+        "id": "jensen-huang",
+        "stats": {
+          "health": 38,
+          "food": 7,
+          "gold": 7,
+          "morale": 7
+        },
+        "deck": [
+          "guild-forge",
+          "stone-rampart",
+          "watch-beacon",
+          "granary-charter",
+          "guild-forge",
+          "fair-levy",
+          "stone-rampart",
+          "relief-caravan",
+          "watch-beacon",
+          "crown-bastion",
+          "guild-forge",
+          "village-council"
+        ]
+      },
+      {
+        "id": "dario-amodei",
+        "stats": {
+          "health": 40,
+          "food": 8,
+          "gold": 5,
+          "morale": 10
+        },
+        "deck": [
+          "village-council",
+          "watch-beacon",
+          "granary-charter",
+          "stone-rampart",
+          "village-council",
+          "relief-caravan",
+          "watch-beacon",
+          "fair-levy",
+          "granary-charter",
+          "guild-forge",
+          "stone-rampart",
+          "crown-bastion"
+        ]
+      },
+      {
+        "id": "sam-altman",
+        "stats": {
+          "health": 38,
+          "food": 10,
+          "gold": 7,
+          "morale": 8
+        },
+        "deck": [
+          "fair-levy",
+          "granary-charter",
+          "watch-beacon",
+          "village-council",
+          "guild-forge",
+          "relief-caravan",
+          "stone-rampart",
+          "fair-levy",
+          "watch-beacon",
+          "granary-charter",
+          "crown-bastion",
+          "guild-forge"
+        ]
+      }
+    ],
+    "cards": [
+      {
+        "id": "stone-rampart",
+        "cost": {
+          "food": 0,
+          "gold": 2,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 9
+        }
+      },
+      {
+        "id": "watch-beacon",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 4
+        }
+      },
+      {
+        "id": "granary-charter",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 5,
+          "gold": 0,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "fair-levy",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 1
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 4,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "guild-forge",
+        "cost": {
+          "food": 1,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 2,
+          "morale": 0,
+          "defense": 5
+        }
+      },
+      {
+        "id": "village-council",
+        "cost": {
+          "food": 0,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 3,
+          "defense": 0
+        }
+      },
+      {
+        "id": "relief-caravan",
+        "cost": {
+          "food": 0,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 6,
+          "food": 3,
+          "gold": 0,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "crown-bastion",
+        "cost": {
+          "food": 1,
+          "gold": 3,
+          "morale": 1
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 14
+        }
+      }
+    ],
+    "enemies": [
+      {
+        "id": "mist-raider",
+        "strength": 4
+      },
+      {
+        "id": "thorn-brute",
+        "strength": 7
+      },
+      {
+        "id": "ember-wyvern",
+        "strength": 10
+      }
+    ],
+    "waves": [
+      {
+        "enemies": [
+          "mist-raider"
+        ],
+        "foodCost": 1,
+        "reward": {
+          "food": 2,
+          "gold": 1,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 2,
+        "reward": {
+          "food": 2,
+          "gold": 2,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 3,
+        "reward": {
+          "food": 3,
+          "gold": 2,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "thorn-brute",
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 4,
+        "reward": {
+          "food": 3,
+          "gold": 3,
+          "morale": 2
+        }
+      },
+      {
+        "enemies": [
+          "ember-wyvern",
+          "ember-wyvern",
+          "thorn-brute",
+          "thorn-brute"
+        ],
+        "foodCost": 5,
+        "reward": {
+          "food": 4,
+          "gold": 3,
+          "morale": 2
+        }
+      },
+      {
+        "enemies": [
+          "ember-wyvern",
+          "ember-wyvern",
+          "thorn-brute",
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 4,
+        "reward": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        }
+      }
+    ]
+  },
+  "copy": {
+    "title": {
+      "en": "Founder's Hex: First Realm",
+      "ko": "창립자의 헥스: 최초의 왕국"
+    },
+    "subtitle": {
+      "en": "Raise a lone keep into a realm across six waves.",
+      "ko": "여섯 공세를 넘어 외로운 성채를 왕국으로 키우세요."
+    },
+    "story": {
+      "en": "A lone founder claims a forgotten seven-hex valley. Choose a defense card, select a tile, and withstand each shown attack. Policies, taxes, public spirit, and industry shape your deck as the keep grows into a town and then a kingdom. After each of the first five cleared waves, add one offered card to the deck.",
+      "ko": "한 명의 창립자가 잊힌 일곱 육각 타일 계곡에 터를 잡습니다. 방어 카드를 고르고 타일을 선택해 표시된 공격을 막으세요. 정책, 세금, 민심, 산업 선택은 덱을 바꾸며 성채는 마을을 거쳐 왕국으로 성장합니다. 첫 다섯 공세는 돌파할 때마다 제시된 카드 한 장을 덱에 추가합니다."
+    },
+    "victory": {
+      "en": "The sixth wave breaks against your seven hexes. The lone keep now stands as a kingdom shaped by your deck.",
+      "ko": "여섯 번째 공세가 일곱 타일 앞에서 무너졌습니다. 외로운 성채는 이제 당신의 덱이 빚은 왕국으로 우뚝 섭니다."
+    },
+    "defeat": {
+      "en": "The realm has fallen. Begin again with a founder and build a different deck for the seven hexes.",
+      "ko": "왕국이 무너졌습니다. 창립자를 다시 선택하고 일곱 타일을 위한 새로운 덱을 구성하세요."
+    },
+    "disclaimer": {
+      "en": "These founders are fictional characters named after public figures. The game is not affiliated with or endorsed by them, and does not portray their real lives, statements, or conduct.",
+      "ko": "이 창립자들은 공인의 이름을 딴 허구의 등장인물입니다. 본 게임은 해당 인물들과 관련이 없으며 그들의 보증을 받지 않았고, 실제 삶이나 발언 또는 행위를 묘사하지 않습니다."
+    },
+    "heroes": [
+      {
+        "id": "yann-lecun",
+        "name": {
+          "en": "Yann LeCun",
+          "ko": "얀 르쿤"
+        },
+        "role": {
+          "en": "Pattern Warden",
+          "ko": "문양의 수호자"
+        },
+        "description": {
+          "en": "A fictional founder with balanced starting stats and a varied starting deck.",
+          "ko": "균형 잡힌 시작 능력치와 다양한 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "elon-musk",
+        "name": {
+          "en": "Elon Musk",
+          "ko": "일론 머스크"
+        },
+        "role": {
+          "en": "Frontier Smith",
+          "ko": "개척의 대장장이"
+        },
+        "description": {
+          "en": "A fictional founder with high starting health and gold and a fortification-heavy starting deck.",
+          "ko": "높은 시작 체력과 금화, 요새 카드 비중이 큰 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "demis-hassabis",
+        "name": {
+          "en": "Demis Hassabis",
+          "ko": "데미스 허사비스"
+        },
+        "role": {
+          "en": "Realm Tactician",
+          "ko": "왕국의 전술가"
+        },
+        "description": {
+          "en": "A fictional founder with balanced starting resources and a varied starting deck.",
+          "ko": "균형 잡힌 시작 자원과 다양한 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "jensen-huang",
+        "name": {
+          "en": "Jensen Huang",
+          "ko": "젠슨 황"
+        },
+        "role": {
+          "en": "Forge Steward",
+          "ko": "제련소의 집정관"
+        },
+        "description": {
+          "en": "A fictional founder with high starting health and several industry cards in the starting deck.",
+          "ko": "높은 시작 체력과 여러 산업 카드가 포함된 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "dario-amodei",
+        "name": {
+          "en": "Dario Amodei",
+          "ko": "다리오 아모데이"
+        },
+        "role": {
+          "en": "Oath Keeper",
+          "ko": "서약의 수호자"
+        },
+        "description": {
+          "en": "A fictional founder with high starting health and morale and a civic-minded starting deck.",
+          "ko": "높은 시작 체력과 민심, 시민 정책 카드가 담긴 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "sam-altman",
+        "name": {
+          "en": "Sam Altman",
+          "ko": "샘 알트먼"
+        },
+        "role": {
+          "en": "Guild Convener",
+          "ko": "길드의 소집자"
+        },
+        "description": {
+          "en": "A fictional founder with high starting food and a resource-focused starting deck.",
+          "ko": "높은 시작 식량과 자원 중심의 시작 덱을 지닌 허구의 창립자입니다."
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "stone-rampart",
+        "name": {
+          "en": "Stone Rampart",
+          "ko": "석조 성벽"
+        },
+        "description": {
+          "en": "Add strong defense to one selected hex.",
+          "ko": "선택한 타일 하나에 강한 방어를 추가합니다."
+        }
+      },
+      {
+        "id": "watch-beacon",
+        "name": {
+          "en": "Watch Beacon",
+          "ko": "감시 봉화"
+        },
+        "description": {
+          "en": "Add defense to one selected hex while conserving resources.",
+          "ko": "자원을 아끼며 선택한 타일 하나에 방어를 추가합니다."
+        }
+      },
+      {
+        "id": "granary-charter",
+        "name": {
+          "en": "Granary Charter",
+          "ko": "곡물창고 칙령"
+        },
+        "description": {
+          "en": "Gain food to sustain the realm through later waves.",
+          "ko": "이후 공세를 버틸 수 있도록 식량을 얻습니다."
+        }
+      },
+      {
+        "id": "fair-levy",
+        "name": {
+          "en": "Fair Levy",
+          "ko": "공정 징세"
+        },
+        "description": {
+          "en": "Adopt a measured tax policy to gain gold.",
+          "ko": "절제된 세금 정책을 시행해 금화를 얻습니다."
+        }
+      },
+      {
+        "id": "guild-forge",
+        "name": {
+          "en": "Guild Forge",
+          "ko": "길드 제련소"
+        },
+        "description": {
+          "en": "Invest in industry to gain gold and reinforce one selected hex.",
+          "ko": "산업에 투자해 금화를 얻고 선택한 타일 하나를 보강합니다."
+        }
+      },
+      {
+        "id": "village-council",
+        "name": {
+          "en": "Village Council",
+          "ko": "마을 평의회"
+        },
+        "description": {
+          "en": "Raise morale through a civic policy and steady the realm.",
+          "ko": "시민 정책으로 민심을 높여 왕국을 안정시킵니다."
+        }
+      },
+      {
+        "id": "relief-caravan",
+        "name": {
+          "en": "Relief Caravan",
+          "ko": "구호 마차대"
+        },
+        "description": {
+          "en": "Restore health and deliver food to the growing settlement.",
+          "ko": "체력을 회복하고 성장하는 정착지에 식량을 전달합니다."
+        }
+      },
+      {
+        "id": "crown-bastion",
+        "name": {
+          "en": "Crown Bastion",
+          "ko": "왕관 보루"
+        },
+        "description": {
+          "en": "Spend accumulated resources to add major defense to one selected hex.",
+          "ko": "모은 자원을 사용해 선택한 타일 하나에 큰 방어를 추가합니다."
+        }
+      }
+    ],
+    "enemies": [
+      {
+        "id": "mist-raider",
+        "name": {
+          "en": "Mist Raider",
+          "ko": "안개 약탈자"
+        }
+      },
+      {
+        "id": "thorn-brute",
+        "name": {
+          "en": "Thorn Brute",
+          "ko": "가시 거한"
+        }
+      },
+      {
+        "id": "ember-wyvern",
+        "name": {
+          "en": "Ember Wyvern",
+          "ko": "잿불 와이번"
+        }
+      }
+    ],
+    "waves": [
+      {
+        "title": {
+          "en": "Wave 1: The Lone Keep",
+          "ko": "공세 1: 외로운 성채"
+        },
+        "description": {
+          "en": "Mist Raiders may attack any shown tile in your seven-hex refuge.",
+          "ko": "안개 약탈자들이 일곱 타일 피난처에서 표시된 어느 타일이든 공격할 수 있습니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 2: The First Levy",
+          "ko": "공세 2: 첫 징세"
+        },
+        "description": {
+          "en": "Choose a measured policy, then defend the shown tiles from a wider raid.",
+          "ko": "절제된 정책을 선택한 뒤 더 넓어진 습격으로부터 표시된 타일을 지키세요."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 3: The Rising Town",
+          "ko": "공세 3: 성장하는 마을"
+        },
+        "description": {
+          "en": "Thorn Brutes press the shown tiles as your keep becomes a town.",
+          "ko": "성채가 마을로 성장하는 동안 가시 거한들이 표시된 타일을 압박합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 4: Guildfire",
+          "ko": "공세 4: 길드의 불꽃"
+        },
+        "description": {
+          "en": "Industry strengthens the realm, but mixed enemies attack the shown tiles.",
+          "ko": "산업이 왕국을 강화하지만 여러 적이 표시된 타일을 공격합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 5: The Crown Road",
+          "ko": "공세 5: 왕관의 길"
+        },
+        "description": {
+          "en": "Ember Wyverns descend as the town prepares to become a kingdom.",
+          "ko": "마을이 왕국으로 도약하려는 순간 잿불 와이번들이 내려옵니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 6: First Realm",
+          "ko": "공세 6: 최초의 왕국"
+        },
+        "description": {
+          "en": "All three enemy types strike the shown tiles in the final battle.",
+          "ko": "마지막 전투에서 세 종류의 적이 표시된 타일을 공격합니다."
+        }
+      }
+    ]
+  },
+  "art": {
+    "background": "#17251D",
+    "panel": "#F4E6C1",
+    "accent": "#A9672B",
+    "ink": "#172018",
+    "muted": "#596458",
+    "heroIcons": [
+      {
+        "id": "yann-lecun",
+        "icon": "spark"
+      },
+      {
+        "id": "elon-musk",
+        "icon": "star"
+      },
+      {
+        "id": "demis-hassabis",
+        "icon": "book"
+      },
+      {
+        "id": "jensen-huang",
+        "icon": "anvil"
+      },
+      {
+        "id": "dario-amodei",
+        "icon": "leaf"
+      },
+      {
+        "id": "sam-altman",
+        "icon": "crown"
+      }
+    ]
+  }
+}

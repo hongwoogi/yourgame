@@ -1,0 +1,4 @@
+# Archived artifacts must retain their exact reviewed bytes on every platform.
+/game-archive/** -text
+/game-archive/README.md text eol=lf
+/public/games/** -text

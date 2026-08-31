@@ -17,6 +17,8 @@ Self-check: Can every changed file be traced to the user request or a confirmed 
 ## Public development record
 Keep `README.md` English-first and `README.ko.md` aligned with it. Record meaningful project changes in `CHANGELOG.md` with English/Korean summaries, the reason, actual validation, and remaining limits. Preserve the Everyone Draw inspiration credit and the collective-intelligence premise. Public logs contain sanitized development summaries only; raw operational evidence and participant data stay in ignored `.local/`. A public repository or a log entry never grants release approval.
 
+The project is MIT-licensed; preserve `LICENSE` and third-party notices. Keep the shared YOURGAME hero in both READMEs. Every reviewed game import must retain its bundle and exact runtime under `game-archive/<version>/` through `copyReviewedGame`; commit that snapshot alongside `public/games/<version>/game.json`. Never delete or rewrite previous version snapshots or reuse a version for changed bytes. Run `npm run archive:check` before committing; archive presence is not release confirmation.
+
 ## Goal-Driven Execution
 Validate behavior and failure paths, not just HTTP status or a successful push. Use `npm run build` and relevant UI tests, then install/build a fresh `git archive` before deployment. Report confirmed failures promptly with their impact, evidence, and next action. Do not claim actual account login from a visible Google button.
 Self-check: Does my evidence cover the real outcome, and have I named what remains unverified?

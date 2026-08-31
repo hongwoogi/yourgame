@@ -2,6 +2,7 @@
   "name": "yourgame",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": "22.x"
@@ -11,6 +12,7 @@
     "test": "node --test tests/*.test.mjs",
     "test:ui": "playwright test",
     "check": "node scripts/check.mjs",
+    "archive:check": "node scripts/game-archive.mjs",
     "build": "node scripts/check.mjs --test",
     "db:init": "node --env-file-if-exists=.env.local scripts/init-db.mjs",
     "health": "node scripts/check-health.mjs --once"

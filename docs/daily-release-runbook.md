@@ -35,7 +35,7 @@ Codex의 이 제작·배포 스레드에 `yourga-me-2` 일일 후속 실행을 �
 
 1. 같은 날짜 회차의 진행 기록과 실제 DB 실행·선택 상태를 대조한다. 이미 검증·완료한 회차는 읽기 확인만 하고 끝낸다. 후보가 준비되지 않았다면 기존 게임을 유지하면서 권한 내 수정·재검증을 계속한다.
 2. DB 시각이 해당 회차 releaseAt 이상인지 확인하고 현재 입력·운영·독립 검토·정확한 바이트의 `admin-worker release-gate`를 다시 통과한다. `activate`와 `confirm`은 일일 루트 실행과 모든 재시도의 parent 계보에서 시각을 강제한다. 자정 전에는 `DAILY_RELEASE_NOT_DUE`로 거절하며 클라이언트 날짜나 승인 플래그로 우회할 수 없다.
-3. 검증한 커밋을 기존 GitHub/Vercel 경로로 배포한다. 직전 검증 게임도 고정 공개 목록과 파일에 유지한다. 배포가 READY이며 운영 도메인에서 검토한 파일 바이트가 일치하는지 확인한 뒤, 최신 selection revision을 사용해 `createGamePublicationStore(client).activate(...)`한다.
+3. 공개 gate를 통과한 뒤 `copyReviewedGame`으로 검토한 바이트를 가져온다. 이 함수는 `public/games/<version>/game.json`과 함께 `game-archive/<version>/`에 당시 게임·런타임·무결성 목록을 누적하며 다른 내용의 동일 버전을 거절한다. 과거 보관 폴더와 공개 게임 데이터를 삭제하지 않고 새 버전 폴더만 추가한다. `npm run archive:check`와 전체 검증 후 **보관소와 공개 파일을 함께 커밋**하고 새 archive 설치/build를 통과한 커밋을 GitHub/Vercel 경로로 배포한다. 자정 전에는 이 후보를 public repo에 push하지 않는다. 직전 검증 게임도 고정 공개 목록과 파일에 유지한다. 배포가 READY이며 운영 도메인에서 검토한 파일 바이트가 일치하는지 확인한 뒤, 최신 selection revision을 사용해 `createGamePublicationStore(client).activate(...)`한다.
 4. 메인 페이지에서 실제 게임 버전과 모바일/PC 플레이·EN/KO·저장·격리를 확인한다. 실패하면 기록된 이전 verified 선택으로 rollback하고 실제 복귀를 확인한다. 사용자 DB를 과거 스냅샷으로 덮어쓰지 않는다.
 5. 실검증 성공 후 `confirm(...)`, 이어 `admin-worker update --status completed` 순서로 기록한다. 정확한 옵션·releaseBinding은 `docs/game-agent-workflow.md`와 구현 계약을 따른다. 앱 배포 성공이나 HTTP200만으로 게임 출시를 기록하지 않는다.
 6. 실제 마감/배포 시각, 버전·URL, 지연 여부와 미검증 항목만 간결히 보고한다. 자정 이후 완료되었으면 지연 배포로 기록한다. 실패한 검사를 삭제하거나 안전 gate를 해제해서 정시 성공을 만들어내지 않는다.

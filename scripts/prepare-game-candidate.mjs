@@ -6,14 +6,11 @@ import { preparePrivateFile, resolvePrivateFile } from './private-records.mjs';
 import { readSnapshot } from './export-initial-round.mjs';
 import { digestArtifactFiles, inspectCandidate } from './check-game-release.mjs';
 import { validateGameBundle } from '../public/game-bundle.js';
+import { GAME_RUNTIME_FILES } from './game-runtime-files.mjs';
+import { archiveGameVersion } from './game-archive.mjs';
+export { GAME_RUNTIME_FILES } from './game-runtime-files.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-export const GAME_RUNTIME_FILES = Object.freeze([
-  'public/game-runtime-engine.js', 'public/game-runtime-frame.js', 'public/game-bundle.js',
-  'public/game-runtime.css', 'public/game-frame.html', 'public/game-host.js',
-  'public/game-save-store.js', 'public/game-save-bridge.js', 'public/app.js',
-  'public/styles.css', 'public/index.html', 'vercel.json',
-]);
 export const hashBytes = bytes => createHash('sha256').update(bytes).digest('hex');
 export async function runtimeInventory() {
   const files = [];
@@ -62,6 +59,12 @@ export async function copyReviewedGame({ candidateFile, snapshot, runId, release
   const bundle = validateGameBundle(JSON.parse(content));
   if (hashBytes(content) !== release.releaseBinding.contentSha256 || bundle.config.gameVersion !== release.releaseBinding.gameVersion
       || runtimeInventoryDigest(await runtimeInventory()) !== release.releaseBinding.runtimeDigest) throw new Error('REVIEW_BYTES_CHANGED');
+  const runtimeFiles = [];
+  for (const name of GAME_RUNTIME_FILES) runtimeFiles.push({ path: name,
+    content: await readFile(path.join(path.dirname(candidateFile), 'source/runtime', name)) });
+  if (runtimeInventoryDigest(runtimeFiles.map(file => ({ path: file.path, bytes: file.content.length,
+    sha256: hashBytes(file.content) }))) !== release.releaseBinding.runtimeDigest) throw new Error('REVIEW_BYTES_CHANGED');
+  await archiveGameVersion({ content, runtimeFiles });
   const target = path.join(root, 'public/games', bundle.config.gameVersion, 'game.json');
   await mkdir(path.dirname(target), { recursive: true });
   try { await writeFile(target, content, { flag: 'wx' }); }

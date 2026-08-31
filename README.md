@@ -1,3 +1,5 @@
+![YOURGAME — many ideas becoming one shared game world](docs/assets/yourgame-hero.png)
+
 # yourga.me
 
 **What if collective intelligence produced a game?**
@@ -5,6 +7,8 @@
 **English** · [한국어](README.ko.md)
 
 [Visit yourga.me](https://yourga.me/?lang=en) · [Development log](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+
+**An MIT-licensed open-source experiment in collective game creation.** Build on it, fork it, and help shape what comes next. [License](LICENSE) · [Game version archive](game-archive/)
 
 Wikipedia shows what people can build when they bring their knowledge together. **yourga.me asks what would happen if that shared effort became a game:** a world shaped by many people's ideas, evolving into something no single person would have designed alone.
 
@@ -69,6 +73,7 @@ npm run test:ui
 | `.codex/agents/` | Definitions for the five game-development roles |
 | `docs/` | Design decisions, feature contracts, and operational procedures |
 | `CHANGELOG.md` | Public English/Korean development record |
+| `game-archive/` | Cumulative version snapshots: game data, original runtime source, and integrity manifests |
 | `.local/` | Ignored local databases, raw logs, and private verification records |
 
 The existing stack uses JavaScript modules, Vercel hosting, Turso data storage, a Cloudflare-managed domain, and the operator's local Codex workflow. Publishing this repository does not grant access to those accounts or production data.
@@ -76,6 +81,8 @@ The existing stack uses JavaScript modules, Vercel hosting, Turso data storage, 
 Scheduled local work requires the operator's PC and Codex app to be running. Network, application, or usage limits can delay a run; failed validation leaves the last verified game in place.
 
 ## Development in public
+
+Every new reviewed game version is preserved alongside earlier versions in the [game archive](game-archive/). The importer refuses to overwrite a version with different bytes, and build checks require public games to have complete, matching snapshots. Archive entries preserve source; actual release outcomes remain separately verified and recorded.
 
 We record meaningful changes, the reason for them, validation results, and known limitations in the bilingual [development log](CHANGELOG.md). Git history preserves the detailed code changes. Future contributions should update the log and keep both READMEs aligned.
 
@@ -97,4 +104,4 @@ Most detailed project documents are currently in Korean; the two READMEs cover t
 
 ## License
 
-The source is publicly visible, but no open-source license has been selected yet. Public visibility does not itself grant a general license to reuse or redistribute the project. Third-party dependencies retain their own licenses.
+yourga.me is open source under the [MIT License](LICENSE). You may use, modify, distribute, and use it commercially, provided you retain the copyright and permission notice. The software is provided without warranty. Third-party dependencies retain their own licenses. See the [standard MIT license](https://opensource.org/license/mit).
