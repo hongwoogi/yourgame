@@ -6,6 +6,12 @@ Dates use Asia/Seoul (KST). This is a sanitized project development log, not a d
 
 날짜는 한국시간(KST) 기준입니다. 운영 원본 출력이나 참여자 데이터를 담지 않는 공개 개발 기록입니다. 코드 변경 기록은 운영 배포·게임 공개의 증거가 아닙니다. 과거 항목은 기존 커밋을 요약하며, 기록 작성 시점에 해당 버전을 다시 검증했다는 뜻은 아닙니다.
 
+## 2026-09-01 — Hide game scrollbars / 게임 스크롤바 숨김
+
+- **Changed / 변경:** Hide the scrollbar only inside the game while retaining wheel, touch, and keyboard scrolling. / 게임 안쪽의 스크롤바만 숨기고 휠·터치·키보드 스크롤은 유지합니다.
+- **Validation / 검증:** The full local build passed 610 tests with one existing optional skip; all 25 game host/runtime/save browser tests passed. Local desktop/mobile checks passed in English and Korean, including scrolling, keyboard access to the start button, game startup, the 9:16 frame, and unchanged iframe restrictions. Archive integrity checks passed. / 로컬 전체 빌드는 610개 통과·기존 선택 검사 1개 건너뜀이며 게임 호스트·런타임·저장 브라우저 검사 25개가 모두 통과했습니다. 영문·한글 PC/모바일에서 스크롤, 키보드로 시작 버튼 접근, 게임 시작, 9:16 화면과 기존 iframe 제한을 확인했습니다. 보관 파일 무결성 검사도 통과했습니다.
+- **Scope / 범위:** This presentation change preserves the published game data, immutable version archive, save format, and service data. It does not generate or select a new game version. / 화면 표시만 변경하며 공개 게임 데이터·불변 버전 보관본·저장 형식·서비스 데이터를 유지합니다. 새 게임 버전을 생성하거나 선택하지 않습니다.
+
 ## 2026-09-01 — MIT, YOURGAME banner, and cumulative game versions / MIT·대표 이미지·게임 버전 누적
 
 - **Why / 이유:** Make the project reusable as MIT open source, give it a recognizable visual identity, and retain each game version in the repository. / MIT 오픈소스로 재사용할 수 있게 하고 대표 이미지를 마련하며 각 게임 버전을 저장소에 누적 보존합니다.
