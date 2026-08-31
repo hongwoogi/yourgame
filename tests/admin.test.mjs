@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { readFile } from 'node:fs/promises';
 import { createClient } from '@libsql/client';
 import { createApiHandler } from '../server/app.mjs';
 import { createStore, hashValue } from '../server/store.mjs';
@@ -47,17 +48,17 @@ async function approveProposal(f, proposalId) {
     safetyReviewId: input.safetyReviewId, safetyRevision: input.safetyRevision, developmentBriefHash: input.developmentBriefHash };
 }
 
-async function pageRequest(handler, login) {
+async function pageRequest(handler, login, { url = '/api/admin-page', method = 'GET', headers = {}, routeOverride } = {}) {
   const req = Readable.from([]);
-  req.method = 'GET'; req.url = '/api/admin-page';
-  req.headers = login ? { cookie: signedHeaders(login).cookie } : {};
+  req.method = method; req.url = url;
+  req.headers = { ...(login ? { cookie: signedHeaders(login).cookie } : {}), ...headers };
   const response = { status: 200, headers: {}, text: '' };
   const res = {
     setHeader(name, value) { response.headers[name.toLowerCase()] = value; },
     set statusCode(value) { response.status = value; },
     end(value) { response.text = value; },
   };
-  await handler(req, res);
+  await handler(req, res, routeOverride);
   return response;
 }
 
@@ -115,7 +116,7 @@ test('login ignores client email/admin claims and administrator HTML is never se
   const ordinary = { token: forged.cookie.split('=')[1], session: { csrfToken: forged.body.csrfToken } };
   const guestPage = await pageRequest(handler);
   assert.equal(guestPage.status, 302);
-  assert.equal(guestPage.headers.location, '/?admin=1');
+  assert.equal(guestPage.headers.location, '/?master=1');
   const denied = await pageRequest(handler, ordinary);
   assert.equal(denied.status, 403);
   assert.doesNotMatch(denied.text, /private administrator shell/);
@@ -126,6 +127,92 @@ test('login ignores client email/admin claims and administrator HTML is never se
   assert.match(allowed.headers['cache-control'], /no-store/);
   assert.match(allowed.text, /private administrator shell/);
   assert.equal(pageReads, 1);
+});
+
+test('master aliases and the unchanged page API apply the same guest, member and administrator gate', async t => {
+  const f = await adminFixture(t);
+  const member = await f.login();
+  let reads = 0;
+  const handler = createApiHandler({ config: f.config, store: f.store, now: f.now, log() {},
+    readAdminPage: async () => { reads += 1; return '<html>protected administrator template</html>'; } });
+  const routing = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  for (const pathname of ['/master', '/master/', '/api/admin-page']) {
+    const destination = routing.rewrites.find(rule => rule.source === pathname)?.destination ?? pathname;
+    assert.equal(destination, '/api/admin-page');
+    // Exercise both direct local dispatch and a serverless rewrite that has
+    // already replaced req.url with the function destination.
+    for (const route of [{ url: `${pathname}?role=admin` }, { url: `${destination}?role=admin`, routeOverride: destination }]) {
+      const guest = await pageRequest(handler, null, route);
+      assert.equal(guest.status, 302);
+      assert.equal(guest.headers.location, '/?master=1');
+      assert.match(guest.headers['cache-control'], /no-store/);
+      assert.doesNotMatch(guest.text, /protected administrator template/);
+      const denied = await pageRequest(handler, member, route);
+      assert.equal(denied.status, 403);
+      assert.equal(JSON.parse(denied.text).error.code, 'ADMIN_REQUIRED');
+      assert.doesNotMatch(denied.text, /protected administrator template/);
+      const allowed = await pageRequest(handler, f.admin, route);
+      assert.equal(allowed.status, 200);
+      assert.match(allowed.headers['content-type'], /text\/html/);
+      assert.match(allowed.headers['cache-control'], /no-store/);
+      assert.equal(allowed.headers['content-language'], 'en');
+      assert.equal(allowed.text, '<html>protected administrator template</html>');
+    }
+  }
+  assert.equal(reads, 6, 'only the six authenticated administrator requests can read the template');
+});
+
+test('legacy bookmarks use a query-preserving same-origin redirect without reading sessions, the database or private HTML', async t => {
+  const f = await backendFixture(t);
+  let databaseReads = 0;
+  let pageReads = 0;
+  const handler = createApiHandler({ config: f.config, now: f.now, log() {},
+    getStore: async () => { databaseReads += 1; throw new Error('Unexpected database access'); },
+    readAdminPage: async () => { pageReads += 1; return 'private template'; } });
+  const routing = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const query = '?lang=en&tab=users&tab=audit&returnTo=https%3A%2F%2Fevil.invalid%2F&note=%0D%0A';
+  for (const pathname of ['/admin', '/admin/', '/api/admin-redirect']) {
+    const destination = routing.rewrites.find(rule => rule.source === pathname)?.destination ?? pathname;
+    assert.equal(destination, '/api/admin-redirect');
+    for (const route of [{ url: `${pathname}${query}` }, { url: `${destination}${query}`, routeOverride: destination }]) {
+      const response = await pageRequest(handler, null, route);
+      assert.equal(response.status, 307);
+      assert.equal(response.headers.location, `/master${query}`);
+      assert.match(response.headers['cache-control'], /no-store/);
+      assert.match(response.headers['content-type'], /text\/plain/);
+      assert.equal(new URL(response.headers.location, f.config.appOrigin).origin, f.config.appOrigin);
+      assert.equal(response.headers['set-cookie'], undefined);
+      assert.doesNotMatch(response.text, /private template/);
+    }
+    const plain = await pageRequest(handler, null, { url: pathname });
+    assert.equal(plain.headers.location, '/master');
+  }
+  assert.equal(databaseReads, 0);
+  assert.equal(pageReads, 0);
+});
+
+test('page aliases and legacy redirects reject unsupported methods and cross-origin requests without loading protected state', async t => {
+  const f = await backendFixture(t);
+  let databaseReads = 0;
+  const handler = createApiHandler({ config: f.config, now: f.now, log() {},
+    getStore: async () => { databaseReads += 1; throw new Error('Unexpected database access'); } });
+  for (const url of ['/master', '/master/', '/admin', '/admin/', '/api/admin-page', '/api/admin-redirect']) {
+    for (const method of ['HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+      const rejected = await pageRequest(handler, null, { url, method });
+      assert.equal(rejected.status, 405, `${method} ${url}`);
+      assert.equal(rejected.headers.allow, 'GET');
+      assert.match(rejected.headers['cache-control'], /no-store/);
+      assert.equal(rejected.headers.location, undefined);
+    }
+    for (const headers of [{ origin: 'https://evil.invalid' }, { 'sec-fetch-site': 'cross-site' }]) {
+      const rejected = await pageRequest(handler, null, { url, headers });
+      assert.equal(rejected.status, 403);
+      assert.equal(JSON.parse(rejected.text).error.code, 'ORIGIN_REJECTED');
+      assert.match(rejected.headers['cache-control'], /no-store/);
+      assert.equal(rejected.headers.location, undefined);
+    }
+  }
+  assert.equal(databaseReads, 0);
 });
 
 test('every administrator read/write action rejects guests and ordinary users and checks CSRF/Origin', async t => {

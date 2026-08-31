@@ -6,6 +6,9 @@ import { createHash } from 'node:crypto';
 const html = readFileSync(new URL('../server/admin-page.html', import.meta.url), 'utf8');
 const script = readFileSync(new URL('../public/admin.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../public/admin.css', import.meta.url), 'utf8');
+const languageAssets = Object.fromEntries(['language-control.css', 'flags/en.svg', 'flags/ko.svg']
+  .map((name) => ['/' + name, { contentType: name.endsWith('.css') ? 'text/css' : 'image/svg+xml',
+    body: readFileSync(new URL('../public/' + name, import.meta.url), 'utf8') }]));
 const modules = Object.fromEntries(['i18n.js', 'error-messages.js', 'admin-messages.js']
   .map((name) => ['/' + name, readFileSync(new URL('../public/' + name, import.meta.url), 'utf8')]));
 const NOW = '2026-08-31T05:00:00.000Z';
@@ -34,9 +37,10 @@ async function fixture(page, options = {}) {
   await page.route('http://localhost:3000/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === '/admin' || url.pathname === '/admin/') return route.fulfill({ contentType: 'text/html', headers: { 'Cache-Control': 'no-store' }, body: html });
+    if (url.pathname === '/master' || url.pathname === '/master/') return route.fulfill({ contentType: 'text/html', headers: { 'Cache-Control': 'no-store' }, body: html });
     if (url.pathname === '/admin.js') return route.fulfill({ contentType: 'text/javascript', body: script });
     if (url.pathname === '/admin.css') return route.fulfill({ contentType: 'text/css', body: css });
+    if (Object.hasOwn(languageAssets, url.pathname)) return route.fulfill(languageAssets[url.pathname]);
     if (Object.hasOwn(modules, url.pathname)) return route.fulfill({ contentType: 'text/javascript', body: modules[url.pathname] });
     if (url.pathname === '/api/locale') {
       state.localeReads += 1;
@@ -162,7 +166,7 @@ async function fixture(page, options = {}) {
     return reply(route, result);
   });
   // Existing Korean flows opt in explicitly. `language: null` exercises default/geo selection.
-  await page.goto(options.language === null ? '/admin' : '/admin?lang=' + (options.language || 'ko'));
+  await page.goto(options.language === null ? '/master' : '/master?lang=' + (options.language || 'ko'));
   if (state.session.user?.isAdmin) await expect(page.locator('#admin-shell')).toBeVisible();
   else await expect(page.locator('#admin-gate')).toBeVisible();
   return state;
@@ -445,7 +449,7 @@ test('reauth refusal preserves reasons and offers the fixed Google reauth path',
   await expect(page.locator('#action-reason')).toHaveValue('재인증 뒤 확인할 종료 사유');
   await expect(page.locator('#action-confirmation')).toHaveValue('');
   await expect(page.locator('#action-reauth-link')).toBeVisible();
-  await expect(page.locator('#action-reauth-link')).toHaveAttribute('href', '/?admin=1&reauth=1');
+  await expect(page.locator('#action-reauth-link')).toHaveAttribute('href', '/?master=1&reauth=1');
   await expect(page.locator('#admin-shell')).toBeVisible();
   expect(state.service.mode).toBe('active');
   expect(state.writes).toHaveLength(1);

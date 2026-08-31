@@ -17,7 +17,7 @@ const mimeTypes = {
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
-const routes = new Set(['locale', 'status', 'session', 'login', 'logout', 'proposals', 'community', 'health', 'admin', 'admin-page']);
+const routes = new Set(['locale', 'status', 'session', 'login', 'logout', 'proposals', 'community', 'health', 'admin', 'admin-page', 'admin-redirect']);
 
 export const devServer = http.createServer(async (req, res) => {
   try {
@@ -27,8 +27,11 @@ export const devServer = http.createServer(async (req, res) => {
         ? header.value.replace('; upgrade-insecure-requests', '') : header.value);
     }
     const url = new URL(req.url, process.env.APP_ORIGIN);
-    if (url.pathname === '/health.json') url.pathname = '/api/health';
-    if (url.pathname === '/admin' || url.pathname === '/admin/') url.pathname = '/api/admin-page';
+    // These local aliases use the same exact API rewrites as production. Keep
+    // req.url intact so a legacy bookmark's query reaches its redirect handler.
+    const rewrite = config.rewrites?.find(entry => entry.source === url.pathname
+      && /^\/api\/[a-z-]+$/.test(entry.destination));
+    if (rewrite) url.pathname = rewrite.destination;
     if (url.pathname.startsWith('/api/')) {
       const route = url.pathname.slice(5);
       if (!routes.has(route)) {

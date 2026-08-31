@@ -28,6 +28,11 @@ const METHODS = {
   '/api/health': ['GET'],
   '/api/admin': ['GET', 'POST'],
   '/api/admin-page': ['GET'],
+  '/api/admin-redirect': ['GET'],
+};
+const PAGE_ROUTES = {
+  '/master': '/api/admin-page', '/master/': '/api/admin-page',
+  '/admin': '/api/admin-redirect', '/admin/': '/api/admin-redirect',
 };
 
 function header(req, name) {
@@ -165,6 +170,7 @@ export function createApiHandler({
       res.setHeader('X-Request-Id', requestId);
       try {
         if (!routeOverride) route = new URL(req.url, 'http://internal.invalid').pathname;
+        if (Object.hasOwn(PAGE_ROUTES, route)) route = PAGE_ROUTES[route];
         const method = req.method || 'GET';
         if (!METHODS[route]) throw new ApiError(404, 'NOT_FOUND', '요청한 기능을 찾을 수 없습니다.');
         if (!METHODS[route].includes(method)) {
@@ -173,6 +179,16 @@ export function createApiHandler({
         }
         const mutation = method !== 'GET';
         ensureOrigin(req, config.appOrigin, mutation);
+
+        if (route === '/api/admin-redirect') {
+          // This bookmark redirect is public navigation only. Keep the target
+          // same-origin and never consult a session or load the private page.
+          const query = new URL(req.url, 'http://internal.invalid').search;
+          res.statusCode = 307;
+          res.setHeader('Location', `/master${query}`);
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          return res.end(locale === 'ko' ? '관리자 페이지 주소가 변경되었습니다.' : 'The administrator page has moved.');
+        }
 
         if (route === '/api/locale') return respond(res, 200, language);
 
@@ -241,7 +257,7 @@ export function createApiHandler({
         if (route === '/api/admin-page') {
           if (!session?.user) {
             res.statusCode = 302;
-            res.setHeader('Location', '/?admin=1');
+            res.setHeader('Location', '/?master=1');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             return res.end(locale === 'ko' ? '관리자 로그인이 필요합니다.' : 'Administrator sign-in is required.');
           }

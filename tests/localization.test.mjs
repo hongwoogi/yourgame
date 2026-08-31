@@ -356,8 +356,8 @@ test('administrator HTML declares English, redirects use the selected language, 
   const koRedirect = await page('ko');
   assert.equal(enRedirect.status, 302);
   assert.equal(koRedirect.status, 302);
-  assert.equal(enRedirect.headers.location, '/?admin=1');
-  assert.equal(koRedirect.headers.location, '/?admin=1');
+  assert.equal(enRedirect.headers.location, '/?master=1');
+  assert.equal(koRedirect.headers.location, '/?master=1');
   assert.equal(enRedirect.text, 'Administrator sign-in is required.');
   assert.equal(koRedirect.text, '관리자 로그인이 필요합니다.');
   const allowed = await page('ko', true);

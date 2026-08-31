@@ -25,7 +25,8 @@ const html = await readFile(path.join(root, 'public', 'index.html'), 'utf8');
 if (!html.includes('lang="en"') || !html.includes('app.js') || !html.includes('styles.css') || !html.includes('data-language-select')) {
   throw new Error('The English-first entry page, language selector and assets must be present.');
 }
-for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css', 'i18n.js', 'error-messages.js', 'public-messages.js', 'admin-messages.js']) {
+for (const asset of ['app.js', 'styles.css', 'admin.js', 'admin.css', 'language-control.css', 'flags/en.svg', 'flags/ko.svg',
+  'i18n.js', 'error-messages.js', 'public-messages.js', 'admin-messages.js']) {
   if (!(await readFile(path.join(root, 'public', asset), 'utf8')).trim()) {
     throw new Error(`Required browser asset is empty: ${asset}`);
   }
@@ -34,7 +35,7 @@ const adminHtml = await readFile(path.join(root, 'server', 'admin-page.html'), '
 if (!adminHtml.includes('lang="en"') || !adminHtml.includes('/admin.js') || !adminHtml.includes('/admin.css') || !adminHtml.includes('data-language-select')) {
   throw new Error('The English-first protected administrator page, language selector and assets must be present.');
 }
-if ((await readdir(path.join(root, 'public'))).some(name => /^admin(?:-page)?\.html$/i.test(name))) {
+if ((await readdir(path.join(root, 'public'))).some(name => /^(?:admin(?:-page)?|master)\.html$/i.test(name))) {
   throw new Error('Administrator HTML must not be deployed as a public static file.');
 }
 // Registering the real catalogs checks language-key and interpolation parity

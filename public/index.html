@@ -12,6 +12,7 @@
   <title data-i18n="public.pageTitle">yourga.me — One roguelike, shaped by your prompts</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23101510'/%3E%3Cpath d='M10 10h7v7h6v-7h7v13h-7v7h-7V20h-6z' fill='%23d0ef8a'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/language-control.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body data-app="yourgame">
@@ -32,9 +33,9 @@
         </label>
         <div id="account-area" class="account-area">
           <span id="user-name" class="user-name" hidden></span>
-          <a class="button button-quiet admin-link" id="admin-link" href="/admin" hidden data-i18n="public.admin">Admin</a>
-          <button class="button button-quiet" id="login-button" type="button" disabled><span class="button-copy" data-i18n="public.logIn">Log in</span> <span aria-hidden="true">↗</span></button>
-          <button class="button button-quiet" id="logout-button" type="button" hidden data-i18n="public.logOut">Log out</button>
+          <a class="button button-quiet admin-link" id="admin-link" href="/master" hidden aria-label="Admin" data-i18n-aria-label="public.admin" title="Admin" data-i18n-title="public.admin"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6l8-3Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 12h7M12 8.5v7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span class="button-copy" data-i18n="public.admin">Admin</span></a>
+          <button class="button button-quiet" id="login-button" type="button" disabled aria-label="Log in" data-i18n-aria-label="public.logIn" title="Log in" data-i18n-title="public.logIn"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 4h6v16h-6M3 12h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="button-copy" data-i18n="public.logIn">Log in</span> <span class="account-arrow" aria-hidden="true">↗</span></button>
+          <button class="button button-quiet" id="logout-button" type="button" hidden aria-label="Log out" data-i18n-aria-label="public.logOut" title="Log out" data-i18n-title="public.logOut"><svg class="account-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 4H4v16h6m0-8h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="button-copy" data-i18n="public.logOut">Log out</span></button>
         </div>
       </div>
     </header>

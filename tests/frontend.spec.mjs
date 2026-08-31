@@ -44,7 +44,7 @@ async function fixture(page, options = {}) {
       } } };`,
     });
   });
-  await page.route('**/admin', (route) => {
+  await page.route('**/master', (route) => {
     state.adminVisits += 1;
     return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Mock admin destination</title><h1>관리자 도착 테스트</h1>' });
   });
@@ -142,7 +142,7 @@ async function fixture(page, options = {}) {
   const entry = new URL(options.path || '/', 'http://localhost:3000');
   if (options.locale !== null && !entry.searchParams.has('lang')) entry.searchParams.set('lang', options.locale || 'ko');
   await page.goto(entry.pathname + entry.search + entry.hash);
-  if (options.expectAdminNavigation) await expect(page).toHaveURL('http://localhost:3000/admin');
+  if (options.expectAdminNavigation) await expect(page).toHaveURL('http://localhost:3000/master');
   else await expect(page.locator(state.session.user ? '#logout-button' : '#login-button')).toBeEnabled();
   return state;
 }
@@ -622,13 +622,14 @@ test('only the server boolean admin flag reveals the fixed admin link, including
   state.session.user.isAdmin = true;
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect(page.locator('#admin-link')).toBeVisible();
-  await expect(page.locator('#admin-link')).toHaveAttribute('href', '/admin');
+  await expect(page.locator('#admin-link')).toHaveAttribute('href', '/master');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.locator('#logout-button').click();
   await expect(page.locator('#admin-link')).toBeHidden();
 });
 
-test('admin entry clears pending Send, preserves the draft and ignores external redirect parameters', async ({ page }) => {
+for (const entryParameter of ['master', 'admin']) {
+test(`${entryParameter} login entry clears pending Send, preserves the draft and ignores external redirects`, async ({ page }) => {
   const draft = '관리자 로그인에서는 전송하면 안 되는 제안';
   await page.addInitScript(({ draft, started }) => {
     if (location.pathname !== '/' || sessionStorage.getItem('admin-entry-seeded')) return;
@@ -636,20 +637,21 @@ test('admin entry clears pending Send, preserves the draft and ignores external 
     localStorage.setItem('yourgame.draft.v1', draft);
     sessionStorage.setItem('yourgame.pending.v1', JSON.stringify({ body: draft, requestId: 'admin-entry-test', createdAt: started }));
   }, { draft, started: START });
-  const state = await fixture(page, { path: '/?admin=1&redirect=https://example.invalid/', loginSession: structuredClone(administrator) });
+  const state = await fixture(page, { path: `/?${entryParameter}=1&redirect=https://example.invalid/`, loginSession: structuredClone(administrator) });
   await expect(page.locator('#login-title')).toHaveText('관리자 로그인');
   await expect(page.locator('#login-draft-note')).toContainText('전송되지는');
   expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
   await googleLogin(page);
-  await expect(page).toHaveURL('http://localhost:3000/admin');
+  await expect(page).toHaveURL('http://localhost:3000/master');
   expect(state.adminVisits).toBe(1);
   expect(state.posts).toHaveLength(0);
   expect(state.patches).toHaveLength(0);
   expect(await page.evaluate(() => localStorage.getItem('yourgame.draft.v1'))).toBe(draft);
 });
+}
 
 test('an already authenticated admin can enter despite public status and proposal read failures', async ({ page }) => {
-  const state = await fixture(page, { path: '/?admin=1', session: structuredClone(administrator),
+  const state = await fixture(page, { path: '/?master=1', session: structuredClone(administrator),
     statusFailure: true, privateFailure: true, expectAdminNavigation: true });
   expect(state.adminVisits).toBe(1);
   expect(state.loginCalls).toBe(0);
@@ -657,7 +659,7 @@ test('an already authenticated admin can enter despite public status and proposa
 });
 
 test('admin reauthentication requires a successful new login and does not trust the old admin session after failure', async ({ page }) => {
-  const state = await fixture(page, { path: '/?admin=1&reauth=1', session: structuredClone(administrator),
+  const state = await fixture(page, { path: '/?master=1&reauth=1', session: structuredClone(administrator),
     loginSession: { ...structuredClone(administrator), csrfToken: 'fresh-admin-csrf', googleNonce: 'fresh-admin-nonce' }, loginFailure: true });
   await expect(page.locator('#login-dialog')).toBeVisible();
   expect(state.loginCalls).toBe(0);
@@ -668,7 +670,7 @@ test('admin reauthentication requires a successful new login and does not trust 
   state.loginFailure = false;
   await page.locator('#retry-google').click();
   await googleLogin(page);
-  await expect(page).toHaveURL('http://localhost:3000/admin');
+  await expect(page).toHaveURL('http://localhost:3000/master');
   expect(state.loginCalls).toBe(2);
   expect(state.adminVisits).toBe(1);
   expect(state.posts).toHaveLength(0);
@@ -676,7 +678,7 @@ test('admin reauthentication requires a successful new login and does not trust 
 
 test('an ordinary account completing admin login stays on the public page without submitting or looping', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('yourgame.draft.v1', '권한이 없어도 보존할 초안'));
-  const state = await fixture(page, { path: '/?admin=1&reauth=1' });
+  const state = await fixture(page, { path: '/?master=1&reauth=1' });
   await googleLogin(page);
   await expect(page.locator('#login-dialog')).toBeHidden();
   await expect(page.locator('#form-message')).toContainText('관리자 권한이 없어요');
@@ -693,10 +695,11 @@ test('an ordinary account completing admin login stays on the public page withou
 
 test('canceling admin reauthentication consumes the entry flags and keeps existing drafts', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('yourgame.draft.v1', '재인증 취소 후 남길 초안'));
-  const state = await fixture(page, { path: '/?admin=1&reauth=1', session: structuredClone(administrator) });
+  const state = await fixture(page, { path: '/?master=1&admin=1&reauth=1', session: structuredClone(administrator) });
   await expect(page.locator('#login-dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect(page).toHaveURL('http://localhost:3000/?lang=ko');
   await page.reload();
   await expect(page.locator('#admin-link')).toBeVisible();
   await expect(page.locator('#login-dialog')).toBeHidden();

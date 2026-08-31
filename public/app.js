@@ -27,7 +27,7 @@ import './public-messages.js';
   const AUTH_PULSE_KEY = 'yourgame.auth-pulse.v1';
   const PENDING_MAX_AGE = 10 * 60 * 1000;
   const entryParameters = new URLSearchParams(window.location.search);
-  const requestedAdmin = entryParameters.get('admin') === '1';
+  const requestedAdmin = entryParameters.get('master') === '1' || entryParameters.get('admin') === '1';
   const requestedReauthentication = requestedAdmin && entryParameters.get('reauth') === '1';
   const encoder = new TextEncoder();
   const byId = (id) => document.getElementById(id);
@@ -946,7 +946,7 @@ import './public-messages.js';
     clearPending();
     saveCurrentDraft();
     // This is an entry shortcut only. The server authorizes every admin request.
-    window.location.assign('/admin');
+    window.location.assign('/master');
   }
 
   async function handleAdminEntry() {
@@ -956,6 +956,7 @@ import './public-messages.js';
     saveCurrentDraft();
     // Consuming these flags prevents Back/reload from reopening the same login modal.
     const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete('master');
     nextUrl.searchParams.delete('admin');
     nextUrl.searchParams.delete('reauth');
     window.history.replaceState(window.history.state, '', nextUrl.pathname + nextUrl.search + nextUrl.hash);

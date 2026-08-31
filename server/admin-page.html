@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#101510">
   <title data-i18n="admin.pageTitle">yourga.me — Administration</title>
   <link rel="stylesheet" href="/admin.css">
+  <link rel="stylesheet" href="/language-control.css">
   <script type="module" src="/admin.js"></script>
 </head>
 <body data-app="yourgame-admin">
@@ -16,13 +17,13 @@
     <p class="eyebrow" data-i18n="admin.privateRoom">PRIVATE CONTROL ROOM</p>
     <h1 id="gate-title" data-i18n="admin.gateChecking">Checking administrator access.</h1>
     <p id="gate-message" data-i18n="admin.gateCheckingDescription">The server checks your sign-in and permissions before showing administrative data.</p>
-    <div class="gate-actions"><a id="gate-login" class="button primary" href="/?admin=1" hidden data-i18n="admin.loginAdmin">Sign in as administrator</a><button id="gate-retry" class="button" type="button" hidden data-i18n="admin.checkAgain">Check again</button><a class="text-link" href="/" data-i18n="admin.returnService">Back to yourga.me ↗</a></div>
+    <div class="gate-actions"><a id="gate-login" class="button primary" href="/?master=1" hidden data-i18n="admin.loginAdmin">Sign in as administrator</a><button id="gate-retry" class="button" type="button" hidden data-i18n="admin.checkAgain">Check again</button><a class="text-link" href="/" data-i18n="admin.returnService">Back to yourga.me ↗</a></div>
   </main>
 
   <div id="admin-shell" hidden>
     <header class="admin-header">
-      <a class="admin-wordmark" href="/admin">yourga<span>.</span>me <small data-i18n="admin.adminBadge">ADMIN</small></a>
-      <div class="header-account"><div><strong id="admin-name"></strong><span id="admin-email"></span></div><a class="text-link" href="/" target="_blank" rel="noopener noreferrer" data-i18n="admin.viewService">View site ↗</a><button id="admin-logout" class="button small" type="button" data-i18n="admin.logout">Sign out</button></div>
+      <a class="admin-wordmark" href="/master">yourga<span>.</span>me <small data-i18n="admin.adminBadge">ADMIN</small></a>
+      <div class="header-account"><div><strong id="admin-name"></strong><span id="admin-email"></span></div><a class="text-link header-site-link" href="/" target="_blank" rel="noopener noreferrer" aria-label="View site ↗" data-i18n-aria-label="admin.viewService" title="View site ↗" data-i18n-title="admin.viewService"><svg class="header-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6m0-6L10 14m0-10H4v16h16v-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="header-label" data-i18n="admin.viewService">View site ↗</span></a><button id="admin-logout" class="button small" type="button" aria-label="Sign out" data-i18n-aria-label="admin.logout" title="Sign out" data-i18n-title="admin.logout"><svg class="header-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 4H4v16h6m0-8h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="header-label" data-i18n="admin.logout">Sign out</span></button></div>
     </header>
     <div class="admin-layout">
       <aside class="admin-sidebar">
@@ -40,7 +41,7 @@
 
       <main id="admin-main" class="admin-main" tabindex="-1">
         <div class="page-heading"><div><p class="eyebrow" id="section-eyebrow" data-i18n="admin.sectionOverviewEyebrow">SERVICE OVERVIEW</p><h1 id="section-title" data-i18n="admin.sectionOverviewTitle">Overview</h1><p id="section-description" data-i18n="admin.sectionOverviewDescription">Check service status and recent administrative activity.</p></div><div class="page-tools"><span id="current-service-badge" class="badge" data-i18n="admin.checkingStatus">Checking status</span><button id="refresh-view" class="button small" type="button" data-i18n="admin.refresh">Refresh ↻</button><small id="last-refreshed"></small></div></div>
-        <div id="admin-notice" class="notice" role="status" aria-live="polite" hidden><p id="admin-notice-message"></p><div class="notice-actions"><button id="retry-mutation" class="text-button" type="button" hidden data-i18n="admin.retrySame">Check the same request</button><a id="reauth-link" class="text-link" href="/?admin=1&amp;reauth=1" hidden data-i18n="admin.reauthGoogle">Verify again with Google ↗</a></div></div>
+        <div id="admin-notice" class="notice" role="status" aria-live="polite" hidden><p id="admin-notice-message"></p><div class="notice-actions"><button id="retry-mutation" class="text-button" type="button" hidden data-i18n="admin.retrySame">Check the same request</button><a id="reauth-link" class="text-link" href="/?master=1&amp;reauth=1" hidden data-i18n="admin.reauthGoogle">Verify again with Google ↗</a></div></div>
 
         <section id="panel-overview" class="admin-panel" aria-label="Overview" data-i18n-aria-label="admin.sectionOverviewTitle">
           <div class="service-summary"><div><span class="field-caption" data-i18n="admin.currentMode">Current service status</span><strong id="overview-mode">—</strong></div><p id="overview-permissions"></p><a class="text-link" href="#service" data-section="service" data-i18n="admin.openServiceSettings">Open service settings ↗</a></div>
@@ -110,7 +111,7 @@
             <p class="form-note" data-i18n="admin.teenDisclaimer">Teen is a development target, not an official rating. Distinguish ordinary fantasy combat from excessive sexual content, gore and graphic violence. This check is neither a complete automated review nor permission to publish a game.</p>
           </div>
         </div>
-        <label><span data-i18n="admin.changeReason">Reason for change</span> <small data-i18n="admin.reasonLimitAudit">Up to 500 characters · recorded in the audit history</small><textarea id="action-reason" name="reason" rows="3" maxlength="1000" required></textarea></label><div id="confirmation-field" class="confirmation-field" hidden><p><span data-i18n="admin.confirmationHelp">To continue, type the following confirmation phrase exactly.</span><br><code id="confirmation-phrase"></code></p><label for="action-confirmation" data-i18n="admin.confirmationLabel">Confirmation phrase</label><input id="action-confirmation" name="confirmation" type="text" autocomplete="off" spellcheck="false"></div><p id="action-feedback" class="form-feedback" role="status" hidden></p><a id="action-reauth-link" class="text-link" href="/?admin=1&amp;reauth=1" hidden data-i18n="admin.reauthGoogle">Verify again with Google ↗</a><div class="dialog-actions"><button id="action-cancel" class="button" type="button" data-i18n="admin.cancelButton">Cancel</button><button id="action-retry" class="button primary" type="button" hidden data-i18n="admin.retrySameShort">Check same request</button><button id="action-submit" class="button primary" data-operation="dialog" type="submit" data-i18n="admin.confirmAction">Confirm and apply</button></div>
+        <label><span data-i18n="admin.changeReason">Reason for change</span> <small data-i18n="admin.reasonLimitAudit">Up to 500 characters · recorded in the audit history</small><textarea id="action-reason" name="reason" rows="3" maxlength="1000" required></textarea></label><div id="confirmation-field" class="confirmation-field" hidden><p><span data-i18n="admin.confirmationHelp">To continue, type the following confirmation phrase exactly.</span><br><code id="confirmation-phrase"></code></p><label for="action-confirmation" data-i18n="admin.confirmationLabel">Confirmation phrase</label><input id="action-confirmation" name="confirmation" type="text" autocomplete="off" spellcheck="false"></div><p id="action-feedback" class="form-feedback" role="status" hidden></p><a id="action-reauth-link" class="text-link" href="/?master=1&amp;reauth=1" hidden data-i18n="admin.reauthGoogle">Verify again with Google ↗</a><div class="dialog-actions"><button id="action-cancel" class="button" type="button" data-i18n="admin.cancelButton">Cancel</button><button id="action-retry" class="button primary" type="button" hidden data-i18n="admin.retrySameShort">Check same request</button><button id="action-submit" class="button primary" data-operation="dialog" type="submit" data-i18n="admin.confirmAction">Confirm and apply</button></div>
       </form>
     </dialog>
   </div>
