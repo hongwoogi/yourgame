@@ -1,0 +1,4 @@
+# Three spawned threads plus the primary fit the current four-thread host.
+# This limits concurrency; it does not isolate credentials, tools, or files.
+[agents]
+max_concurrent_threads_per_session = 3

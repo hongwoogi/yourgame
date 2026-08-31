@@ -55,8 +55,8 @@ test('the original HTML and share preview are English even without JavaScript in
     await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
     await expect(page.locator('.noscript-notice')).toBeVisible();
     await expect(page.locator('.noscript-notice')).toHaveText('Enable JavaScript to submit ideas and log in with Google.');
-    await expect(page.locator('.release-date time')).toHaveText('Sep 1, 2026 / 00:00 KST');
-    await expect(page.locator('.release-date time')).toHaveAttribute('title', 'Korea Standard Time (UTC+9)');
+    await expect(page.locator('.release-date time')).toHaveText('Aug 31, 2026 / 11:00 AM EDT');
+    await expect(page.locator('.release-date time')).toHaveAttribute('title', 'Washington, D.C. (Eastern Time)');
     await expect(page.locator('#login-button')).toBeDisabled();
   } finally { await context.close(); }
 });

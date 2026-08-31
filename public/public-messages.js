@@ -87,7 +87,7 @@ const copy = {
     "첫 공개 목표"
   ],
   "targetDate": [
-    "Sep 1, 2026 / 00:00 KST",
+    "Aug 31, 2026 / 11:00 AM EDT",
     "2026.09.01 / 00:00 KST"
   ],
   "koreaTime": [
@@ -511,8 +511,8 @@ const copy = {
     "첫 게임을 준비하고 있어요."
   ],
   "countdownTime": [
-    "{days} days, {hours} hours, {minutes} minutes, {seconds} seconds until the planned release",
-    "공개 목표까지 {days}일 {hours}시간 {minutes}분 {seconds}초"
+    "{hours} hours, {minutes} minutes, {seconds} seconds until the planned release",
+    "공개 목표까지 {hours}시간 {minutes}분 {seconds}초"
   ],
   "operationChecking": [
     "Checking the service status again.",
@@ -535,7 +535,7 @@ const copy = {
     "공개 목표 시각이 지났습니다. 준비 상태를 확인하고 있어요."
   ],
   "releaseNote": [
-    "All times are KST. Release follows development and verification.",
+    "Washington, D.C. (ET) · Release follows development and verification.",
     "한국시간 기준 · 제작과 검증을 마친 뒤 공개합니다."
   ],
   "collectionEnded": [
@@ -1388,7 +1388,18 @@ const copy = {
   "aliasReload": ["Keep draft and reload profile", "별명 초안 유지하고 프로필 다시 읽기"],
   "aliasRefreshed": ["Profile refreshed. Your draft is unchanged; review the current name before saving.", "프로필을 다시 읽었습니다. 별명 초안은 그대로입니다. 현재 별명을 확인한 뒤 저장해 주세요."],
   "saveAlias": ["Save name", "별명 저장"],
-  "closeAliasButton": ["Close", "닫기"]
+  "closeAliasButton": ["Close", "닫기"],
+  "releaseTimezoneTitle": ["Washington, D.C. (Eastern Time)", "한국 표준시 (UTC+9)"],
+  "ideasViewAll": ["View all", "더보기"],
+  "allIdeas": ["All ideas", "전체 의견"],
+  "closeIdeas": ["Close all ideas", "전체 의견 닫기"],
+  "refreshIdeas": ["Refresh ideas", "의견 새로고침"],
+  "ideasTotal": ["{total} ideas", "의견 {total}개"],
+  "ideasPrevious": ["Previous ideas page", "이전 의견 페이지"],
+  "ideasNext": ["Next ideas page", "다음 의견 페이지"],
+  "retryIdeas": ["Try loading ideas again", "의견 다시 불러오기"],
+  "ideasUnavailable": ["Couldn't load these ideas. Try again. Your draft is unchanged.", "의견을 불러오지 못했습니다. 다시 시도해 주세요. 제안 초안은 유지됩니다."],
+  "ideasInvalid": ["Couldn't verify this ideas page. Try loading it again.", "의견 응답을 확인하지 못했습니다. 다시 불러와 주세요."]
 };
 
 i18n.register('public', {

@@ -116,6 +116,56 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
       publicationPolicy: PUBLICATION_POLICY_DTO, serverTime: iso(result[0].rows[0].now_ms) };
   }
 
+  async function publicIdeas({ sort = 'recent', offset = 0, limit = 24 } = {}) {
+    if (!['recent', 'popular'].includes(sort) || !Number.isSafeInteger(offset) || offset < 0
+        || !Number.isInteger(limit) || limit < 1 || limit > 50) throw invalid();
+    const order = prefix => sort === 'popular'
+      ? `(${prefix}upvotes - ${prefix}downvotes) DESC, ${prefix}upvotes DESC,
+          ${prefix}proposal_created_at DESC, ${prefix}public_id DESC`
+      : `${prefix}proposal_created_at DESC, ${prefix}public_id DESC`;
+    // One read statement binds visibility, vote totals, pagination and context
+    // to one snapshot. Materializing the clock also keeps round/voting state
+    // consistent at the exact cutoff. The context row survives an empty page.
+    const result = await client.batch([{
+      sql: `WITH snapshot_clock AS MATERIALIZED (SELECT ${databaseClockSql} AS now_ms),
+        ${PUBLICATIONS}, ${VOTES},
+        vote_counts AS (SELECT public_id,
+          SUM(CASE WHEN direction = 'up' THEN 1 ELSE 0 END) AS upvotes,
+          SUM(CASE WHEN direction = 'down' THEN 1 ELSE 0 END) AS downvotes FROM valid_votes GROUP BY public_id),
+        visible_ideas AS (
+          SELECT ep.*, pn.alias AS custom_alias, COALESCE(c.upvotes, 0) AS upvotes, COALESCE(c.downvotes, 0) AS downvotes,
+            r.id AS voting_round_id,
+            (${PARTICIPATION} AND clock.now_ms >= r.opens_at AND clock.now_ms < r.closes_at) AS voting_open
+          FROM eligible_publications ep CROSS JOIN snapshot_clock clock
+          LEFT JOIN vote_counts c ON c.public_id = ep.public_id
+          LEFT JOIN community_profile_names pn ON pn.user_id = ep.author_user_id
+          LEFT JOIN community_rounds r ON r.proposal_round_id = ep.proposal_round_id
+        ), page_items AS (SELECT * FROM visible_ideas ORDER BY ${order('')} LIMIT ? OFFSET ?),
+        page_context AS (
+          SELECT r.id AS collection_id, r.opens_at AS collection_opens_at, r.closes_at AS collection_closes_at,
+            clock.now_ms, ${COMMUNITY_DEFAULT_READY_SQL} AS ready,
+            (SELECT COUNT(*) FROM eligible_publications) AS total
+          FROM service_control s CROSS JOIN snapshot_clock clock
+          LEFT JOIN community_rounds r ON r.id = 'initial' WHERE s.id = 1
+        )
+        SELECT context.*, page.* FROM page_context context LEFT JOIN page_items page ON true
+        ORDER BY ${order('page.')}`,
+      args: [limit, offset],
+    }], 'read');
+    const rows = result[0].rows;
+    const context = rows[0];
+    if (!context || !Number.isSafeInteger(Number(context.total)) || Number(context.total) < 0) {
+      throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
+    }
+    assertReady(context);
+    const total = Number(context.total);
+    return { items: rows.filter(row => row.public_id != null).map(idea), sort, offset, limit, total,
+      hasMore: offset < total && total - offset > limit,
+      round: roundView({ id: context.collection_id, opens_at: context.collection_opens_at,
+        closes_at: context.collection_closes_at, now_ms: context.now_ms }),
+      publicationPolicy: PUBLICATION_POLICY_DTO, serverTime: iso(context.now_ms) };
+  }
+
   async function privateState(session) {
     await ensureProfile(session);
     const userId = session?.user?.id || '';
@@ -340,5 +390,5 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     throw conflict();
   }
 
-  return { publicFeed, privateState, mutate };
+  return { publicFeed, publicIdeas, privateState, mutate };
 }

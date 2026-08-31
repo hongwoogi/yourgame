@@ -1,6 +1,7 @@
 import { i18n } from './i18n.js';
 import './public-messages.js';
 import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from './profile-policy.js';
+import { countdownParts, formatReleaseDate } from './release-time.js';
 
 (() => {
   'use strict';
@@ -43,7 +44,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     'edit-banner', 'cancel-edit', 'reload-edit', 'copy-edit',
     'connection-notice', 'connection-message', 'retry-connection', 'collection-dot',
     'collection-label', 'collection-deadline', 'countdown-title', 'countdown', 'release-message',
-    'release-note', 'count-days', 'count-hours', 'count-minutes', 'count-seconds',
+    'release-note', 'release-date-time', 'count-hours', 'count-minutes', 'count-seconds',
     'game-preview-canvas', 'community-feed-panel', 'community-feed-status', 'community-feed-list',
     'community-refresh', 'community-vote-note', 'leaderboard-status', 'leaderboard-list',
     'my-contribution', 'my-contribution-summary', 'community-prev', 'community-next', 'community-page',
@@ -56,6 +57,9 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     'leaderboard-full-retry', 'leaderboard-full-prev', 'leaderboard-full-next', 'leaderboard-full-page',
     'alias-dialog', 'close-alias', 'alias-form', 'alias-input', 'alias-count', 'alias-current',
     'alias-message', 'alias-retry', 'alias-reload', 'alias-cancel', 'alias-save',
+    'open-ideas', 'ideas-dialog', 'close-ideas', 'ideas-total', 'ideas-vote-note',
+    'ideas-panel', 'ideas-status', 'ideas-list', 'ideas-refresh', 'ideas-retry',
+    'ideas-prev', 'ideas-next', 'ideas-page', 'ideas-feedback', 'ideas-feedback-message', 'ideas-action-retry',
   ].map((id) => [id, byId(id)]));
 
   let status = null;
@@ -78,7 +82,18 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
   let communityMutationSequence = 0;
   let activeIdea = null;
   let ideaReturnFocus = null;
+  let ideaReturnContext = null;
   let proposalsReturnFocus = null;
+  const IDEAS_PAGE_SIZE = 24;
+  let fullIdeas = null;
+  let ideasSort = 'recent';
+  let ideasOffset = 0;
+  let ideasLoading = false;
+  let ideasRefreshQueued = false;
+  let ideasKeepReader = false;
+  let ideasError = '';
+  let ideasSequence = 0;
+  let ideasReturnFocus = null;
   const LEADERBOARD_PAGE_SIZE = 20;
   let fullLeaderboard = null;
   let leaderboardOffset = 0;
@@ -438,7 +453,10 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
   function renderTime({ passive = false } = {}) {
     const now = serverNow();
     const target = Date.parse(status?.firstReleaseAt || FIRST_RELEASE);
-    const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+    const { remaining, hours, minutes, seconds } = countdownParts(target, now);
+    ui['release-date-time'].textContent = formatReleaseDate(target, i18n.locale);
+    ui['release-date-time'].dateTime = status?.firstReleaseAt || FIRST_RELEASE;
+    ui['release-date-time'].title = t('releaseTimezoneTitle');
     const published = status?.game?.published === true;
     const operations = operatingState();
     const releasePaused = operations.mode !== 'active' || (!published && operations.developmentPaused);
@@ -457,11 +475,11 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
       ui['release-message'].textContent = t('gamePreparing');
     } else {
       ui['countdown-title'].textContent = t('countdownDefault');
-      const values = [Math.floor(remaining / 86400), Math.floor(remaining / 3600) % 24, Math.floor(remaining / 60) % 60, remaining % 60];
-      ['count-days', 'count-hours', 'count-minutes', 'count-seconds'].forEach((key, index) => {
+      const values = [hours, minutes, seconds];
+      ['count-hours', 'count-minutes', 'count-seconds'].forEach((key, index) => {
         ui[key].textContent = String(values[index]).padStart(2, '0');
       });
-      ui.countdown.setAttribute('aria-label', t('countdownTime', { days: values[0], hours: values[1], minutes: values[2], seconds: values[3] }));
+      ui.countdown.setAttribute('aria-label', t('countdownTime', { hours, minutes, seconds }));
     }
     ui['release-note'].textContent = !statusReady ? (releasePaused ? t('operationChecking') : t('deviceTime'))
       : releasePaused ? t('pausedReleaseNote')
@@ -1281,6 +1299,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
       ui[id].removeAttribute('aria-label');
     }
     closeAlias({ restoreFocus: false });
+    closeIdeas({ restoreFocus: false });
     closeLeaderboard({ restoreFocus: false });
     closeMyProposals({ restoreFocus: false });
   }
@@ -1294,20 +1313,22 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
   const leaderboardEntry = row => row && publicAuthor(row.author) && pointString(row.points)
     && Number.isSafeInteger(row.rank) && row.rank > 0 && nonnegativeInteger(row.adoptedCount);
 
-  function validateCommunity(data) {
-    const idea = value => value && typeof value.id === 'string' && typeof value.body === 'string'
+  const publicIdea = value => value && typeof value.id === 'string' && value.id.length > 0 && typeof value.body === 'string'
       && encoder.encode(value.body).length <= 2000 && publicAuthor(value.author)
       && Number.isSafeInteger(value.proposalRevision) && value.proposalRevision > 0
       && Number.isSafeInteger(value.publicationRevision) && value.publicationRevision > 0
       && Number.isFinite(Date.parse(value.createdAt)) && nonnegativeInteger(value.upvotes)
       && nonnegativeInteger(value.downvotes) && typeof value.votingOpen === 'boolean'
       && (typeof value.roundId === 'string' || (value.roundId === null && value.votingOpen === false));
+  const publicRound = value => value === null || (value && typeof value.id === 'string'
+    && ['open', 'closed', 'waiting'].includes(value.status));
+
+  function validateCommunity(data) {
     if (!data || !Array.isArray(data.recent) || !Array.isArray(data.popular)
       || data.recent.length > 100 || data.popular.length > 100
-      || !data.recent.every(idea) || !data.popular.every(idea) || !Array.isArray(data.leaderboard?.items)
+      || !data.recent.every(publicIdea) || !data.popular.every(publicIdea) || !Array.isArray(data.leaderboard?.items)
       || !data.leaderboard.items.every(leaderboardEntry)
-      || (data.round !== null && (!data.round || typeof data.round.id !== 'string'
-        || !['open', 'closed', 'waiting'].includes(data.round.status)))) {
+      || !publicRound(data.round)) {
       throw new RequestError(m('communityInvalid'));
     }
     return data;
@@ -1338,6 +1359,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     communityLoading = true;
     communityError = '';
     refreshOpenLeaderboard();
+    refreshOpenIdeas();
     renderCommunity();
     try {
       const data = validateCommunity(await request('/api/community'));
@@ -1348,6 +1370,11 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
       // A failed refresh must not keep displaying content that may have been withdrawn.
       communityData = null;
       communityError = m('communityUnavailable');
+      if (ui['ideas-dialog'].open) {
+        clearIdeasView();
+        ideasError = m('ideasUnavailable');
+        renderIdeasDialog();
+      }
       if (ui['leaderboard-dialog'].open) {
         clearLeaderboardView();
         leaderboardError = m('leaderboardUnavailable');
@@ -1427,6 +1454,178 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
   function voteFor(idea) {
     return communityMe?.votes.find(vote => vote.publicId === idea.id && vote.roundId === idea.roundId
       && vote.proposalRevision === idea.proposalRevision && vote.publicationRevision === idea.publicationRevision);
+  }
+
+  function sourceIdeas(source = 'main') {
+    return source === 'all'
+      ? ui['ideas-dialog'].open && !ideasLoading ? fullIdeas?.items || [] : []
+      : [...(communityData?.recent || []), ...(communityData?.popular || [])];
+  }
+
+  function sourceRound(source = 'main') {
+    return source === 'all' ? fullIdeas?.round : communityData?.round;
+  }
+
+  function votingIsOpen(idea, round) {
+    return idea.votingOpen && round?.status === 'open' && idea.roundId === round.id
+      && (!round.closesAt || Date.parse(round.closesAt) > serverNow());
+  }
+
+  function voteQuotaText(round) {
+    return !user ? t('voteLoginNote') : !communityMe ? t('voteSettingsLoading')
+      : !communityMe.voteQuota?.roundId || communityMe.voteQuota.roundId !== round?.id
+        || round?.status !== 'open' ? t('votingWaiting')
+        : t('voteQuota', { remaining: communityMe.voteQuota.remaining, limit: communityMe.voteQuota.limit })
+          + ' · ' + t('voteQuotaNote');
+  }
+
+  function validateIdeasPage(data, sort, offset) {
+    if (!data || !Array.isArray(data.items) || data.items.length > IDEAS_PAGE_SIZE
+      || !data.items.every(publicIdea) || !publicRound(data.round)
+      || data.sort !== sort || data.offset !== offset || data.limit !== IDEAS_PAGE_SIZE
+      || !nonnegativeInteger(data.total) || typeof data.hasMore !== 'boolean'
+      || data.items.length !== Math.max(0, Math.min(IDEAS_PAGE_SIZE, data.total - offset))
+      || data.hasMore !== (offset + data.items.length < data.total)
+      || new Set(data.items.map(idea => idea.id)).size !== data.items.length) {
+      throw new RequestError(m('ideasInvalid'));
+    }
+    return data;
+  }
+
+  function clearIdeasView() {
+    ideasSequence += 1;
+    ideasLoading = false;
+    ideasRefreshQueued = false;
+    ideasKeepReader = false;
+    ideasError = '';
+    fullIdeas = null;
+    if (activeIdea?.source === 'all') closeIdea();
+    renderIdeasDialog();
+  }
+
+  async function loadIdeasPage(offset = ideasOffset, { adjustPage = true, preserveReader = false } = {}) {
+    if (!ui['ideas-dialog'].open) return;
+    const sequence = ++ideasSequence;
+    const epoch = authEpoch;
+    const sort = ideasSort;
+    const requestedOffset = Math.max(0, offset);
+    ideasOffset = requestedOffset;
+    ideasLoading = true;
+    ideasKeepReader = preserveReader && activeIdea?.source === 'all';
+    ideasError = '';
+    fullIdeas = null;
+    if (activeIdea?.source === 'all' && !ideasKeepReader) closeIdea();
+    renderIdeasDialog();
+    try {
+      const data = validateIdeasPage(await request('/api/community?view=ideas&sort=' + sort
+        + '&offset=' + requestedOffset + '&limit=' + IDEAS_PAGE_SIZE), sort, requestedOffset);
+      if (sequence !== ideasSequence || epoch !== authEpoch || !ui['ideas-dialog'].open || sort !== ideasSort) return;
+      if (ideasRefreshQueued) return;
+      const lastOffset = Math.max(0, Math.floor((data.total - 1) / IDEAS_PAGE_SIZE) * IDEAS_PAGE_SIZE);
+      if (requestedOffset > lastOffset) {
+        if (!adjustPage) throw new RequestError(m('ideasInvalid'));
+        await loadIdeasPage(lastOffset, { adjustPage: false });
+        return;
+      }
+      fullIdeas = data;
+    } catch (error) {
+      if (sequence !== ideasSequence || epoch !== authEpoch || !ui['ideas-dialog'].open) return;
+      fullIdeas = null;
+      ideasError = m('ideasUnavailable');
+    } finally {
+      if (sequence === ideasSequence && epoch === authEpoch) {
+        ideasLoading = false;
+        if (ideasRefreshQueued && ui['ideas-dialog'].open) {
+          ideasRefreshQueued = false;
+          loadIdeasPage(ideasOffset, { preserveReader: ideasKeepReader }).catch(() => {});
+        } else renderIdeasDialog();
+      }
+    }
+  }
+
+  function refreshOpenIdeas() {
+    if (!ui['ideas-dialog'].open) return;
+    if (ideasLoading) {
+      ideasRefreshQueued = true;
+      fullIdeas = null;
+      renderIdeasDialog();
+    } else loadIdeasPage(ideasOffset, { preserveReader: true }).catch(() => {});
+  }
+
+  function updateIdeasControls() {
+    const busy = communityMutating || submitting || authenticating;
+    ui['open-ideas'].disabled = busy;
+    ui['ideas-refresh'].disabled = busy || ideasLoading;
+    ui['ideas-retry'].hidden = !ideasError;
+    ui['ideas-retry'].disabled = busy || ideasLoading;
+    ui['ideas-prev'].disabled = busy || ideasLoading || !fullIdeas || ideasOffset === 0;
+    ui['ideas-next'].disabled = busy || ideasLoading || !fullIdeas?.hasMore;
+    for (const tab of document.querySelectorAll('[data-ideas-sort]')) tab.disabled = busy;
+    ui['ideas-vote-note'].textContent = voteQuotaText(fullIdeas?.round);
+    ui['ideas-feedback'].hidden = !communityFeedbackMessage;
+    ui['ideas-feedback'].dataset.kind = ui['community-feedback'].dataset.kind || '';
+    ui['ideas-feedback-message'].textContent = localize(communityFeedbackMessage);
+    ui['ideas-action-retry'].hidden = !communityAttempt?.unknown;
+    ui['ideas-action-retry'].disabled = busy || !user || !sessionReady || communityAttempt?.actorId !== user?.id;
+  }
+
+  function renderIdeasDialog() {
+    const focused = document.activeElement;
+    const focusedArticle = focused?.closest?.('#ideas-list [data-public-id]');
+    const focusId = focusedArticle?.dataset.publicId;
+    const focusDirection = focused?.dataset.direction;
+    const focusRead = focused?.classList.contains('community-read');
+    const loginReturnId = loginReturnFocus?.closest?.('#ideas-list [data-public-id]')?.dataset.publicId;
+    const loginReturnDirection = loginReturnFocus?.dataset.direction;
+    ui['ideas-total'].textContent = fullIdeas ? t('ideasTotal', { total: fullIdeas.total.toLocaleString(i18n.intlLocale) }) : '';
+    const message = ideasError || (ideasLoading ? m('communityLoading') : fullIdeas && !fullIdeas.items.length ? m('communityEmpty') : '');
+    ui['ideas-status'].hidden = !message;
+    ui['ideas-status'].textContent = localize(message);
+    ui['ideas-status'].dataset.kind = ideasError ? 'error' : '';
+    ui['ideas-panel'].setAttribute('aria-busy', String(ideasLoading));
+    ui['ideas-panel'].setAttribute('aria-labelledby', ideasSort === 'recent' ? 'ideas-recent-tab' : 'ideas-popular-tab');
+    for (const tab of document.querySelectorAll('[data-ideas-sort]')) {
+      const selected = tab.dataset.ideasSort === ideasSort;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    }
+    ui['ideas-page'].textContent = fullIdeas ? t('feedPage', { page: Math.floor(ideasOffset / IDEAS_PAGE_SIZE) + 1,
+      pages: Math.max(1, Math.ceil(fullIdeas.total / IDEAS_PAGE_SIZE)) }) : '';
+    ui['ideas-list'].replaceChildren();
+    for (const [index, idea] of (fullIdeas?.items || []).entries()) {
+      ui['ideas-list'].append(createCommunityCard(idea, 'all', index));
+    }
+    if (loginReturnId) {
+      const row = [...ui['ideas-list'].children].find(element => element.dataset.publicId === loginReturnId);
+      // Locale/session rendering can replace the underlying card while Google
+      // is open. Preserve the return target without touching its auth flow.
+      loginReturnFocus = [...(row?.querySelectorAll('[data-direction]') || [])]
+        .find(button => button.dataset.direction === loginReturnDirection)
+        || byId(ideasSort === 'recent' ? 'ideas-recent-tab' : 'ideas-popular-tab');
+    }
+    updateCommunityControls();
+    if (focusId && ui['ideas-dialog'].open && !ui['idea-dialog'].open && !ui['login-dialog'].open) {
+      const article = [...ui['ideas-list'].children].find(element => element.dataset.publicId === focusId);
+      const replacement = focusRead ? article?.querySelector('.community-read')
+        : [...(article?.querySelectorAll('[data-direction]') || [])].find(button => button.dataset.direction === focusDirection);
+      if (replacement && !replacement.disabled) replacement.focus({ preventScroll: true });
+    }
+  }
+
+  function openIdeas() {
+    if (ui['ideas-dialog'].open || submitting || authenticating || communityMutating) return;
+    saveCurrentDraft();
+    ideasReturnFocus = document.activeElement;
+    ideasSort = communitySort;
+    ideasOffset = 0;
+    ui['ideas-dialog'].showModal();
+    loadIdeasPage(0).catch(() => {});
+  }
+
+  function closeIdeas({ restoreFocus = true } = {}) {
+    if (!restoreFocus) ideasReturnFocus = null;
+    clearIdeasView();
+    if (ui['ideas-dialog'].open) ui['ideas-dialog'].close();
   }
 
   function createLeaderboardRow(entry) {
@@ -1675,7 +1874,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
   function reflectAlias(profileId, alias) {
     if (!profileId || !isValidProfileAlias(alias)) return;
     if (communityMe?.profile.id === profileId) communityMe.profile.alias = alias;
-    for (const idea of [...(communityData?.recent || []), ...(communityData?.popular || [])]) {
+    for (const idea of [...(communityData?.recent || []), ...(communityData?.popular || []), ...(fullIdeas?.items || [])]) {
       if (idea.author.id === profileId) idea.author.alias = alias;
     }
     for (const row of [...(communityData?.leaderboard.items || []), ...(fullLeaderboard?.items || [])]) {
@@ -1697,7 +1896,95 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
       || (Boolean(communityAttempt?.unknown) && communityAttempt.payload.action !== 'set_profile_alias');
     renderMyRank();
     renderAlias();
+    updateIdeasControls();
     refreshIdeaDialog();
+  }
+
+  function createCommunityCard(idea, source = 'main', index = 0) {
+    const mine = communityMe?.profile.id === idea.author.id;
+    const ownNoteId = 'own-vote-' + source + '-' + index;
+    const article = document.createElement('article');
+    article.className = 'community-entry';
+    article.dataset.publicId = idea.id;
+    article.dataset.ideaSource = source;
+    const header = document.createElement('div');
+    header.className = 'community-entry-header';
+    const alias = document.createElement('strong');
+    alias.className = 'community-alias';
+    alias.textContent = idea.author.alias;
+    alias.title = idea.author.alias;
+    const authorLine = document.createElement('div');
+    authorLine.className = 'community-author';
+    authorLine.append(alias);
+    if (mine) {
+      const badge = document.createElement('span');
+      badge.className = 'own-idea-badge';
+      badge.textContent = t('yourIdea');
+      authorLine.append(badge);
+    }
+    const time = document.createElement('time');
+    time.dateTime = idea.createdAt;
+    time.textContent = proposalDate(idea.createdAt);
+    const details = document.createElement('div');
+    details.className = 'community-entry-details';
+    details.append(time);
+    header.append(authorLine, details);
+    const body = document.createElement('p');
+    body.className = 'community-body';
+    body.textContent = idea.body;
+    const voting = document.createElement('div');
+    voting.className = 'community-votes';
+    const vote = voteFor(idea);
+    const open = votingIsOpen(idea, sourceRound(source));
+    for (const direction of ['up', 'down']) {
+      const selected = vote?.direction === direction;
+      const count = direction === 'up' ? idea.upvotes : idea.downvotes;
+      const button = document.createElement('button');
+      button.className = 'vote-button';
+      button.type = 'button';
+      button.dataset.communityAction = 'vote';
+      button.dataset.direction = direction;
+      button.dataset.baseDisabled = String(!open || mine || !sessionReady
+        || (Boolean(user) && (!communityMe || !communityMe.voteQuota || communityMe.voteQuota.roundId !== idea.roundId
+          || (!vote && communityMe.voteQuota.remaining <= 0))));
+      button.setAttribute('aria-pressed', String(selected));
+      if (mine) button.setAttribute('aria-describedby', ownNoteId);
+      button.setAttribute('aria-label', t('voteCountAria', { action: t(selected
+        ? direction === 'up' ? 'removeUpvote' : 'removeDownvote'
+        : direction === 'up' ? 'upvote' : 'downvote'), count }));
+      const arrow = document.createElement('span');
+      arrow.textContent = direction === 'up' ? '↑' : '↓';
+      arrow.setAttribute('aria-hidden', 'true');
+      const number = document.createElement('span');
+      number.textContent = count.toLocaleString(i18n.intlLocale);
+      button.append(arrow, number);
+      button.addEventListener('click', () => castVote(idea, direction, source));
+      voting.append(button);
+    }
+    if (!open) {
+      const note = document.createElement('span');
+      note.className = 'vote-note';
+      note.textContent = t('votingClosed');
+      details.append(note);
+    }
+    const read = document.createElement('button');
+    read.type = 'button';
+    read.className = 'text-button community-read';
+    read.textContent = t('readIdea');
+    read.setAttribute('aria-label', t('readIdeaAria', { alias: idea.author.alias }));
+    read.setAttribute('aria-haspopup', 'dialog');
+    read.setAttribute('aria-controls', 'idea-dialog');
+    read.addEventListener('click', () => openIdea(idea, read, source));
+    voting.append(read);
+    article.append(header, body, voting);
+    if (mine) {
+      const note = document.createElement('span');
+      note.className = 'sr-only';
+      note.id = ownNoteId;
+      note.textContent = t('ownVoteExplanation');
+      article.append(note);
+    }
+    return article;
   }
 
   function renderCommunity() {
@@ -1719,98 +2006,11 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     ui['community-next'].disabled = communityPage >= pages - 1;
     ui['community-page'].textContent = t('feedPage', { page: communityPage + 1, pages });
     ui['community-feed-list'].replaceChildren();
-    for (const idea of rows.slice(communityPage * 3, communityPage * 3 + 3)) {
-      const mine = communityMe?.profile.id === idea.author.id;
-      const ownNoteId = 'own-vote-' + communityPage + '-' + ui['community-feed-list'].childElementCount;
-      const article = document.createElement('article');
-      article.className = 'community-entry';
-      article.dataset.publicId = idea.id;
-      const header = document.createElement('div');
-      header.className = 'community-entry-header';
-      const alias = document.createElement('strong');
-      alias.className = 'community-alias';
-      alias.textContent = idea.author.alias;
-      alias.title = idea.author.alias;
-      const authorLine = document.createElement('div');
-      authorLine.className = 'community-author';
-      authorLine.append(alias);
-      if (mine) {
-        const badge = document.createElement('span');
-        badge.className = 'own-idea-badge';
-        badge.textContent = t('yourIdea');
-        authorLine.append(badge);
-      }
-      const time = document.createElement('time');
-      time.dateTime = idea.createdAt;
-      time.textContent = proposalDate(idea.createdAt);
-      const details = document.createElement('div');
-      details.className = 'community-entry-details';
-      details.append(time);
-      header.append(authorLine, details);
-      const body = document.createElement('p');
-      body.className = 'community-body';
-      body.textContent = idea.body;
-      const voting = document.createElement('div');
-      voting.className = 'community-votes';
-      const vote = voteFor(idea);
-      const open = idea.votingOpen && communityData.round?.status === 'open'
-        && idea.roundId === communityData.round.id;
-      for (const direction of ['up', 'down']) {
-        const selected = vote?.direction === direction;
-        const count = direction === 'up' ? idea.upvotes : idea.downvotes;
-        const button = document.createElement('button');
-        button.className = 'vote-button';
-        button.type = 'button';
-        button.dataset.communityAction = 'vote';
-        button.dataset.direction = direction;
-        button.dataset.baseDisabled = String(!open || mine || !sessionReady
-          || (Boolean(user) && (!communityMe || !communityMe.voteQuota || communityMe.voteQuota.roundId !== idea.roundId
-            || (!vote && communityMe.voteQuota.remaining <= 0))));
-        button.setAttribute('aria-pressed', String(selected));
-        if (mine) button.setAttribute('aria-describedby', ownNoteId);
-        button.setAttribute('aria-label', t('voteCountAria', { action: t(selected
-          ? direction === 'up' ? 'removeUpvote' : 'removeDownvote'
-          : direction === 'up' ? 'upvote' : 'downvote'), count }));
-        const arrow = document.createElement('span');
-        arrow.textContent = direction === 'up' ? '↑' : '↓';
-        arrow.setAttribute('aria-hidden', 'true');
-        const number = document.createElement('span');
-        number.textContent = count.toLocaleString(i18n.intlLocale);
-        button.append(arrow, number);
-        button.addEventListener('click', () => castVote(idea, direction));
-        voting.append(button);
-      }
-      if (!open) {
-        const note = document.createElement('span');
-        note.className = 'vote-note';
-        note.textContent = t('votingClosed');
-        details.append(note);
-      }
-      const read = document.createElement('button');
-      read.type = 'button';
-      read.className = 'text-button community-read';
-      read.textContent = t('readIdea');
-      read.setAttribute('aria-label', t('readIdeaAria', { alias: idea.author.alias }));
-      read.setAttribute('aria-haspopup', 'dialog');
-      read.setAttribute('aria-controls', 'idea-dialog');
-      read.addEventListener('click', () => openIdea(idea, read));
-      voting.append(read);
-      article.append(header, body, voting);
-      if (mine) {
-        const note = document.createElement('span');
-        note.className = 'sr-only';
-        note.id = ownNoteId;
-        note.textContent = t('ownVoteExplanation');
-        article.append(note);
-      }
-      ui['community-feed-list'].append(article);
+    for (const [index, idea] of rows.slice(communityPage * 3, communityPage * 3 + 3).entries()) {
+      ui['community-feed-list'].append(createCommunityCard(idea, 'main', communityPage * 3 + index));
     }
     ui['community-vote-note'].hidden = !communityData;
-    ui['community-vote-note'].textContent = !user ? t('voteLoginNote')
-      : !communityMe ? t('voteSettingsLoading')
-      : !communityMe.voteQuota?.roundId || communityMe.voteQuota.roundId !== communityData?.round?.id
-        || communityData?.round?.status !== 'open' ? t('votingWaiting')
-      : t('voteQuota', { remaining: communityMe.voteQuota.remaining, limit: communityMe.voteQuota.limit }) + ' · ' + t('voteQuotaNote');
+    ui['community-vote-note'].textContent = voteQuotaText(communityData?.round);
     const leaders = (communityData?.leaderboard.items || []).slice(0, 5);
     ui['leaderboard-status'].hidden = Boolean(communityData && leaders.length);
     ui['leaderboard-status'].textContent = localize(communityError || (!communityData ? m('leaderboardLoading') : m('leaderboardEmpty')));
@@ -1818,6 +2018,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     ui['leaderboard-list'].replaceChildren();
     for (const entry of leaders) ui['leaderboard-list'].append(createLeaderboardRow(entry));
     ui['community-feedback-message'].textContent = localize(communityFeedbackMessage);
+    renderIdeasDialog();
     renderLeaderboardDialog();
     updateCommunityControls();
   }
@@ -1835,18 +2036,26 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     if (ui['my-proposals-dialog'].open) ui['my-proposals-dialog'].close();
   }
 
-  function openIdea(idea, sourceButton) {
+  function openIdea(idea, sourceButton, source = 'main') {
     activeIdea = { id: idea.id, proposalRevision: idea.proposalRevision,
-      publicationRevision: idea.publicationRevision, body: idea.body };
+      publicationRevision: idea.publicationRevision, body: idea.body, source,
+      alias: idea.author.alias, createdAt: idea.createdAt };
     ideaReturnFocus = sourceButton;
+    ideaReturnContext = { id: idea.id, source };
     refreshIdeaDialog();
     if (activeIdea && !ui['idea-dialog'].open) ui['idea-dialog'].showModal();
   }
 
   function refreshIdeaDialog() {
     if (!activeIdea) return;
-    const idea = [...(communityData?.recent || []), ...(communityData?.popular || [])]
-      .find(item => item.id === activeIdea.id);
+    // A background check disables list actions, but doesn't interrupt reading
+    // the unchanged source. A completed failure or revision change closes it.
+    if (activeIdea.source === 'all' && ideasLoading && ideasKeepReader) {
+      ui['idea-title'].textContent = t('ideaTitle');
+      ui['idea-author'].textContent = activeIdea.alias + ' · ' + proposalDate(activeIdea.createdAt);
+      return;
+    }
+    const idea = sourceIdeas(activeIdea.source).find(item => item.id === activeIdea.id);
     // A replaced or withdrawn revision must not linger in an open reader.
     if (!idea || idea.proposalRevision !== activeIdea.proposalRevision
       || idea.publicationRevision !== activeIdea.publicationRevision || idea.body !== activeIdea.body) {
@@ -1855,7 +2064,8 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     }
     ui['idea-title'].textContent = t('ideaTitle');
     ui['idea-author'].textContent = idea.author.alias + ' · ' + proposalDate(idea.createdAt);
-    ui['idea-body'].textContent = idea.body;
+    activeIdea.alias = idea.author.alias;
+    if (ui['idea-body'].textContent !== idea.body) ui['idea-body'].textContent = idea.body;
   }
 
   function closeIdea() {
@@ -1863,11 +2073,17 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     ui['idea-body'].textContent = '';
     ui['idea-author'].textContent = '';
     if (ui['idea-dialog'].open) ui['idea-dialog'].close();
-    else ideaReturnFocus = null;
+    else { ideaReturnFocus = null; ideaReturnContext = null; }
   }
 
-  function castVote(idea, direction) {
+  function castVote(idea, direction, source = 'main') {
     if (communityMutating || submitting || authenticating) return;
+    const current = sourceIdeas(source).find(item => item.id === idea.id);
+    if (!current || current.proposalRevision !== idea.proposalRevision || current.publicationRevision !== idea.publicationRevision
+      || current.body !== idea.body || !votingIsOpen(current, sourceRound(source))
+      || communityMe?.profile.id === current.author.id) {
+      communityFeedback(m('voteChanged'), 'error'); return;
+    }
     if (!user) {
       clearPending();
       openLogin(false, { forCommunity: true });
@@ -1875,13 +2091,6 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     }
     if (communityAttempt?.unknown) { communityFeedback(m('communityRetryFirst'), 'error'); return; }
     if (!communityMe || !sessionReady) { communityFeedback(m('communityPrivateUnavailable'), 'error'); return; }
-    const current = [...(communityData?.recent || []), ...(communityData?.popular || [])]
-      .find(item => item.id === idea.id);
-    if (!current || current.proposalRevision !== idea.proposalRevision || current.publicationRevision !== idea.publicationRevision
-      || current.body !== idea.body || !current.votingOpen || current.roundId !== communityData?.round?.id
-      || communityData.round.status !== 'open' || communityMe.profile.id === current.author.id) {
-      communityFeedback(m('voteChanged'), 'error'); return;
-    }
     const existing = voteFor(idea);
     const nextDirection = existing?.direction === direction ? 'none' : direction;
     if (!communityMe.voteQuota || communityMe.voteQuota.roundId !== idea.roundId
@@ -1909,6 +2118,9 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     communityLoading = false;
     communityMeSequence += 1;
     communityMeLoading = false;
+    ideasSequence += 1;
+    ideasLoading = false;
+    ideasRefreshQueued = false;
     updateCommunityControls();
     renderProposals();
     try {
@@ -1921,7 +2133,7 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
         closeAlias();
       } else {
         communityData = null;
-        closeIdea();
+        if (activeIdea?.source !== 'all') closeIdea();
       }
       communityFeedback(m(attempt.successKey));
       await Promise.allSettled([loadCommunity(), loadCommunityMe({ force: true })]);
@@ -1995,6 +2207,54 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     communityPage += 1;
     renderCommunity();
   });
+  ui['open-ideas'].addEventListener('click', openIdeas);
+  ui['close-ideas'].addEventListener('click', () => closeIdeas());
+  const refreshIdeas = () => {
+    if (ideasLoading || communityMutating || submitting || authenticating) return;
+    loadCommunity().catch(() => {});
+    loadCommunityMe({ force: true }).catch(() => {});
+  };
+  ui['ideas-refresh'].addEventListener('click', refreshIdeas);
+  ui['ideas-retry'].addEventListener('click', refreshIdeas);
+  ui['ideas-action-retry'].addEventListener('click', () => performCommunityAction(null, null, { retry: true }));
+  for (const tab of document.querySelectorAll('[data-ideas-sort]')) {
+    const changeSort = sort => {
+      if (communityMutating || submitting || authenticating || ideasSort === sort) return;
+      ideasSort = sort;
+      ideasRefreshQueued = false;
+      ui['ideas-panel'].scrollTop = 0;
+      loadIdeasPage(0).catch(() => {});
+    };
+    tab.addEventListener('click', () => changeSort(tab.dataset.ideasSort));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const sort = event.key === 'Home' ? 'recent' : event.key === 'End' ? 'popular'
+        : ideasSort === 'recent' ? 'popular' : 'recent';
+      changeSort(sort);
+      byId(ideasSort === 'recent' ? 'ideas-recent-tab' : 'ideas-popular-tab').focus();
+    });
+  }
+  ui['ideas-prev'].addEventListener('click', () => {
+    if (ideasLoading || communityMutating || !fullIdeas || ideasOffset === 0) return;
+    ui['ideas-panel'].scrollTop = 0;
+    loadIdeasPage(ideasOffset - IDEAS_PAGE_SIZE).catch(() => {});
+    ui['ideas-panel'].focus();
+  });
+  ui['ideas-next'].addEventListener('click', () => {
+    if (ideasLoading || communityMutating || !fullIdeas?.hasMore) return;
+    ui['ideas-panel'].scrollTop = 0;
+    loadIdeasPage(ideasOffset + IDEAS_PAGE_SIZE).catch(() => {});
+    ui['ideas-panel'].focus();
+  });
+  ui['ideas-dialog'].addEventListener('cancel', event => { event.preventDefault(); closeIdeas(); });
+  ui['ideas-dialog'].addEventListener('close', () => {
+    if (ui['ideas-dialog'].open) return;
+    clearIdeasView();
+    const target = ideasReturnFocus;
+    ideasReturnFocus = null;
+    if (target?.isConnected && !target.disabled && target.getClientRects().length && !ui['login-dialog'].open) target.focus();
+  });
   ui['my-rank-login'].addEventListener('click', () => { openLogin(false); });
   ui['my-rank-retry'].addEventListener('click', () => { loadCommunityMe({ force: true }).catch(() => {}); });
   ui['open-leaderboard'].addEventListener('click', openLeaderboard);
@@ -2058,7 +2318,8 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     aliasEditor.message = '';
     performCommunityAction({ action: 'set_profile_alias', alias, revision: aliasEditor.revision }, 'aliasSaved');
   });
-  for (const [dialog, close] of [[ui['leaderboard-dialog'], closeLeaderboard], [ui['alias-dialog'], closeAlias]]) {
+  for (const [dialog, close] of [[ui['leaderboard-dialog'], closeLeaderboard], [ui['alias-dialog'], closeAlias],
+    [ui['ideas-dialog'], closeIdeas], [ui['idea-dialog'], closeIdea]]) {
     dialog.addEventListener('click', event => {
       if (event.target !== dialog) return;
       const rect = dialog.getBoundingClientRect();
@@ -2084,9 +2345,16 @@ import { PROFILE_ALIAS_LIMITS, normalizeProfileAlias, isValidProfileAlias } from
     ui['idea-body'].textContent = '';
     ui['idea-author'].textContent = '';
     const target = ideaReturnFocus;
+    const context = ideaReturnContext;
     ideaReturnFocus = null;
-    if (target?.isConnected && !target.hidden && !target.disabled) target.focus();
-    else if (target) byId(communitySort === 'recent' ? 'feed-recent-tab' : 'feed-popular-tab').focus();
+    ideaReturnContext = null;
+    if (ui['login-dialog'].open || ui['alias-dialog'].open || ui['leaderboard-dialog'].open) return;
+    if (target?.isConnected && !target.hidden && !target.disabled && target.getClientRects().length) target.focus();
+    else if (context?.source === 'all') {
+      if (!ui['ideas-dialog'].open) return;
+      const row = [...ui['ideas-list'].children].find(element => element.dataset.publicId === context.id);
+      (row?.querySelector('.community-read') || byId(ideasSort === 'recent' ? 'ideas-recent-tab' : 'ideas-popular-tab')).focus();
+    } else if (target) byId(communitySort === 'recent' ? 'feed-recent-tab' : 'feed-popular-tab').focus();
   });
   try {
     const context = ui['game-preview-canvas'].getContext('2d');

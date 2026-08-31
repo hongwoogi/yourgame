@@ -27,6 +27,10 @@ PublicIdea = {
 
 `GET /api/community?view=leaderboard&offset=0&limit=20`은 전체 공개 순위의 한 페이지를 익명으로 반환한다. 세션을 만들지 않고 캐시하지 않는다. `offset`은 0 이상의 안전한 정수, `limit`은 1~50이며 생략 시 각각 0과 20이다. 알 수 없거나 중복된 쿼리는 거절한다.
 
+`GET /api/community?view=ideas&sort=recent&offset=0&limit=24`는 전체 공개 의견을 페이지로 반환한다. `sort`는 `recent` 또는 `popular`이며 생략하면 `recent`다. `offset`은 0 이상의 안전한 정수, `limit`은 1~50이고 기본값은 각각 0과 24다. 응답은 `{ items: PublicIdea[], sort, offset, limit, total, hasMore, round, publicationPolicy, serverTime }`이다. 메인 피드와 같은 공개 범위·별명·정렬 규칙을 사용하고, 목록·전체 개수·회차·시간을 같은 읽기 트랜잭션에서 계산한다. 범위를 넘은 페이지는 빈 목록과 실제 `total`, `hasMore: false`를 반환한다. 쿼리의 중복·미지원 키·잘못된 값은 422로 거절하며 익명 조회에 세션 생성이나 쿠키 설정을 하지 않는다.
+
+의견 더보기 모달은 24개씩 탐색하고 같은 투표 API를 사용한다. 다른 페이지의 의견에도 본인 투표 금지·회차별 3표·최신 본문 및 공개 revision 검사를 적용한다. 새 제안이나 투표로 서로 다른 조회 사이의 순서는 달라질 수 있으므로 페이지 목록을 영구 고정된 결과로 해석하지 않는다. 새로고침·정렬 변경·로그인·언어 전환은 투표를 자동 실행하지 않는다.
+
 ```text
 {
   items: [{ rank, author: { id, alias }, points, adoptedCount }],

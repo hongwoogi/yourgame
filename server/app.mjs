@@ -125,21 +125,27 @@ function communityView(req) {
   const url = new URL(req.url, 'http://internal.invalid');
   const entries = [...url.searchParams];
   const view = url.searchParams.get('view') || 'public';
-  const allowed = view === 'leaderboard' ? ['view', 'offset', 'limit'] : ['view'];
+  const allowed = view === 'ideas' ? ['view', 'sort', 'offset', 'limit']
+    : view === 'leaderboard' ? ['view', 'offset', 'limit'] : ['view'];
   if (url.search.length > 256 || new Set(entries.map(([key]) => key)).size !== entries.length
-      || !['public', 'me', 'leaderboard'].includes(view)
+      || !['public', 'me', 'leaderboard', 'ideas'].includes(view)
       || entries.some(([key]) => !allowed.includes(key))
       || (url.searchParams.has('view') && !url.searchParams.get('view'))) {
     throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the community request.');
   }
-  if (view !== 'leaderboard') return { view };
+  if (view !== 'leaderboard' && view !== 'ideas') return { view };
   const offsetText = url.searchParams.get('offset') ?? '0';
-  const limitText = url.searchParams.get('limit') ?? '20';
+  const limitText = url.searchParams.get('limit') ?? (view === 'ideas' ? '24' : '20');
   const offset = Number(offsetText);
   const limit = Number(limitText);
   if (!/^(0|[1-9][0-9]{0,15})$/.test(offsetText) || !Number.isSafeInteger(offset)
       || !/^[1-9][0-9]?$/.test(limitText) || limit > 50) {
-    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the leaderboard page.');
+    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the requested page.');
+  }
+  if (view === 'ideas') {
+    const sort = url.searchParams.get('sort') ?? 'recent';
+    if (!['recent', 'popular'].includes(sort)) throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the idea ordering.');
+    return { view, sort, offset, limit };
   }
   return { view, offset, limit };
 }
@@ -209,6 +215,10 @@ export function createApiHandler({
         if (community?.view === 'leaderboard') {
           const db = await resolveStore();
           return respond(res, 200, await db.contribution.leaderboardPage({ offset: community.offset, limit: community.limit }));
+        }
+        if (community?.view === 'ideas') {
+          const db = await resolveStore();
+          return respond(res, 200, await db.community.publicIdeas({ sort: community.sort, offset: community.offset, limit: community.limit }));
         }
         if (community?.view === 'public') {
           // Public reads never create or refresh a session, or copy an account

@@ -734,3 +734,46 @@ html[lang="en"] .prompt-heading h2,html[lang="en"] .process-heading h2,html[lang
  .alias-dialog .content-dialog-heading{gap:8px}.alias-dialog .content-dialog-heading h2{font-size:22px}
  .alias-form input{font-size:16px}.alias-actions{gap:8px}
 }
+
+/* The main voting preview stays compact; the complete feed scrolls inside its dialog. */
+.ideas-more{display:inline-flex;align-items:center;gap:5px;min-width:44px;min-height:44px;padding:0 3px;font-size:11px;line-height:1.4;white-space:nowrap}
+.ideas-dialog{width:1220px;height:min(86dvh,900px);padding:0;overflow:hidden}
+.ideas-dialog[open]{display:flex;flex-direction:column}
+.ideas-dialog-header{flex:none;padding:16px 22px 12px;border-bottom:1px solid var(--line)}
+.ideas-dialog .content-dialog-heading{margin-bottom:4px}
+.ideas-toolbar{display:flex;align-items:center;gap:16px;min-height:44px}
+.ideas-toolbar .community-tabs{gap:22px}
+.ideas-toolbar .community-tab{font-size:13px;padding-inline:1px;min-width:44px}
+.ideas-toolbar>p{min-width:0;margin:0 0 0 auto;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.ideas-dialog .community-vote-note{font-size:12px;margin:3px 0 0;line-height:1.65}
+.ideas-dialog .community-feedback{font-size:12px;margin-top:9px;line-height:1.7}
+.ideas-dialog .community-feedback .text-button{min-height:44px}
+.ideas-panel{flex:1;min-height:0;padding:18px 22px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scroll-padding:18px}
+.ideas-panel:focus-visible{outline-offset:-3px}
+.ideas-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:stretch}
+.ideas-list .community-entry{padding:13px 13px 0}
+.ideas-list .community-entry-header{min-height:36px;gap:4px}
+.ideas-list .community-alias{font-size:12px}
+.ideas-list .community-entry time,.ideas-list .vote-note{font-size:10px}
+.ideas-list .community-body{font-size:13px;line-height:20px;height:100px;min-height:100px;-webkit-line-clamp:5;line-clamp:5;margin:12px 0 8px}
+.ideas-list .vote-button,.ideas-list .community-read{font-size:12px;min-height:44px;min-width:44px}
+.ideas-dialog-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;min-height:62px;padding:8px 22px;border-top:1px solid var(--line)}
+.ideas-dialog-footer .text-button{font-size:12px;line-height:1.6;min-height:44px;text-align:left}
+.ideas-pager{display:flex;align-items:center;gap:5px;margin-left:auto;flex:none}
+.ideas-pager .community-page{font-size:12px;min-width:42px}
+@media(min-width:1360px){.ideas-list{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:959px){.ideas-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:799px){
+ #open-ideas{grid-column:2;grid-row:1;font-size:12px;padding-inline:6px}
+ .ideas-dialog{width:calc(100vw - 24px);height:calc(100dvh - 24px);padding:0}
+ .ideas-dialog-header{padding:12px 14px}
+ .ideas-dialog .content-dialog-heading{gap:8px}
+ .ideas-dialog .content-dialog-heading h2{font-size:23px}
+ .ideas-toolbar{gap:8px}.ideas-toolbar .community-tabs{gap:20px}
+ .ideas-toolbar>p{font-size:11px}.ideas-dialog .community-vote-note{font-size:12px}
+ .ideas-panel{padding:14px;scroll-padding:14px}
+ .ideas-dialog-footer{padding:7px 14px;gap:6px}
+ .ideas-dialog .community-entry-header{flex-direction:column;align-items:flex-start;justify-content:flex-start}
+ .ideas-list .community-body{font-size:14px;line-height:22px;height:110px;min-height:110px}
+}
+@media(max-width:579px){.ideas-list{grid-template-columns:minmax(0,1fr)}.ideas-dialog-footer .text-button{font-size:11px;max-width:46%}}

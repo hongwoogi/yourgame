@@ -51,7 +51,7 @@ async function fixture(page, options = {}) {
       proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } } },
     posts: [], patches: [], actions: [], effects: [], receipts: new Map(), publicReads: 0, meReads: 0,
     sessionReads: 0, loginCalls: 0, publicFailure: false, meFailure: false, sessionFailure: false,
-    leaderboardReads: [], leaderboardFailure: false,
+    leaderboardReads: [], leaderboardFailure: false, ideasReads: [], ideasFailure: false,
     ...options };
   state.me ||= privateCommunity(state.session);
   const publishDefault = proposal => {
@@ -86,7 +86,7 @@ async function fixture(page, options = {}) {
         && idea.revision === publication.proposalRevision) }));
     return result;
   };
-  const publicSnapshot = () => {
+  const publicSnapshot = ({ all = false } = {}) => {
     const mine = meSnapshot();
     const own = mine.publications.filter(item => item.eligible).map(item => {
       const idea = state.proposals.find(entry => entry.id === item.proposalId);
@@ -94,7 +94,7 @@ async function fixture(page, options = {}) {
         publicationRevision: item.publicationRevision, author: { id: mine.profile.id, alias: mine.profile.alias },
         createdAt: idea.createdAt, upvotes: 0, downvotes: 0, votingOpen: state.round?.status === 'open', roundId: state.round?.id || null };
     });
-    const recent = [...structuredClone(state.ideas), ...own];
+    const recent = [...structuredClone(state.ideas), ...own].slice(0, all ? undefined : state.mainLimit);
     const items = leaderboardSnapshot();
     return { recent, popular: [...recent].sort((a, b) => b.upvotes - b.downvotes - (a.upvotes - a.downvotes)),
       leaderboard: { items: items.slice(0, 10) }, round: state.round, scoring: state.scoring, serverTime: new Date(state.serverTime).toISOString() };
@@ -190,6 +190,27 @@ async function fixture(page, options = {}) {
       return state.leaderboardFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503)
         : reply(state.leaderboardTransform ? state.leaderboardTransform(snapshot) : snapshot);
     }
+    if (url.pathname === '/api/community' && request.method() === 'GET' && url.searchParams.get('view') === 'ideas') {
+      const sort = url.searchParams.get('sort') || 'recent';
+      const offset = Number(url.searchParams.get('offset') || 0);
+      const limit = Number(url.searchParams.get('limit') || 24);
+      state.ideasReads.push({ sort, offset, limit, language: request.headers()['x-yourgame-language'] });
+      const items = publicSnapshot({ all: true }).recent.sort((a, b) => {
+        if (sort === 'popular') {
+          const difference = (b.upvotes - b.downvotes) - (a.upvotes - a.downvotes) || b.upvotes - a.upvotes;
+          if (difference) return difference;
+        }
+        return Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id);
+      });
+      const snapshot = { items: items.slice(offset, offset + limit), sort, offset, limit, total: items.length,
+        hasMore: offset + limit < items.length, round: structuredClone(state.round),
+        publicationPolicy: { version: 'public-default-v1', defaultPublic: true }, serverTime: new Date(state.serverTime).toISOString() };
+      const wait = state.holdNextIdeas;
+      state.holdNextIdeas = null;
+      if (wait) { wait.started(); await wait.promise; }
+      return state.ideasFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503)
+        : reply(state.ideasTransform ? state.ideasTransform(snapshot) : snapshot);
+    }
     if (url.pathname === '/api/community' && request.method() === 'GET') {
       state.publicReads += 1;
       return state.publicFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503) : reply(publicSnapshot());
@@ -259,6 +280,416 @@ async function fixture(page, options = {}) {
   if (state.session.user && !state.meFailure) await expect(page.locator('#my-contribution')).toBeVisible();
   return state;
 }
+
+function manyIdeas(count = 30) {
+  return Array.from({ length: count }, (_, index) => sharedIdea(index + 1));
+}
+
+test('all ideas paginates 24 records, sorts on the server and preserves reader focus, language and IME drafts', async ({ page }) => {
+  const ideas = manyIdeas();
+  ideas[24].body = '<img src=x onerror=window.untrustedIdea=true> Exact source\n& preserved whitespace.';
+  ideas[29].upvotes = 10;
+  const state = await fixture(page, { ideas, mainLimit: 6 });
+  const draft = '조합 중인 미전송 초안';
+  await page.locator('#prompt').fill(draft);
+  await page.locator('#prompt').dispatchEvent('compositionstart');
+  await expect(page.locator('#community-feed-list > *')).toHaveCount(3);
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await expect(page.locator('#ideas-total')).toHaveText('30 ideas');
+  expect(state.ideasReads[0]).toMatchObject({ sort: 'recent', offset: 0, limit: 24, language: 'en' });
+  await page.locator('#ideas-next').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(6);
+  await expect(page.locator('#ideas-page')).toHaveText('2 / 2');
+  const read = page.locator('#ideas-list [data-public-id="public-idea-25"] .community-read');
+  await read.click();
+  await expect(page.locator('#idea-body')).toHaveText(ideas[24].body);
+  await expect(page.locator('#idea-body img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.untrustedIdea)).toBeUndefined();
+  const reads = state.ideasReads.length;
+  await page.locator('#idea-language-select').selectOption('ko');
+  await expect(page.locator('#idea-title')).toHaveText('제안 원문');
+  await expect(page.locator('#idea-body')).toHaveText(ideas[24].body);
+  expect(state.ideasReads).toHaveLength(reads);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#ideas-dialog')).toBeVisible();
+  await expect(read).toBeFocused();
+  await page.locator('#ideas-popular-tab').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await expect(page.locator('#ideas-list > *').first()).toHaveAttribute('data-public-id', 'public-idea-30');
+  expect(state.ideasReads.at(-1)).toMatchObject({ sort: 'popular', offset: 0, limit: 24, language: 'ko' });
+  await page.locator('#ideas-popular-tab').press('Home');
+  await expect(page.locator('#ideas-recent-tab')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#ideas-list > *').first()).toHaveAttribute('data-public-id', 'public-idea-1');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#ideas-dialog')).toBeHidden();
+  await expect(page.locator('#open-ideas')).toBeFocused();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  await page.locator('#prompt').dispatchEvent('compositionend');
+  await expect(page.locator('#submit-button')).toBeEnabled();
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas votes outside the main feed share quotas and use public IDs to block only the owner', async ({ page }) => {
+  const ideas = manyIdeas();
+  ideas[24].author.alias = ALIAS;
+  ideas[25].author = { id: 'public-profile-a', alias: ALIAS };
+  const state = await fixture(page, { session: structuredClone(accountA), ideas, mainLimit: 6 });
+  await page.locator('#prompt').fill('This draft must not be submitted by voting.');
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(6);
+  const own = page.locator('#ideas-list [data-public-id="public-idea-26"]');
+  await expect(own.locator('.own-idea-badge')).toHaveText('My idea');
+  await expect(own.locator('[data-direction="up"]')).toBeDisabled();
+  await expect(own.locator('[data-direction="down"]')).toBeDisabled();
+  await expect(own.locator('[data-direction="up"]')).toHaveAccessibleDescription("You can't vote on your own idea.");
+  await own.locator('[data-direction="up"]').evaluate(button => { button.disabled = false; button.click(); });
+  expect(state.actions).toHaveLength(0);
+  const other = page.locator('#ideas-list [data-public-id="public-idea-25"]');
+  await expect(other.locator('.own-idea-badge')).toHaveCount(0);
+  const voteReply = gate();
+  state.holdNextActionResponse = voteReply;
+  await other.locator('[data-direction="up"]').click();
+  await voteReply.began;
+  await own.locator('.community-read').click();
+  voteReply.release();
+  await expect(other.locator('[data-direction="up"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  await expect(page.locator('#idea-body')).toHaveText(ideas[25].body);
+  await page.locator('#close-idea').click();
+  await expect(own.locator('.community-read')).toBeFocused();
+  await expect(page.locator('#ideas-vote-note')).toContainText('2 / 3');
+  await expect(page.locator('#community-vote-note')).toContainText('2 / 3');
+  expect(state.actions[0]).toMatchObject({ csrf: accountA.csrfToken,
+    payload: { action: 'vote', publicId: 'public-idea-25', direction: 'up', proposalRevision: 1, publicationRevision: 1 } });
+  await other.locator('[data-direction="up"]').click();
+  await expect(other.locator('[data-direction="up"]')).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#ideas-vote-note')).toContainText('3 / 3');
+  expect(state.actions[1].payload.direction).toBe('none');
+  await page.locator('#ideas-prev').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-list [data-public-id="public-idea-1"] [data-direction="down"]').click();
+  await expect(page.locator('#ideas-list [data-public-id="public-idea-1"] [data-direction="down"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#community-feed-list [data-public-id="public-idea-1"] [data-direction="down"]')).toHaveAttribute('aria-pressed', 'true');
+  expect(state.actions).toHaveLength(3);
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+});
+
+test('all ideas guest voting can cancel or log in without queuing a vote or a submission', async ({ page }) => {
+  const state = await fixture(page, { ideas: manyIdeas(), mainLimit: 6 });
+  await page.locator('#prompt').fill('A draft remains separate from logging in to vote.');
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  const up = page.locator('#ideas-list [data-public-id="public-idea-25"] [data-direction="up"]');
+  await up.click();
+  await expect(page.locator('#login-dialog')).toBeVisible();
+  await page.locator('#login-language-select').selectOption('ko');
+  await page.locator('#close-login').click();
+  await expect(page.locator('#ideas-dialog')).toBeVisible();
+  await expect(up).toBeFocused();
+  expect(state.loginCalls).toBe(0);
+  await up.click();
+  await page.getByRole('button', { name: 'Google 테스트 로그인', exact: true }).click();
+  await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect(page.locator('#ideas-dialog')).toBeHidden();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  await expect(page.locator('#prompt')).toHaveValue('A draft remains separate from logging in to vote.');
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
+  expect(state.actions).toHaveLength(0);
+  expect(state.posts).toHaveLength(0);
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  await up.click();
+  await expect(up).toHaveAttribute('aria-pressed', 'true');
+  expect(state.actions).toHaveLength(1);
+});
+
+test('all ideas ignores late sort and closed-page replies and rejects detached vote callbacks', async ({ page }) => {
+  const held = gate();
+  const ideas = manyIdeas();
+  ideas[29].upvotes = 10;
+  const state = await fixture(page, { session: structuredClone(accountA), ideas, mainLimit: 6, holdNextIdeas: held });
+  await page.locator('#open-ideas').click();
+  await held.began;
+  await page.locator('#ideas-popular-tab').click();
+  await expect(page.locator('#ideas-list > *').first()).toHaveAttribute('data-public-id', 'public-idea-30');
+  held.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#ideas-popular-tab')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#ideas-list > *').first()).toHaveAttribute('data-public-id', 'public-idea-30');
+  await page.locator('#ideas-list [data-public-id="public-idea-30"] [data-direction="up"]').evaluate(button => { window.oldIdeasVote = button; });
+  state.ideas[29].proposalRevision = 2;
+  state.ideas[29].publicationRevision = 2;
+  state.ideas[29].body = 'A new revision must not inherit a click on the previous source.';
+  const refreshing = gate();
+  state.holdNextIdeas = refreshing;
+  await page.locator('#ideas-refresh').click();
+  await refreshing.began;
+  await page.evaluate(() => { window.oldIdeasVote.disabled = false; window.oldIdeasVote.click(); });
+  expect(state.actions).toHaveLength(0);
+  refreshing.release();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.evaluate(() => window.oldIdeasVote.click());
+  expect(state.actions).toHaveLength(0);
+  const closing = gate();
+  state.holdNextIdeas = closing;
+  await page.locator('#ideas-refresh').click();
+  await closing.began;
+  await page.locator('#close-ideas').click();
+  state.ideas = manyIdeas(2);
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-total')).toHaveText('2 ideas');
+  closing.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#ideas-list > *')).toHaveCount(2);
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas withdraws reader content, recovers a shrinking page and closes on account changes', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA), ideas: manyIdeas(50), mainLimit: 6 });
+  await page.locator('#prompt').fill('An account change must preserve this unsent draft.');
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  await expect(page.locator('#ideas-page')).toHaveText('2 / 3');
+  state.ideas = manyIdeas(10);
+  await page.locator('#ideas-refresh').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(10);
+  expect(state.ideasReads.slice(-2).map(read => read.offset)).toEqual([24, 0]);
+  await page.locator('#ideas-list .community-read').first().click();
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  state.ideas = [];
+  await page.clock.runFor(46000);
+  await expect(page.locator('#idea-dialog')).toBeHidden();
+  await expect(page.locator('#idea-body')).toHaveText('');
+  await expect(page.locator('#ideas-total')).toHaveText('0 ideas');
+  state.ideasFailure = true;
+  await page.locator('#ideas-refresh').click();
+  await expect(page.locator('#ideas-retry')).toBeVisible();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  await expect(page.locator('#ideas-status')).not.toContainText('PRIVATE_INTERNAL_EVIDENCE');
+  await page.locator('#ideas-language-select').selectOption('ko');
+  await expect(page.locator('#ideas-status')).toContainText('불러오지 못했습니다');
+  state.ideasFailure = false;
+  state.ideas = manyIdeas();
+  await page.locator('#ideas-retry').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  const accountRead = gate();
+  state.holdNextIdeas = accountRead;
+  await page.locator('#ideas-refresh').click();
+  await accountRead.began;
+  state.session = structuredClone(accountB);
+  state.me = privateCommunity(accountB);
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'yourgame.auth-pulse.v1', newValue: 'next-account' })));
+  await expect(page.locator('#ideas-dialog')).toBeHidden();
+  accountRead.release();
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  await expect(page.locator('#my-rank-alias')).toHaveText(ALIAS_B);
+  await expect(page.locator('#prompt')).toHaveValue('An account change must preserve this unsent draft.');
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas keeps the same unknown vote request across language changes and a rate-limited retry', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(accountA), ideas: manyIdeas(), mainLimit: 6 });
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  state.malformedAfterNextCommit = true;
+  const vote = page.locator('#ideas-list [data-public-id="public-idea-25"] [data-direction="up"]');
+  await vote.click();
+  await expect(page.locator('#ideas-action-retry')).toBeVisible();
+  const first = structuredClone(state.actions[0].payload);
+  await page.locator('#ideas-language-select').selectOption('ko');
+  expect(state.actions).toHaveLength(1);
+  state.nextActionError = { code: 'COMMUNITY_RATE_LIMITED', status: 429 };
+  await page.locator('#ideas-action-retry').click();
+  await expect(page.locator('#ideas-action-retry')).toBeEnabled();
+  await expect(vote).toBeDisabled();
+  expect(state.actions[1].payload).toEqual(first);
+  await page.locator('#ideas-action-retry').click();
+  await expect(page.locator('#ideas-action-retry')).toBeHidden();
+  await expect(vote).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#ideas-vote-note')).toContainText('2 / 3');
+  expect(state.actions.map(action => action.payload)).toEqual([first, first, first]);
+  expect(state.effects).toHaveLength(1);
+  expect(state.posts).toHaveLength(0);
+});
+
+test('all ideas rejects inconsistent pagination and still reads closed proposals with no round', async ({ page }) => {
+  const state = await fixture(page, { ideas: manyIdeas(3), mainLimit: 6 });
+  for (const corrupt of [
+    data => ({ ...data, sort: 'popular' }),
+    data => ({ ...data, offset: 24 }),
+    data => ({ ...data, items: data.items.slice(0, 2) }),
+    data => ({ ...data, items: [data.items[0], data.items[0], data.items[2]] }),
+    data => ({ ...data, hasMore: true }),
+    data => ({ ...data, limit: 50 }),
+  ]) {
+    state.ideasTransform = corrupt;
+    await page.locator('#open-ideas').click();
+    await expect(page.locator('#ideas-status')).toHaveAttribute('data-kind', 'error');
+    await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+    await expect(page.locator('#ideas-next')).toBeDisabled();
+    await page.locator('#close-ideas').click();
+  }
+  state.ideasTransform = null;
+  state.round = null;
+  state.ideas = manyIdeas(1).map(idea => ({ ...idea, roundId: null, votingOpen: false }));
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(1);
+  await expect(page.locator('#ideas-list [data-direction="up"]')).toBeDisabled();
+  await page.locator('#ideas-list .community-read').click();
+  await expect(page.locator('#idea-body')).toHaveText(state.ideas[0].body);
+  await page.keyboard.press('Escape');
+  await page.mouse.click(1, 1);
+  await expect(page.locator('#ideas-dialog')).toBeHidden();
+  await expect(page.locator('#open-ideas')).toBeFocused();
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas background checks preserve unchanged reading and clear it on a failed or changed response', async ({ page }) => {
+  const ideas = manyIdeas();
+  ideas[24].body = 'A long source for uninterrupted reading.\n'.repeat(40);
+  const state = await fixture(page, { session: structuredClone(accountA), ideas, mainLimit: 6 });
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+  await page.locator('#ideas-next').click();
+  await page.locator('#ideas-list [data-public-id="public-idea-25"] .community-read').click();
+  await page.locator('#idea-dialog').evaluate(dialog => { dialog.scrollTop = 200; });
+  const scroll = await page.locator('#idea-dialog').evaluate(dialog => dialog.scrollTop);
+  const unchanged = gate();
+  state.holdNextIdeas = unchanged;
+  // The periodic refresh has no earlier held request that could time out.
+  await page.clock.runFor(46000);
+  await unchanged.began;
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  await expect(page.locator('#idea-body')).toHaveText(ideas[24].body);
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  unchanged.release();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(6);
+  await expect(page.locator('#idea-dialog')).toBeVisible();
+  expect(await page.locator('#idea-dialog').evaluate(dialog => dialog.scrollTop)).toBe(scroll);
+  state.ideasFailure = true;
+  await page.locator('#ideas-refresh').dispatchEvent('click');
+  await expect(page.locator('#idea-dialog')).toBeHidden();
+  await expect(page.locator('#idea-body')).toHaveText('');
+  await expect(page.locator('#ideas-retry')).toBeVisible();
+  state.ideasFailure = false;
+  await page.locator('#ideas-retry').click();
+  await page.locator('#ideas-list [data-public-id="public-idea-25"] .community-read').click();
+  state.ideas[24] = { ...state.ideas[24], proposalRevision: 2, publicationRevision: 2, body: 'Changed public source.' };
+  await page.locator('#ideas-refresh').dispatchEvent('click');
+  await expect(page.locator('#idea-dialog')).toBeHidden();
+  await expect(page.locator('#idea-body')).toHaveText('');
+  await expect(page.locator('#ideas-list [data-public-id="public-idea-25"] .community-body')).toHaveText('Changed public source.');
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas handles pending refresh coalescing without rendering an older page or keeping it after a public failure', async ({ page }) => {
+  const held = gate();
+  const state = await fixture(page, { ideas: manyIdeas(), mainLimit: 6, holdNextIdeas: held });
+  await page.locator('#open-ideas').click();
+  await held.began;
+  const beforePublic = state.publicReads;
+  const beforeIdeas = state.ideasReads.length;
+  state.ideas = manyIdeas(4);
+  await page.locator('#community-refresh').dispatchEvent('click');
+  await expect.poll(() => state.publicReads).toBeGreaterThan(beforePublic);
+  expect(state.ideasReads).toHaveLength(beforeIdeas);
+  const fresh = gate();
+  state.holdNextIdeas = fresh;
+  held.release();
+  await fresh.began;
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  fresh.release();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(4);
+  expect(state.ideasReads).toHaveLength(beforeIdeas + 1);
+  state.publicFailure = true;
+  await page.locator('#ideas-refresh').click();
+  await expect(page.locator('#ideas-retry')).toBeVisible();
+  await expect(page.locator('#ideas-list > *')).toHaveCount(0);
+  await expect(page.locator('#ideas-next')).toBeDisabled();
+  expect(state.actions).toHaveLength(0);
+});
+
+test('all ideas fits long data in desktop and mobile dialogs while the three-card main page remains compact', async ({ page }, testInfo) => {
+  test.setTimeout(90000);
+  const me = privateCommunity(accountA);
+  me.profile.alias = '아주긴공개별명을가진참여자입니다길이검사'.slice(0, 24);
+  const ideas = manyIdeas(50).map((idea, index) => ({ ...idea, body: 'A long public idea with details. '.repeat(60),
+    author: { id: index === 0 ? me.profile.id : idea.author.id, alias: me.profile.alias } }));
+  const state = await fixture(page, { session: { ...structuredClone(accountA), user: { ...accountA.user, name: 'SYNTHETIC_LONG_NAME_'.repeat(10) } },
+    me, ideas, mainLimit: 6, leaders: rankedPlayers(10), proposals: [ownIdea()] });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.name));
+  for (const locale of ['en', 'ko']) {
+    await page.locator('#language-select').selectOption(locale);
+    for (const [width, height] of [[1280, 720], [1366, 768], [1600, 900], [1920, 1080], [320, 740], [360, 780], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await page.clock.runFor(50);
+      if (width >= 1280) await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1)).toBe(true);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const mainGeometry = await page.evaluate(() => {
+        const header = document.querySelector('.masthead').getBoundingClientRect();
+        const controls = [...document.querySelectorAll('.masthead button,.masthead a,.masthead select')]
+          .map(element => element.getBoundingClientRect()).filter(rect => rect.width && rect.height);
+        const more = document.getElementById('open-ideas').getBoundingClientRect();
+        const essentials = [...document.querySelectorAll('.game-preview,.community-section,#prompt-form,.contribution-board,.process-section')].map(element => element.getBoundingClientRect());
+        return { horizontal: document.documentElement.scrollWidth <= innerWidth + 1,
+          essentials: essentials.every(rect => rect.bottom <= innerHeight + 1),
+          header: controls.every(rect => rect.top >= header.top && rect.bottom <= header.bottom + 1),
+          touch: more.width >= 44 && more.height >= 44 };
+      });
+      expect(mainGeometry.horizontal, locale + ' ' + width).toBe(true);
+      expect(mainGeometry.header, locale + ' ' + width).toBe(true);
+      expect(mainGeometry.touch, locale + ' ' + width).toBe(true);
+      if (width >= 1280) expect(mainGeometry.essentials, locale + ' ' + width).toBe(true);
+      await expect(page.locator('#community-feed-list > *')).toHaveCount(3);
+      if ([1366, 390].includes(width)) await page.screenshot({ path: testInfo.outputPath('ideas-main-' + locale + '-' + width + '.png'), fullPage: width < 800 });
+      await page.locator('#open-ideas').click();
+      await expect(page.locator('#ideas-list > *')).toHaveCount(24);
+      const modalGeometry = await page.locator('#ideas-dialog').evaluate(dialog => {
+        const rect = dialog.getBoundingClientRect();
+        const panel = document.getElementById('ideas-panel');
+        const list = document.getElementById('ideas-list');
+        const buttons = [...dialog.querySelectorAll('button,select')].filter(element => element.getClientRects().length);
+        return { inside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight + 1,
+          noOverflow: dialog.scrollWidth <= dialog.clientWidth + 1 && panel.scrollWidth <= panel.clientWidth + 1,
+          scrolls: panel.scrollHeight > panel.clientHeight, columns: getComputedStyle(list).gridTemplateColumns.split(' ').length,
+          targets: buttons.every(element => { const target = element.getBoundingClientRect(); return target.width >= 44 && target.height >= 44; }) };
+      });
+      expect(modalGeometry.inside, locale + ' ' + width).toBe(true);
+      expect(modalGeometry.noOverflow, locale + ' ' + width).toBe(true);
+      expect(modalGeometry.scrolls, locale + ' ' + width).toBe(true);
+      expect(modalGeometry.targets, locale + ' ' + width).toBe(true);
+      expect(modalGeometry.columns).toBe(width >= 1360 ? 4 : width >= 1280 ? 3 : 1);
+      const lastRead = page.locator('#ideas-list .community-read').last();
+      await lastRead.scrollIntoViewIfNeeded();
+      expect(await page.locator('.ideas-dialog-footer').evaluate(element => element.getBoundingClientRect().bottom <= innerHeight + 1)).toBe(true);
+      await lastRead.click();
+      await expect(page.locator('#idea-dialog')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(lastRead).toBeFocused();
+      await page.locator('#ideas-panel').evaluate(element => { element.scrollTop = 0; });
+      if ([1366, 390].includes(width)) await page.locator('#ideas-dialog').screenshot({ path: testInfo.outputPath('ideas-dialog-' + locale + '-' + width + '.png') });
+      await page.locator('#close-ideas').click();
+      await expect(page.locator('#open-ideas')).toBeFocused();
+    }
+  }
+  expect(errors).toEqual([]);
+  expect(state.actions).toHaveLength(0);
+  expect(state.posts).toHaveLength(0);
+});
 
 async function openMyIdeas(page) {
   await page.locator('#open-my-proposals').click();

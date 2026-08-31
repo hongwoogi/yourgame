@@ -6,5 +6,8 @@ docs
 README.md
 CONTEXT.md
 .agents
+.codex
+AGENTS.md
+blueprint-game-development.md
 skills-lock.json
 playwright.config.mjs

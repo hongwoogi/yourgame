@@ -928,7 +928,33 @@ test('a 423 blocks repeat Send even if refreshing status fails, without losing t
   expect(state.posts).toHaveLength(1);
 });
 
-test('English copy, metadata and KST target stay concise without translating participant data', async ({ page }) => {
+test('countdown keeps total hours across 24 and localizes only the release date without sending a draft', async ({ page }) => {
+  const state = await fixture(page, { locale: 'en', serverTime: Date.parse(RELEASE) - (76 * 3600 + 2 * 60 + 3) * 1000 });
+  await expect(page.locator('#count-days')).toHaveCount(0);
+  await expect(page.locator('#countdown .time-unit')).toHaveCount(3);
+  await expect(page.locator('#count-hours')).toHaveText('76');
+  await expect(page.locator('#count-minutes')).toHaveText('02');
+  await expect(page.locator('#countdown')).toHaveAttribute('aria-label', /76 hours, 2 minutes/);
+  await expect(page.locator('#release-date-time')).toHaveText('Aug 31, 2026 / 11:00 AM EDT');
+  await expect(page.locator('#release-date-time')).toHaveAttribute('title', 'Washington, D.C. (Eastern Time)');
+  await expect(page.locator('#collection-deadline')).toContainText('23:00 KST');
+  const target = await page.locator('#release-date-time').getAttribute('datetime');
+  await page.locator('#prompt').fill('A date display change must leave this draft alone.');
+  await page.locator('#language-select').selectOption('ko');
+  await expect(page.locator('#count-hours')).toHaveText('76');
+  await expect(page.locator('#release-date-time')).toHaveText('2026.09.01 / 00:00 KST');
+  expect(Date.parse(await page.locator('#release-date-time').getAttribute('datetime'))).toBe(Date.parse(target));
+  await expect(page.locator('#release-note')).toContainText('한국시간');
+  state.serverTime = Date.parse(RELEASE) + 5000;
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('#countdown')).toBeHidden();
+  await expect(page.locator('#release-message')).toContainText('준비');
+  await expect(page.locator('#prompt')).toHaveValue('A date display change must leave this draft alone.');
+  expect(state.posts).toHaveLength(0);
+  expect(state.loginCalls).toBe(0);
+});
+
+test('English copy and Washington release time keep the UTC target without translating participant data', async ({ page }) => {
   const original = '원문은 그대로: <img src=x onerror="window.translationXss=true">';
   const announcement = '운영자가 작성한 한국어 공지를 번역하거나 변경하지 않습니다.';
   const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn),
@@ -941,8 +967,9 @@ test('English copy, metadata and KST target stay concise without translating par
   await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
   await expect(page.locator('#hero-title')).toContainText('One evolving roguelike.');
   await expect(page.locator('.hero-description')).toContainText('single-player roguelike');
-  await expect(page.locator('.release-date time')).toHaveAttribute('datetime', '2026-09-01T00:00:00+09:00');
-  await expect(page.locator('.release-date')).toContainText('Sep 1, 2026 / 00:00 KST');
+  expect(Date.parse(await page.locator('.release-date time').getAttribute('datetime'))).toBe(Date.parse('2026-09-01T00:00:00+09:00'));
+  await expect(page.locator('.release-date')).toContainText('Aug 31, 2026 / 11:00 AM EDT');
+  await expect(page.locator('#release-note')).toContainText('Washington, D.C. (ET)');
   await expect(page.locator('#prompt')).toHaveAttribute('placeholder', 'What would make this roguelike more fun?');
   await expect(page.locator('#user-name')).toHaveText(signedIn.user.name);
   await expect(page.locator('#service-message')).toHaveText(announcement);
