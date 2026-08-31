@@ -145,9 +145,13 @@ import { createGameHost } from './game-host.js';
   let lastBoundary = '';
   let lastSyncAt = 0;
   let storageWarningShown = false;
+  // The server-rendered textarea can receive input while this module or one of
+  // its imports is still downloading. That live text wins over a stored draft.
+  const earlyDraft = ui.prompt.value !== ui.prompt.defaultValue;
   let newDraft = readStorage('localStorage', DRAFT_KEY) || '';
   if (newDraft.length > 100000) newDraft = '';
-  ui.prompt.value = newDraft;
+  if (earlyDraft) newDraft = ui.prompt.value;
+  else ui.prompt.value = newDraft;
 
   function readStorage(kind, key) {
     try { return window[kind].getItem(key); } catch { return null; }
@@ -455,30 +459,35 @@ import { createGameHost } from './game-host.js';
 
   function renderTime({ passive = false } = {}) {
     const now = serverNow();
-    const target = Date.parse(status?.firstReleaseAt || FIRST_RELEASE);
+    const daily = status?.collection?.schedule === 'daily-kst-v1';
+    // These are separate server dates: after 23:00 the open collection targets
+    // tomorrow's release, while tonight's release is still the next one.
+    const targetDate = daily ? status.nextReleaseAt : status?.firstReleaseAt || FIRST_RELEASE;
+    const target = Date.parse(targetDate);
+    const collectionExpired = daily && now >= Date.parse(status.collection.closesAt);
     const { remaining, hours, minutes, seconds } = countdownParts(target, now);
     ui['release-date-time'].textContent = formatReleaseDate(target, i18n.locale);
-    ui['release-date-time'].dateTime = status?.firstReleaseAt || FIRST_RELEASE;
+    ui['release-date-time'].dateTime = targetDate;
     ui['release-date-time'].title = t('releaseTimezoneTitle');
     const published = status?.game?.published === true;
     const operations = operatingState();
     gameHost.update({ game: status?.game, locale: i18n.locale, active: statusReady && operations.mode === 'active' });
-    const releasePaused = operations.mode !== 'active' || (!published && operations.developmentPaused);
-    ui.countdown.hidden = remaining === 0 || published || releasePaused;
-    ui['release-message'].hidden = remaining > 0 && !published && !releasePaused;
+    const releasePaused = operations.mode !== 'active' || ((daily || !published) && operations.developmentPaused);
+    ui.countdown.hidden = remaining === 0 || (!daily && published) || releasePaused;
+    ui['release-message'].hidden = remaining > 0 && (daily || !published) && !releasePaused;
     if (releasePaused) {
       ui['countdown-title'].textContent = operations.mode === 'ended' ? t('endedTitle')
         : operations.mode === 'maintenance' ? t('maintenanceTitle') : t('developmentTitle');
       ui['release-message'].textContent = operations.mode === 'ended' ? t('endedMessage')
         : operations.mode === 'maintenance' ? t('maintenanceMessage') : t('developmentMessage');
-    } else if (published) {
+    } else if (!daily && published) {
       ui['countdown-title'].textContent = t('firstGame');
       ui['release-message'].textContent = t('gamePublished');
     } else if (remaining === 0) {
-      ui['countdown-title'].textContent = t('gamePreparingTitle');
-      ui['release-message'].textContent = t('gamePreparing');
+      ui['countdown-title'].textContent = t(daily ? 'dailyReleaseCheckingTitle' : 'gamePreparingTitle');
+      ui['release-message'].textContent = t(daily ? 'dailyReleaseChecking' : 'gamePreparing');
     } else {
-      ui['countdown-title'].textContent = t('countdownDefault');
+      ui['countdown-title'].textContent = t(daily ? 'dailyCountdown' : 'countdownDefault');
       const values = [hours, minutes, seconds];
       ['count-hours', 'count-minutes', 'count-seconds'].forEach((key, index) => {
         ui[key].textContent = String(values[index]).padStart(2, '0');
@@ -487,19 +496,24 @@ import { createGameHost } from './game-host.js';
     }
     ui['release-note'].textContent = !statusReady ? (releasePaused ? t('operationChecking') : t('deviceTime'))
       : releasePaused ? t('pausedReleaseNote')
+      : daily ? t(published ? 'dailyPublishedNote' : 'dailyReleaseNote')
       : published ? t('publishedNote')
         : remaining === 0 ? t('delayedNote')
           : t('releaseNote');
     const initialClosed = status?.collection?.initialClosed === true || now >= Date.parse(FIRST_CLOSE);
     const open = proposalsOpen();
-    ui['collection-dot'].classList.toggle('is-open', open);
+    ui['collection-dot'].classList.toggle('is-open', open && !collectionExpired);
     ui['collection-label'].textContent = !statusReady ? t('collectionChecking')
       : operations.proposalsPaused ? (operations.mode === 'ended' ? t('collectionEnded') : operations.mode === 'maintenance' ? t('collectionMaintenance') : t('collectionPaused'))
-      : open ? (initialClosed ? t('collectionNext') : t('collectionOpen')) : t('collectionPreparing');
-    ui['collection-deadline'].textContent = operations.proposalsPaused ? t('deadlinePaused') : initialClosed
+      : collectionExpired ? t('collectionChecking')
+      : open ? (daily ? t('dailyCollectionOpen') : initialClosed ? t('collectionNext') : t('collectionOpen')) : t('collectionPreparing');
+    ui['collection-deadline'].textContent = operations.proposalsPaused ? t('deadlinePaused')
+      : daily ? (collectionExpired ? t('dailyCollectionChecking')
+        : t('dailyCollectionDeadline', { time: formatReleaseDate(status.collection.closesAt, i18n.locale) })) : initialClosed
       ? t('deadlineNext')
       : t('initialDeadline');
-    const boundary = `${initialClosed}-${remaining === 0}`;
+    const boundary = daily ? `${status.collection.cycleId}-${collectionExpired}-${remaining === 0}`
+      : `${initialClosed}-${remaining === 0}`;
     if (!passive && lastBoundary && lastBoundary !== boundary && statusReady) schedulePoll(0);
     if (!passive) lastBoundary = boundary;
     if (!passive && statusReady && sessionReady && user && !document.hidden && !submitting && !authenticating
@@ -574,6 +588,14 @@ import { createGameHost } from './game-host.js';
       const data = await request('/api/status');
       if (sequence !== statusReadSequence) return status;
       if (!data.collection || !data.firstReleaseAt || !data.serverTime) throw new RequestError(m('collectionUnavailable'));
+      if (data.collection.schedule === 'daily-kst-v1'
+        && (!/^daily-\d{4}-\d{2}-\d{2}$/.test(data.collection.cycleId || '')
+          || ![data.collection.opensAt, data.collection.closesAt, data.collection.releaseAt, data.nextReleaseAt]
+            .every(value => typeof value === 'string' && Number.isFinite(Date.parse(value)))
+          || Date.parse(data.collection.opensAt) >= Date.parse(data.collection.closesAt)
+          || Date.parse(data.collection.closesAt) >= Date.parse(data.collection.releaseAt))) {
+        throw new RequestError(m('collectionUnavailable'));
+      }
       if (data.service !== undefined && (!data.service || !['active', 'maintenance', 'ended'].includes(data.service.mode)
         || typeof data.service.proposalsEnabled !== 'boolean' || typeof data.service.developmentEnabled !== 'boolean'
         || typeof data.service.message !== 'string')) throw new RequestError(m('operationsUnavailable'));
@@ -629,6 +651,9 @@ import { createGameHost } from './game-host.js';
       actions.className = 'proposal-meta-right';
       const state = document.createElement('span');
       state.textContent = proposal.editable ? (operatingState().proposalsPaused ? t('editPaused') : t('editable')) : t('editClosed');
+      if (proposal.closesAt && Number.isFinite(Date.parse(proposal.closesAt))) {
+        state.title = t('dailyEditDeadline', { time: formatReleaseDate(proposal.closesAt, i18n.locale) });
+      }
       actions.append(state);
       if (proposal.editable) {
         const editButton = document.createElement('button');
@@ -1169,6 +1194,9 @@ import { createGameHost } from './game-host.js';
     if (!editing?.conflict && editing?.editable !== false && ui['form-feedback'].dataset.kind !== 'error') feedback('');
     renderControls();
   });
+  // Persist pre-listener input using the same path as ordinary typing. This is
+  // draft recovery only: it creates neither a submission nor a login intent.
+  if (earlyDraft) saveCurrentDraft();
 
   ui.prompt.addEventListener('compositionstart', () => {
     composing = true;

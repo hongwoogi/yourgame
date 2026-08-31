@@ -243,6 +243,11 @@ export function createApiHandler({
             collection,
             service: publicService(service),
             firstReleaseAt: new Date(FIRST_RELEASE).toISOString(),
+            // Nearest planned midnight is independent of the intake cycle that
+            // rolls over at23:00. A clock target never marks a game published.
+            nextReleaseAt: collection.schedule === 'daily-kst-v1'
+              ? new Date(Math.floor((time + 9 * 3600000) / 86400000) * 86400000 + 86400000 - 9 * 3600000).toISOString()
+              : new Date(FIRST_RELEASE).toISOString(),
             googleClientId: config.googleClientId,
             limits: { bytes: MAX_BYTES, submissions: SUBMISSION_LIMIT, windowSeconds: WINDOW_MS / 1000 },
             // Publication requires an actual verified game artifact. Time alone

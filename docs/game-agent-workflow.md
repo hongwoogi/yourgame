@@ -167,6 +167,10 @@ candidate.json의 형식은 기존 `scripts/check-game-release.mjs`가 유일한
 
 검증된 변경의 전체 build/UI와 새 `git archive` 설치/build 후, 배포에는 검토한 바이트와 고정된 공개 목록만 포함한다. `createGamePublicationStore(client).activate(...)`는 현재 gate와 최신 selection revision을 원자적으로 확인해 후보를 **잠정 선택**한다. 운영 도메인의 정확한 파일·실제 플레이를 확인한 뒤 `confirm({operationId, expectedRevision, observationDigest})`, 그 다음 `admin-worker update --status completed --snapshot PATH --candidate PATH --review-id REVIEW_ID ...` 순서로 기록한다. `confirm` 전에 작업을 completed로 바꾸면 실행 중 작업 검증 조건에 맞지 않는다. 공개 읽기는 DB 선택과 배포 목록의 version/hash/review가 일치할 때만 게임을 제공한다. 이 절차 자체나 검토 영수증 발급만으로 운영 공개 성공을 선언하지 않는다.
 
+## 매일 업데이트
+
+일일 마감·자정 공개와 중복 방지는 [일일 공개 절차](daily-release-runbook.md)를 따른다. 날짜별 승인 스냅샷과 `daily-game-YYYY-MM-DD` 루트 실행을 사용하고, 현재 검증 게임을 baseline으로 전달한다. 재시도는 원래 루트의 자정 공개 시각을 상속한다. 마감 뒤 들어온 의견·미승인 원문·최초 공개 전용 보정 지시는 새로운 회차 입력이 아니다. 예약은 운영자를 깨우는 실행 수단이며 게임 역할의 승인·배포 권한을 확대하지 않는다.
+
 ## 실패, 재시도와 정상본 보존
 
 한 단계의 형식 오류나 재현 가능한 로컬 구현 결함은 같은 승인·격리 조건에서 한 번 수정 재검사한다. 여전히 실패하면 `failed` 또는 `blocked`로 부모에게 반환한다. stale binding·서비스 중지·격리 없음·공개 검토 없음은 무한 재시도하거나 스스로 승인해 해결하지 않는다. 작업 ID·snapshot·산출물 해시가 달라진 경우 새 인계와 전체 후속 검토가 필요하다.

@@ -162,7 +162,9 @@ test('cutoff freezes initial proposals but continues receiving into the pending 
   await f.setTime(FIRST_RELEASE + 1);
   const status = await request(f.handler, '/api/status');
   assert.equal(status.body.game.published, false);
-  assert.deepEqual(status.body.collection, { id: 'pending', status: 'open', closesAt: null, releaseAt: null, initialClosed: true });
+  assert.deepEqual(status.body.collection, { id: 'pending', status: 'open', schedule: 'daily-kst-v1', cycleId: 'daily-2026-09-01',
+    opensAt: '2026-08-31T14:00:00.000Z', closesAt: '2026-09-01T14:00:00.000Z',
+    releaseAt: '2026-09-01T15:00:00.000Z', initialClosed: true });
 });
 
 test('a write delayed past cutoff uses database execution time, not request start time', async t => {

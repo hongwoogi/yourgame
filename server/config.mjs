@@ -1,7 +1,8 @@
 import packageInfo from '../package.json' with { type: 'json' };
 import { ApiError } from './errors.mjs';
+import { INITIAL_CUTOFF, dailyCycleAt } from './daily-schedule.mjs';
 
-export const INITIAL_CUTOFF = Date.parse('2026-08-31T14:00:00.000Z');
+export { INITIAL_CUTOFF };
 export const FIRST_RELEASE = Date.parse('2026-08-31T15:00:00.000Z');
 export const MAX_BYTES = 2000;
 export const SUBMISSION_LIMIT = 3;
@@ -55,11 +56,12 @@ export function readConfig(env = process.env) {
 
 export function currentCollection(now = Date.now()) {
   const initialClosed = now >= INITIAL_CUTOFF;
+  if (initialClosed) return { id: 'pending', status: 'open', schedule: 'daily-kst-v1', ...dailyCycleAt(now), initialClosed };
   return {
-    id: initialClosed ? 'pending' : 'initial',
+    id: 'initial',
     status: 'open',
-    closesAt: initialClosed ? null : new Date(INITIAL_CUTOFF).toISOString(),
-    releaseAt: initialClosed ? null : new Date(FIRST_RELEASE).toISOString(),
+    closesAt: new Date(INITIAL_CUTOFF).toISOString(),
+    releaseAt: new Date(FIRST_RELEASE).toISOString(),
     initialClosed,
   };
 }

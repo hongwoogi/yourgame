@@ -12,14 +12,15 @@ import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
 import { INITIAL_CUTOFF } from '../server/config.mjs';
 import { prepareGameReleaseSchema } from '../server/game-release-schema.mjs';
 import { createGameReleaseStore,RELEASE_BINDING_KEYS } from '../server/game-release-store.mjs';
-import { createGamePublicationStore,preparePublicationSchema } from '../server/game-publication-store.mjs';
+import { createGamePublicationStore,preparePublicationSchema,resolveDailyRunCycle } from '../server/game-publication-store.mjs';
+import { dailyCycleForDate } from '../server/daily-schedule.mjs';
 import { errorCode,TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
 const hash = digit => digit.repeat(64);
 const operation = (action,input) => ({ action,requestId:randomUUID(),reason:'Synthetic publication test',...input });
 const bindingOf = row => Object.fromEntries(['id','revision','bodyHash','policyVersion','safetyReviewId','safetyRevision','developmentBriefHash'].map(key => [key,row[key]]));
 
-async function fixture(t,{prepare=true}={}) {
+async function fixture(t,{prepare=true,runId,proposalTime=INITIAL_CUTOFF-3600000}={}) {
   const directory = await mkdtemp(path.join(tmpdir(),'yourgame-publication-store-'));
   const client = createClient({url:`file:${path.join(directory,'test.db').replaceAll('\\','/')}`});
   t.after(async () => {
@@ -39,7 +40,7 @@ async function fixture(t,{prepare=true}={}) {
   });
   await client.execute('PRAGMA foreign_keys=ON');
   await initializeDatabase(client);
-  const time=INITIAL_CUTOFF-3600000;
+  const time=proposalTime;
   await client.execute('CREATE TABLE test_clock(id INTEGER PRIMARY KEY,now_ms INTEGER NOT NULL)');
   await client.execute({sql:'INSERT INTO test_clock VALUES(1,?)',args:[time]});
   await activateCommunityPublicDefaults(client,{expectedServiceRevision:1,databaseClockSql:TEST_CLOCK_SQL});
@@ -58,8 +59,10 @@ async function fixture(t,{prepare=true}={}) {
   }));
   const bindings=(await store.admin.listEligibleProposals({roundId:row.roundId,proposalIds:[proposal.id]})).map(bindingOf);
   const job=await store.admin.mutate(admin.session,operation('create_version',{label:'Fixture development',summary:'Synthetic candidates'}));
+  if(runId) await client.execute({sql:`INSERT INTO development_runs(id,label,summary,status,created_at,updated_at)
+    VALUES(?,'Daily fixture','Synthetic daily publication','queued',?,?)`,args:[runId,time,time]});
   const workerId='publication-fixture-worker';
-  const run=await store.admin.claimRun({id:job.targetId,revision:1,workerId});
+  const run=await store.admin.claimRun({id:runId??job.targetId,revision:1,workerId});
   await prepareGameReleaseSchema(client,{expectedServiceRevision:1});
   if(prepare) await preparePublicationSchema(client,{expectedServiceRevision:1});
   const releases=createGameReleaseStore(client,{databaseClockSql:TEST_CLOCK_SQL});
@@ -76,8 +79,140 @@ async function fixture(t,{prepare=true}={}) {
         serviceRevision:1,bindings,roundId:row.roundId,releaseBinding,commitSha:hash('1'),deploymentId:'deployment-fixture',expectedRevision:0}};
   }
   const confirm=(expectedRevision)=>publications.confirm({operationId:randomUUID(),expectedRevision,observationDigest:hash('2')});
-  return {client,store,member,bindings,publications,candidate,confirm};
+  return {client,store,member,bindings,publications,candidate,confirm,run};
 }
+
+async function publicationEffects(client) {
+  return {
+    selection:(await client.execute('SELECT * FROM game_publication_selection')).rows,
+    events:(await client.execute('SELECT COUNT(*) AS n FROM game_publication_events')).rows,
+    audits:(await client.execute('SELECT COUNT(*) AS n FROM admin_audit')).rows,
+    runs:(await client.execute('SELECT * FROM development_runs ORDER BY id')).rows,
+  };
+}
+
+async function setDatabaseTime(client,time) {
+  await client.execute({sql:'UPDATE test_clock SET now_ms=? WHERE id=1',args:[time]});
+}
+
+async function addAncestor(client,id,parentId=null) {
+  await client.execute({sql:`INSERT INTO development_runs(id,label,summary,status,created_at,updated_at,parent_id)
+    VALUES(?,'Ancestor fixture','Synthetic immutable ancestry','failed',0,0,?)`,args:[id,parentId]});
+}
+
+test('daily activation rejects before midnight without mutation and permits exact midnight using DBclock',async t=>{
+  const f=await fixture(t,{runId:'daily-game-2026-09-01',proposalTime:INITIAL_CUTOFF});
+  const a=await f.candidate('a');
+  assert.equal(a.activation.roundId,'pending');
+  assert.deepEqual(await resolveDailyRunCycle(f.client,f.run.id),dailyCycleForDate('2026-09-01'));
+  const releaseAt=Date.parse(dailyCycleForDate('2026-09-01').releaseAt);
+  const before=await publicationEffects(f.client);
+  for(const bypass of [{releaseAt:0},{dailyReleaseAllowed:true}]) {
+    await assert.rejects(f.publications.activate({...a.activation,...bypass}),errorCode('INVALID_PUBLICATION_INPUT'));
+    assert.deepEqual(await publicationEffects(f.client),before);
+  }
+  for(const time of [releaseAt-3600000,releaseAt-1]) {
+    await setDatabaseTime(f.client,time);
+    await assert.rejects(f.publications.activate(a.activation),errorCode('DAILY_RELEASE_NOT_DUE'));
+    assert.deepEqual(await publicationEffects(f.client),before);
+  }
+  await setDatabaseTime(f.client,releaseAt);
+  assert.equal((await f.publications.activate(a.activation)).revision,1);
+  assert.equal((await f.confirm(1)).verified,true);
+});
+
+test('daily confirmation rechecks trusted release time in its own transaction without mutation on rejection',async t=>{
+  const f=await fixture(t,{runId:'daily-game-2026-09-01',proposalTime:INITIAL_CUTOFF+3600000});
+  const a=await f.candidate('a');
+  const releaseAt=Date.parse(dailyCycleForDate('2026-09-01').releaseAt);
+  await setDatabaseTime(f.client,releaseAt);
+  await f.publications.activate(a.activation);
+  const before=await publicationEffects(f.client);
+  await setDatabaseTime(f.client,releaseAt-1);
+  await assert.rejects(f.confirm(1),errorCode('DAILY_RELEASE_NOT_DUE'));
+  assert.deepEqual(await publicationEffects(f.client),before);
+  await setDatabaseTime(f.client,releaseAt);
+  assert.equal((await f.confirm(1)).verified,true);
+});
+
+test('retry descendants inherit the daily root deadline instead of their own ids or timestamps',async t=>{
+  const f=await fixture(t,{proposalTime:INITIAL_CUTOFF+3600000});
+  await addAncestor(f.client,'daily-game-2026-09-01');
+  await addAncestor(f.client,'retry-parent-fixture','daily-game-2026-09-01');
+  await f.client.execute({sql:'UPDATE development_runs SET parent_id=? WHERE id=?',args:['retry-parent-fixture',f.run.id]});
+  assert.deepEqual(await resolveDailyRunCycle(f.client,f.run.id),dailyCycleForDate('2026-09-01'));
+  const a=await f.candidate('a');
+  const releaseAt=Date.parse(dailyCycleForDate('2026-09-01').releaseAt);
+  const before=await publicationEffects(f.client);
+  await setDatabaseTime(f.client,releaseAt-1);
+  await assert.rejects(f.publications.activate(a.activation),errorCode('DAILY_RELEASE_NOT_DUE'));
+  assert.deepEqual(await publicationEffects(f.client),before);
+  await setDatabaseTime(f.client,releaseAt);
+  assert.equal((await f.publications.activate(a.activation)).revision,1);
+  assert.equal((await f.confirm(1)).verified,true);
+  assert.deepEqual((await publicationEffects(f.client)).runs,before.runs);
+});
+
+test('daily root accepts only its pending proposal creation window and preclose updated times',async t=>{
+  const cycle=dailyCycleForDate('2026-09-01');
+  const closesAt=Date.parse(cycle.closesAt),releaseAt=Date.parse(cycle.releaseAt);
+  for(const kind of ['initial-input','later-cycle','late-updated','pending-nondaily-root']) await t.test(kind,async t=>{
+    const f=await fixture(t,{
+      runId:kind==='pending-nondaily-root'?undefined:'daily-game-2026-09-01',
+      proposalTime:kind==='initial-input'?INITIAL_CUTOFF-1:kind==='later-cycle'?closesAt:INITIAL_CUTOFF+3600000,
+    });
+    if(kind==='late-updated') await f.client.execute({sql:'UPDATE proposals SET updated_at=? WHERE id=?',args:[closesAt,f.bindings[0].id]});
+    const a=await f.candidate('a');
+    await setDatabaseTime(f.client,releaseAt);
+    const before=await publicationEffects(f.client);
+    await assert.rejects(f.publications.activate(a.activation),errorCode('WORKER_BLOCKED'));
+    assert.deepEqual(await publicationEffects(f.client),before);
+    if(kind==='pending-nondaily-root') assert.equal(await resolveDailyRunCycle(f.client,f.run.id),null);
+  });
+});
+
+test('daily confirmation rechecks proposal window and frozen update time without mutation',async t=>{
+  const cycle=dailyCycleForDate('2026-09-01'),closesAt=Date.parse(cycle.closesAt);
+  const f=await fixture(t,{runId:'daily-game-2026-09-01',proposalTime:INITIAL_CUTOFF+3600000});
+  await f.client.execute({sql:'UPDATE proposals SET updated_at=? WHERE id=?',args:[closesAt-1,f.bindings[0].id]});
+  const a=await f.candidate('a');
+  await setDatabaseTime(f.client,Date.parse(cycle.releaseAt));
+  await f.publications.activate(a.activation);
+  await f.client.execute({sql:'UPDATE proposals SET updated_at=? WHERE id=?',args:[closesAt,f.bindings[0].id]});
+  const before=await publicationEffects(f.client);
+  await assert.rejects(f.confirm(1),errorCode('WORKER_BLOCKED'));
+  assert.deepEqual(await publicationEffects(f.client),before);
+});
+
+test('malformed daily roots and missing, cyclic or overlong ancestry fail closed without publication mutation',async t=>{
+  for(const kind of ['invalid-date','malformed-daily-id','missing-parent','cycle','depth','daily-non-root']) await t.test(kind,async t=>{
+    const f=await fixture(t);
+    if(kind==='cycle') {
+      await f.client.execute({sql:'UPDATE development_runs SET parent_id=id WHERE id=?',args:[f.run.id]});
+    } else if(kind==='missing-parent') {
+      // Model pre-existing corruption in this disposable local fixture only.
+      await f.client.execute('PRAGMA foreign_keys=OFF');
+      await f.client.execute({sql:'UPDATE development_runs SET parent_id=? WHERE id=?',args:['missing-parent-fixture',f.run.id]});
+      await f.client.execute('PRAGMA foreign_keys=ON');
+    } else {
+      let parentId=kind==='invalid-date'?'daily-game-2026-02-30':kind==='malformed-daily-id'?'daily-game-invalid':'legacy-root-fixture';
+      await addAncestor(f.client,parentId);
+      if(kind==='depth') for(let i=0;i<64;i+=1) {
+        const id=`ancestor-fixture-${i}`;
+        await addAncestor(f.client,id,parentId); parentId=id;
+      }
+      if(kind==='daily-non-root') {
+        await addAncestor(f.client,'daily-game-2026-09-01',parentId); parentId='daily-game-2026-09-01';
+      }
+      await f.client.execute({sql:'UPDATE development_runs SET parent_id=? WHERE id=?',args:[parentId,f.run.id]});
+    }
+    const a=await f.candidate('a');
+    const before=await publicationEffects(f.client);
+    await setDatabaseTime(f.client,Date.parse('2026-09-03T00:00:00+09:00'));
+    await assert.rejects(f.publications.activate(a.activation),errorCode('WORKER_BLOCKED'));
+    assert.deepEqual(await publicationEffects(f.client),before);
+  });
+});
 
 test('empty compiled registry never reads a database; absent selection migration fails closed without writes',async t=>{
   assert.deepEqual(await createGamePublicationStore({}).getPublicGame(),{published:false});

@@ -1127,11 +1127,19 @@ for (const [name, response, expected] of [
 }
 
 test('manual English selection wins a late Korean lookup and survives reload without reloading the active draft', async ({ page }) => {
+  let resolveModule;
+  const moduleGate = new Promise(resolve => { resolveModule = resolve; });
+  await page.route('**/app.js', async route => { await moduleGate; await route.continue(); });
   let resolveLocale;
   const localeGate = new Promise(resolve => { resolveLocale = resolve; });
+  const localeRequested = page.waitForRequest('**/api/locale');
   const prepared = fixture(page, { locale: null, localeGate });
   await expect(page.locator('#language-select')).toBeVisible();
+  // The textarea is usable before its module has loaded. Exercise that actual
+  // ordering deterministically instead of relying on a fast module download.
   await page.locator('#prompt').fill('My draft exists before the country lookup finishes.');
+  resolveModule();
+  await localeRequested;
   await page.locator('#language-select').selectOption('en');
   resolveLocale();
   const state = await prepared;

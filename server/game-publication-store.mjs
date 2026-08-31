@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { ApiError } from './errors.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
+import { dailyCycleForDate } from './daily-schedule.mjs';
 import { approvedSafetySql, safetyBindingsSql } from './safety-store.mjs';
 import { checkGameReleaseSchema } from './game-release-schema.mjs';
 import { RELEASE_RECEIPT_SQL, releaseBindingDigest, releaseInputDigest, verifyReleaseReview } from './game-release-store.mjs';
@@ -115,6 +116,56 @@ async function currentInput(client, input) {
   return receipt(client, input.reviewId);
 }
 
+// Resolves trusted scheduling data only; this is not input or release authority.
+export async function resolveDailyRunCycle(client, runId) {
+  // Retry timestamps and caller input cannot change the trusted root's cycle.
+  // Bound corrupt/legacy ancestry and reject ambiguity instead of treating it
+  // as an unrestricted first release. Ancestors are never modified here.
+  const seen = new Set();
+  let ancestorId = runId;
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (!validId(ancestorId) || seen.has(ancestorId)) fail('WORKER_BLOCKED');
+    seen.add(ancestorId);
+    const ancestor = (await client.execute({ sql: 'SELECT id,parent_id FROM development_runs WHERE id=?',
+      args: [ancestorId] })).rows[0];
+    if (!ancestor || ancestor.id !== ancestorId) fail('WORKER_BLOCKED');
+    if (ancestor.parent_id !== null) {
+      if (ancestorId.startsWith('daily-game-')) fail('WORKER_BLOCKED');
+      ancestorId = ancestor.parent_id;
+      continue;
+    }
+    if (!ancestorId.startsWith('daily-game-')) return null;
+    const match = /^daily-game-(\d{4}-\d{2}-\d{2})$/.exec(ancestorId);
+    if (!match) fail('WORKER_BLOCKED');
+    try { return dailyCycleForDate(match[1]); }
+    catch { fail('WORKER_BLOCKED'); }
+  }
+  fail('WORKER_BLOCKED');
+}
+
+async function requireDailyReleaseDue(client, input, databaseClockSql) {
+  const cycle = await resolveDailyRunCycle(client, input.runId);
+  if (!cycle) {
+    if (input.roundId === 'pending') fail('WORKER_BLOCKED');
+    return;
+  }
+  if (input.roundId !== 'pending') fail('WORKER_BLOCKED');
+  // currentInput already checked the exact safety/revision bindings. Bind every
+  // proposal to this root's immutable creation window and frozen update time too;
+  // an older daily root must not unlock a later cycle's otherwise valid input.
+  const closedAt = Date.parse(cycle.closesAt);
+  const eligible = (await client.execute({ sql: `SELECT COUNT(*) AS n FROM proposals p JOIN json_each(?) binding
+    ON p.id=json_extract(binding.value,'$.id') WHERE p.round_id='pending'
+    AND p.created_at>=? AND p.created_at<? AND p.updated_at<?`,
+    args: [JSON.stringify(input.bindings), Date.parse(cycle.opensAt), closedAt, closedAt] })).rows[0];
+  if (Number(eligible.n) !== input.bindings.length) fail('WORKER_BLOCKED');
+  const releaseAt = Date.parse(cycle.releaseAt);
+  const clock = (await client.execute(`SELECT ${databaseClockSql} AS now_ms`)).rows[0];
+  const now = Number(clock?.now_ms);
+  if (clock?.now_ms == null || !Number.isSafeInteger(now) || !Number.isSafeInteger(releaseAt)) fail('WORKER_BLOCKED');
+  if (now < releaseAt) fail('DAILY_RELEASE_NOT_DUE');
+}
+
 export function createGamePublicationStore(client, { databaseClockSql = DATABASE_NOW_SQL } = {}) {
   async function getSelection() {
     if (!await schemaReady(client)) return { revision: 0, activeReviewId: null, previousVerifiedReviewId: null, verified: false };
@@ -181,6 +232,7 @@ export function createGamePublicationStore(client, { databaseClockSql = DATABASE
     return mutate('selected', input, async (tx, state) => {
       if (state.active_review_id && !Number(state.active_verified)) fail('PUBLICATION_PENDING_VERIFICATION');
       const reviewed = await currentInput(tx, input);
+      await requireDailyReleaseDue(tx, input, databaseClockSql);
       // An immutable version must never identify changed content or executable runtime.
       const collision = (await tx.execute({ sql: `SELECT COUNT(*) AS n FROM game_publication_events e
         JOIN game_release_reviews r ON r.id=e.active_review_id WHERE e.kind='selected' AND r.game_version=?
@@ -199,6 +251,7 @@ export function createGamePublicationStore(client, { databaseClockSql = DATABASE
       if (!state.active_review_id || Number(state.active_verified)) fail('PUBLICATION_CONFLICT');
       const context = await activationContext(tx,state);
       const reviewed = await currentInput(tx,context);
+      await requireDailyReleaseDue(tx, context, databaseClockSql);
       return { activeReviewId: state.active_review_id, previousVerifiedReviewId: state.previous_verified_review_id,
         verified: true, activationOperationId: state.activation_operation_id, operatorId: reviewed.operatorId };
     });

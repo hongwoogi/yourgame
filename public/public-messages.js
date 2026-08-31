@@ -498,6 +498,42 @@ const copy = {
     "The first game",
     "첫 번째 게임"
   ],
+  "dailyCountdown": [
+    "Until the next planned release",
+    "다음 공개 목표까지"
+  ],
+  "dailyReleaseCheckingTitle": [
+    "Checking the next release",
+    "다음 공개 확인 중"
+  ],
+  "dailyReleaseChecking": [
+    "Waiting for a verified release.",
+    "검증된 새 공개를 기다리고 있어요."
+  ],
+  "dailyReleaseNote": [
+    "Daily midnight KST target · Release follows verification.",
+    "매일 자정 공개 목표 · 검증을 마친 뒤 공개합니다."
+  ],
+  "dailyPublishedNote": [
+    "Daily midnight KST target · The current game stays until a verified update.",
+    "매일 자정 공개 목표 · 검증된 업데이트 전까지 현재 게임을 유지합니다."
+  ],
+  "dailyCollectionOpen": [
+    "Daily ideas are open",
+    "매일 제안 모집 중"
+  ],
+  "dailyCollectionDeadline": [
+    "Closes {time} · Later ideas enter the next daily cycle.",
+    "마감 {time} · 이후 제안은 다음 일일 회차에 접수됩니다."
+  ],
+  "dailyCollectionChecking": [
+    "Checking the next daily cycle. Your draft is kept.",
+    "다음 일일 회차를 확인 중입니다. 작성한 내용은 유지됩니다."
+  ],
+  "dailyEditDeadline": [
+    "This idea's edit deadline: {time}",
+    "이 제안의 수정 마감: {time}"
+  ],
   "gamePublished": [
     "The first game has been released.",
     "첫 게임이 공개되었습니다."

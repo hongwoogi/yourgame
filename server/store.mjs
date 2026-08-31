@@ -11,6 +11,7 @@ import {
   ADMIN_EMAIL, normalizedEmail, PROPOSAL_ACCESS_SQL, assertProposalAccess, proposalAccessStatement,
 } from './admin-policy.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
+import { pendingProposalClosesAt, pendingProposalClosesAtSql } from './daily-schedule.mjs';
 import { checkSafetySchema } from './safety-schema.mjs';
 import { checkCommunitySchema, assertCommunityPublicDefaults } from './community-schema.mjs';
 import { COMMUNITY_DEFAULT_READY_SQL } from './community-policy.mjs';
@@ -44,13 +45,16 @@ export function validateBody(body) {
 }
 
 function proposalView(row, now) {
+  const closesAt = row.round_id === 'pending' ? pendingProposalClosesAt(Number(row.created_at))
+    : row.round_id === 'initial' ? INITIAL_CUTOFF : null;
   return {
     id: row.id,
     body: row.body,
     createdAt: new Date(Number(row.created_at)).toISOString(),
     updatedAt: new Date(Number(row.updated_at)).toISOString(),
     roundId: row.round_id,
-    editable: row.round_id === 'pending' || (row.round_id === 'initial' && now < INITIAL_CUTOFF),
+    closesAt: closesAt === null ? null : new Date(closesAt).toISOString(),
+    editable: closesAt !== null && now < closesAt,
     revision: Number(row.revision),
     safety: safetyView(row),
   };
@@ -345,7 +349,8 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
           sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
             UPDATE proposals SET body = ?, updated_at = MAX(created_at, (SELECT now_ms FROM clock)), revision = revision + 1
             WHERE id = ? AND user_id = ? AND revision = ?
-              AND (round_id = 'pending' OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))
+              AND ((round_id = 'pending' AND (SELECT now_ms FROM clock) < ${pendingProposalClosesAtSql()})
+                OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))
               AND ${PROPOSAL_ACCESS_SQL} AND ${COMMUNITY_DEFAULT_READY_SQL}
               AND EXISTS (SELECT 1 FROM proposal_body_revisions ph WHERE ph.proposal_id = proposals.id
                 AND ph.body_revision = proposals.revision AND ph.body = proposals.body COLLATE BINARY)
@@ -374,7 +379,8 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
       if (row.user_id !== userId) throw new ApiError(403, 'NOT_PROPOSAL_OWNER', '본인의 제안만 수정할 수 있습니다.');
       const quota = quotaView(results[5]);
       if (results[0].rowsAffected !== 1) {
-        if (row.round_id === 'initial' && time >= INITIAL_CUTOFF) {
+        if ((row.round_id === 'initial' && time >= INITIAL_CUTOFF)
+          || (row.round_id === 'pending' && time >= pendingProposalClosesAt(Number(row.created_at)))) {
           throw new ApiError(409, 'ROUND_CLOSED', '이 제안의 모집이 마감되어 수정할 수 없습니다.', { quota });
         }
         if (Number(row.revision) === revision && Number(row.history_available) !== 1) {
