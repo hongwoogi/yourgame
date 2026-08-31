@@ -14,6 +14,9 @@ Self-check: Does every new component have a current purpose that existing code c
 Keep file ownership explicit when delegating, preserve other work, and avoid unrelated cleanup. Keep credentials, participant text, raw logs, cookies, tokens, and private fingerprints out of tool output and Git. Local operational records belong in `.local/`.
 Self-check: Can every changed file be traced to the user request or a confirmed failure?
 
+## Public development record
+Keep `README.md` English-first and `README.ko.md` aligned with it. Record meaningful project changes in `CHANGELOG.md` with English/Korean summaries, the reason, actual validation, and remaining limits. Preserve the Everyone Draw inspiration credit and the collective-intelligence premise. Public logs contain sanitized development summaries only; raw operational evidence and participant data stay in ignored `.local/`. A public repository or a log entry never grants release approval.
+
 ## Goal-Driven Execution
 Validate behavior and failure paths, not just HTTP status or a successful push. Use `npm run build` and relevant UI tests, then install/build a fresh `git archive` before deployment. Report confirmed failures promptly with their impact, evidence, and next action. Do not claim actual account login from a visible Google button.
 Self-check: Does my evidence cover the real outcome, and have I named what remains unverified?

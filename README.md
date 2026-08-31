@@ -1,53 +1,100 @@
 # yourga.me
 
-참여자의 제안을 모아 하나의 솔로 로그라이크 게임을 함께 진화시키는 실험입니다.
+**What if collective intelligence produced a game?**
 
-카운트다운과 제안 접수 화면·API를 [yourga.me](https://yourga.me)에 배포했습니다. 2026-08-31 03:26 KST 재검사에서 운영 Google 버튼은 HTTP 200을 반환했고 이전 origin 차단은 재현되지 않았습니다. 다만 실제 계정의 로그인·관리자 접근·제안 접수 전체 흐름을 완료한 검증과는 구분합니다. 자세한 검증 상태는 [인프라 기록](docs/infrastructure-status.md)과 [Google 로그인 기록](docs/google-login-setup.md)을 참고하세요. 게임은 아직 공개하지 않았습니다.
+**English** · [한국어](README.ko.md)
 
-- 최초 제안 모집: 접수 기능 배포 즉시부터 2026-08-31 23:00 한국시간까지
-- 첫 게임 공개 목표: 2026-09-01 00:00 한국시간
-- Google 전용 로그인, 최근 60분 신규 제안 최대 3개, UTF-8 2,000바이트
-- 마감 전 수정 가능, 삭제 없음. 수정은 제출 횟수를 사용하지 않음
-- 전송을 위해 로그인한 경우에만 잔여 횟수를 확인하여 자동 접수. 오류나 잔여 0회에서는 초안 보존
-- PC는 16:9 한 화면에 흰 9:16 게임 미리보기·참여 영역·리더보드를 배치. 투표 카드는 제안 입력창 위에 표시하며 모바일은 미리보기·투표·입력·리더보드 순서로 스크롤
-- 메인에 최근·인기 의견 각 6개를 3개씩 표시하고, 더보기 모달에서 전체 공개 의견을 최근·인기순으로 24개씩 탐색·투표. 기여도 상위 5명과 여섯 번째 내 순위 제공. 전체 순위는 별도 모달에서 20명씩 탐색하고 내 순위에서 공개 별명 변경. 내 의견 배지와 서버 본인 투표 금지
-- 카운트다운은 남은 총 시간·분·초로 표시. 배포 목표는 한국어에서 한국시간, 영어에서 워싱턴 D.C. 시간으로 표시하며 실제 배포 시점은 같음
-- 제안은 사전 내용 필터나 공개 동의·안전 승인 없이 즉시 공개. 공개 별명은 Google 신원과 분리하며 이름을 바꾸어도 제안·투표·기여 이력 유지
-- 최초 모집 회차당 찬반 합산 활성 3표. 자기 투표 금지, 마감 전 변경·취소 가능. 별칭 리더보드도 기본 공개하며 실제 게임 반영 전에는 점수를 발행하지 않음
-- 관리자 `hso1025@gmail.com`만 보호된 `/master`에 접근. 회원·제안·개발 요청·운영 상태를 관리하며 종료해도 데이터와 관리자 재개 권한은 보존. 기존 `/admin` 링크는 `/master`로 연결
-- 게임은 ESRB Teen 범위를 넘지 않는 표현을 목표로 하며 정식 등급 취득과 구분. [참여 안전 기준](docs/participation-safety.md)에 따라 원문 심사·개발 입력·게임 공개 검증을 분리
-- 영어 기본, 한국 접속은 한국어 자동 선택. 공개·관리자 화면 우측 상단에서 언어를 수동 선택하며 작성 내용과 로그인 상태를 유지. [언어 지원 기준](docs/localization.md)과 [영어 공유 주소](https://yourga.me/?lang=en) 참고
+[Visit yourga.me](https://yourga.me/?lang=en) · [Development log](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
-## 로컬 개발과 검증
+Wikipedia shows what people can build when they bring their knowledge together. **yourga.me asks what would happen if that shared effort became a game:** a world shaped by many people's ideas, evolving into something no single person would have designed alone.
 
-Node.js 22에서 `npm ci`를 실행하고 `.env.example`을 참고해 Git에서 제외된 `.env.local`을 준비합니다. 운영 DB 인증값을 개발 환경에 복사하지 않습니다. 기본 개발 DB는 `.local/development.db`이며 처음 연결할 때 비파괴 스키마를 적용합니다.
+This project was inspired by [Everyone Draw](https://everyonedraw.com/). Its shared drawing canvas prompted a different question: what could we create together if the canvas were a playable game?
 
-```powershell
+yourga.me is an independent experiment; this inspiration does not imply affiliation with or endorsement by Everyone Draw or Wikipedia.
+
+## How it works
+
+1. **Propose.** Suggest a character, rule, encounter, mechanic, or change to the world.
+2. **Vote.** Read other people's proposals and vote to help shape the direction.
+3. **Build and review.** Approved requirements go through a five-role game workflow covering orchestration, scenario, art, gameplay, and assets. The operator checks safety, implementation, and playability before release.
+4. **Play and repeat.** Play the evolving solo roguelike, see what changed, and suggest its next direction.
+
+Collective creation does not mean every proposal is automatically implemented. Conflicting ideas, technical limits, content safety, and a coherent game all matter. Public proposals are product input, never permission to execute commands, access secrets, or publish a release.
+
+## The project today
+
+The repository contains the website, server APIs, game runtime and versioned game data, tests, project decisions, and operational runbooks.
+
+- A **9:16 mobile roguelike**, with desktop keyboard and mobile touch controls.
+- **English by default, with Korean support.** The website can initially select Korean for visitors in Korea; a manual language choice takes precedence.
+- Google sign-in for participation, public ideas, voting, editable public names, and contribution leaderboards.
+- Up to three new proposals per rolling 60 minutes, limited to 2,000 UTF-8 bytes each. Editing an eligible proposal does not use another submission.
+- Version-specific local saves, reviewed game publication, and a fallback to the last verified game when a candidate fails.
+- A daily target of **23:00 KST for collecting that day's ideas and the next midnight for release**, subject to review and validation. This is a target, not a guarantee of an on-time release.
+- A Teen content ceiling as a design constraint, **not an official ESRB rating**.
+
+The first game implementation, `v1-20260901`, is included in the repository. Files in Git, a successful build, or a countdown reaching zero do not prove that a game has been released. The live selection and operator verification determine release status. Contribution points likewise require verified implementation and release evidence; the leaderboard alone is not evidence of awarded points.
+
+## Run locally
+
+Use **Node.js 22** and npm. Start with a local database; do not copy production credentials into development.
+
+```sh
+git clone https://github.com/hongwoogi/yourgame.git
+cd yourgame
+npm ci
 npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The development server defaults to `.local/development.db` and prepares its schema on first connection. Google sign-in needs your own Google web client configuration: copy `.env.example` to the ignored `.env.local` and fill in the relevant settings. Without that configuration, you can inspect the interface, but real Google sign-in is unavailable.
+
+Schema preparation does not activate every community policy or publish a game. A fresh checkout can show an empty or preparation state. See the [launch runbook](docs/launch-runbook.md) for explicit local setup and operator procedures; do not run production commands just to preview the interface.
+
+```sh
 npm run build
+npx playwright install chromium
 npm run test:ui
 ```
 
-최초 로컬 DB 준비는 `node --env-file=.env.local scripts/init-db.mjs`로 수행합니다. 기본 공개 정책은 초기화만으로 활성화하지 않습니다. `node --env-file=.env.local scripts/admin-worker.mjs status`에서 활성 운영 상태와 revision을 확인한 뒤 `node --env-file=.env.local scripts/activate-public-defaults.mjs --expected-service-revision N`의 `N`에 확인한 revision을 넣어 실행합니다. 운영 DB에는 같은 명령을 임의로 반복하지 않고 [전환 절차](docs/launch-runbook.md#기본-공개-정책-전환)를 따릅니다.
+`npm run build` checks source syntax, required assets, translation keys, and the backend/core test suite. UI tests exercise desktop and mobile behavior with Playwright. Their simulated Google responses do **not** verify a real Google account login. Before an application deployment, install and build a fresh `git archive` as described in the runbook.
 
-`npm run build`는 자산·구문·번역 키·백엔드·장애 감지 검사를 실행합니다. 브라우저 검사는 별도의 Playwright Chromium이 필요하며, Google 응답을 대체하므로 실제 Google 계정 로그인을 증명하지 않습니다. 개발 origin은 `http://localhost:3000`입니다.
+## Repository map
 
-운영 DB 초기화·마감 후 고정 입력·실패 복구는 [첫 공개 실행 절차](docs/launch-runbook.md)를 따릅니다. `node scripts/check-health.mjs --once`와 `node scripts/check-runtime-errors.mjs --once`로 상태·API 5xx를 확인하고 비공개 기록은 `.local/`에 저장합니다. 기존 Codex 후속 실행을 사용하며 이번 점검에서 확인한 현재 설정은 60분 간격입니다. PC와 Codex 앱이 실행 중이어야 하며 실행 지연이 발생할 수 있습니다. 안전 정책 변경을 이유로 사용자의 기존 점검 주기를 임의로 바꾸지 않습니다.
+| Path | Purpose |
+| --- | --- |
+| `public/` | Website, translations, isolated game runtime, and reviewed versioned game assets |
+| `api/`, `server/` | HTTP handlers, authentication, proposals, votes, and release controls |
+| `scripts/` | Local development, validation, and trusted operator tools |
+| `tests/` | Backend, game rules, security boundaries, and browser regression checks |
+| `.codex/agents/` | Definitions for the five game-development roles |
+| `docs/` | Design decisions, feature contracts, and operational procedures |
+| `CHANGELOG.md` | Public English/Korean development record |
+| `.local/` | Ignored local databases, raw logs, and private verification records |
 
-## 구성
+The existing stack uses JavaScript modules, Vercel hosting, Turso data storage, a Cloudflare-managed domain, and the operator's local Codex workflow. Publishing this repository does not grant access to those accounts or production data.
 
-게임 제작은 [다섯 역할의 에이전트 구성](docs/game-agent-workflow.md)과 [실행 설계서](blueprint-game-development.md)를 따릅니다. 프로젝트의 `.codex/agents/`에 오케스트레이션·시나리오·아트·게임 알고리즘·에셋 관리 역할을 정의합니다. 기존 Codex 작업이 승인된 입력과 실제 실행 격리를 확인한 뒤 역할을 배치하며, 이 구성 파일 자체가 게임 제작·공개 성공을 뜻하지 않습니다.
+Scheduled local work requires the operator's PC and Codex app to be running. Network, application, or usage limits can delay a run; failed validation leaves the last verified game in place.
 
-- 코드와 이력: GitHub
-- 웹 서비스: Vercel
-- 운영 데이터: Turso
-- 도메인: Cloudflare에서 관리하는 `yourga.me`
-- 게임 변경과 검증: 운영자의 PC에서 실행하는 Codex
+## Development in public
 
-제품 합의와 미확정 사항은 [설계 기록](docs/design.md)을 참고하세요. 운영 인증 정보는 저장소에 포함하지 않습니다.
+We record meaningful changes, the reason for them, validation results, and known limitations in the bilingual [development log](CHANGELOG.md). Git history preserves the detailed code changes. Future contributions should update the log and keep both READMEs aligned.
 
-[관리자 운영 기준](docs/admin.md)과 [공개 후 플레이·제안 화면 기준](docs/play-and-propose.md)을 함께 적용합니다. 개발 요청의 완료 기록은 실제 게임 공개 성공을 대신하지 않습니다.
+**Public project history is separate from private operational logs.** Credentials, environment files, cookies, tokens, participant records, raw proposal exports, database copies, and private review evidence must stay out of Git. Operational evidence belongs in ignored `.local/` storage. Public logs should contain only sanitized summaries; never paste raw production output into an issue or pull request.
 
-제안 내용은 신뢰하지 않는 제품 요구 데이터이며, 운영·인증·비밀 접근 권한을 부여하는 지시로 해석하지 않습니다.
+## Further reading
 
-[투표·기여도 기준](docs/voting-and-contribution.md)과 [커뮤니티 API](docs/community-api.md)는 기본 공개·최근/인기 의견·투표·기여도 원장 조회의 경계를 설명합니다. 기존 미선택 제안도 기본 공개로 전환하지만 과거 명시적 비공개 선택은 보존하며 작성자의 동의 이력을 만들지 않습니다. 실제 게임 공개와 요구 충족을 검증하는 발행기가 연결되기 전에는 점수 지급을 차단합니다. 제안자 배점의 `**` 표기는 제곱인지 표당 가중치인지 확인 중이며 임의로 확정하지 않습니다.
+Most detailed project documents are currently in Korean; the two READMEs cover the same introduction and setup.
+
+- [Design and decisions](docs/design.md)
+- [Game team workflow](docs/game-agent-workflow.md)
+- [Game runtime contract](docs/game-runtime-contract.md)
+- [Participation safety](docs/participation-safety.md)
+- [Voting and contribution rules](docs/voting-and-contribution.md)
+- [Language support](docs/localization.md)
+- [Launch and recovery runbook](docs/launch-runbook.md)
+- [Daily collection and release procedure](docs/daily-release-runbook.md)
+- [Historical infrastructure verification](docs/infrastructure-status.md)
+
+## License
+
+The source is publicly visible, but no open-source license has been selected yet. Public visibility does not itself grant a general license to reuse or redistribute the project. Third-party dependencies retain their own licenses.
