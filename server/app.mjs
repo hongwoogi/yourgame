@@ -126,15 +126,18 @@ function communityView(req) {
   const url = new URL(req.url, 'http://internal.invalid');
   const entries = [...url.searchParams];
   const view = url.searchParams.get('view') || 'public';
-  const allowed = view === 'ideas' ? ['view', 'sort', 'offset', 'limit']
-    : view === 'leaderboard' ? ['view', 'offset', 'limit'] : ['view'];
+  const allowed = view === 'ideas' ? ['view', 'sort', 'offset', 'limit', 'includeClosed']
+    : view === 'leaderboard' ? ['view', 'offset', 'limit']
+      : view === 'public' ? ['view', 'includeClosed'] : ['view'];
+  const includeClosedText = url.searchParams.get('includeClosed') ?? '0';
   if (url.search.length > 256 || new Set(entries.map(([key]) => key)).size !== entries.length
       || !['public', 'me', 'leaderboard', 'ideas'].includes(view)
       || entries.some(([key]) => !allowed.includes(key))
-      || (url.searchParams.has('view') && !url.searchParams.get('view'))) {
+      || (url.searchParams.has('view') && !url.searchParams.get('view')) || !['0', '1'].includes(includeClosedText)) {
     throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the community request.');
   }
-  if (view !== 'leaderboard' && view !== 'ideas') return { view };
+  const includeClosed = includeClosedText === '1';
+  if (view !== 'leaderboard' && view !== 'ideas') return { view, ...(view === 'public' ? { includeClosed } : {}) };
   const offsetText = url.searchParams.get('offset') ?? '0';
   const limitText = url.searchParams.get('limit') ?? (view === 'ideas' ? '24' : '20');
   const offset = Number(offsetText);
@@ -146,7 +149,7 @@ function communityView(req) {
   if (view === 'ideas') {
     const sort = url.searchParams.get('sort') ?? 'recent';
     if (!['recent', 'popular'].includes(sort)) throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'Check the idea ordering.');
-    return { view, sort, offset, limit };
+    return { view, sort, offset, limit, includeClosed };
   }
   return { view, offset, limit };
 }
@@ -219,14 +222,15 @@ export function createApiHandler({
         }
         if (community?.view === 'ideas') {
           const db = await resolveStore();
-          return respond(res, 200, await db.community.publicIdeas({ sort: community.sort, offset: community.offset, limit: community.limit }));
+          return respond(res, 200, await db.community.publicIdeas({ sort: community.sort, offset: community.offset,
+            limit: community.limit, includeClosed: community.includeClosed }));
         }
         if (community?.view === 'public') {
           // Public reads never create or refresh a session, or copy an account
           // name into a public identity. Each store filters the visible records.
           const db = await resolveStore();
           const [feed, leaderboard] = await Promise.all([
-            db.community.publicFeed(), db.contribution.leaderboard({ limit: 10 }),
+            db.community.publicFeed({ includeClosed: community.includeClosed }), db.contribution.leaderboard({ limit: 10 }),
           ]);
           return respond(res, 200, { ...feed, leaderboard: { items: leaderboard.items }, scoring: publicContributionPolicy() });
         }
@@ -333,9 +337,9 @@ export function createApiHandler({
         if (route === '/api/community') {
           if (method === 'GET') {
             communityView(req);
-            // Legacy accounts may not yet have a public profile. Establish it
-            // before computing their rank so the same response cannot claim a
-            // visible profile with a rank omitted only by an initialization race.
+            // Enrollment prepares the public identity on an authenticated
+            // write. Require it before computing rank; this GET cannot create
+            // a missing profile or silently return inconsistent personal data.
             const participation = await db.community.privateState(session);
             const contribution = await db.contribution.privateSummary(session);
             return respond(res, 200, { ...participation, ownerId: session.user.id, contribution });

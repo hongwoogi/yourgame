@@ -9,6 +9,7 @@ const anonymous = { user: null, csrfToken: 'anonymous-csrf', googleNonce: 'anony
 const signedIn = { user: { id: 'browser-test-user', name: '테스트 참여자' }, csrfToken: 'signed-in-csrf', googleNonce: 'signed-in-nonce' };
 const administrator = { user: { id: 'browser-admin', name: '테스트 관리자', isAdmin: true }, csrfToken: 'admin-csrf', googleNonce: 'admin-nonce' };
 const activeService = { mode: 'active', proposalsEnabled: true, developmentEnabled: true, message: '' };
+const localUrl = pathname => new URL(pathname, test.info().project.use.baseURL).href;
 
 function savedProposal(id = 'existing-proposal') {
   return { id, body: '원래 접수한 제안', createdAt: new Date(START).toISOString(),
@@ -140,10 +141,10 @@ async function fixture(page, options = {}) {
     }
     return reply({ error: { code: 'NOT_FOUND', message: 'Unknown fixture endpoint' } }, 404);
   });
-  const entry = new URL(options.path || '/', 'http://localhost:3000');
+  const entry = new URL(localUrl(options.path || '/'));
   if (options.locale !== null && !entry.searchParams.has('lang')) entry.searchParams.set('lang', options.locale || 'ko');
   await page.goto(entry.pathname + entry.search + entry.hash);
-  if (options.expectAdminNavigation) await expect(page).toHaveURL('http://localhost:3000/master');
+  if (options.expectAdminNavigation) await expect(page).toHaveURL(localUrl('/master'));
   else await expect(page.locator(state.session.user ? '#logout-button' : '#login-button')).toBeEnabled();
   return state;
 }
@@ -727,7 +728,7 @@ test(`${entryParameter} login entry clears pending Send, preserves the draft and
   await expect(page.locator('#login-draft-note')).toContainText('전송되지는');
   expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
   await googleLogin(page);
-  await expect(page).toHaveURL('http://localhost:3000/master');
+  await expect(page).toHaveURL(localUrl('/master'));
   expect(state.adminVisits).toBe(1);
   expect(state.posts).toHaveLength(0);
   expect(state.patches).toHaveLength(0);
@@ -755,7 +756,7 @@ test('admin reauthentication requires a successful new login and does not trust 
   state.loginFailure = false;
   await page.locator('#retry-google').click();
   await googleLogin(page);
-  await expect(page).toHaveURL('http://localhost:3000/master');
+  await expect(page).toHaveURL(localUrl('/master'));
   expect(state.loginCalls).toBe(2);
   expect(state.adminVisits).toBe(1);
   expect(state.posts).toHaveLength(0);
@@ -768,7 +769,7 @@ test('an ordinary account completing admin login stays on the public page withou
   await expect(page.locator('#login-dialog')).toBeHidden();
   await expect(page.locator('#form-message')).toContainText('관리자 권한이 없어요');
   await expect(page.locator('#prompt')).toHaveValue('권한이 없어도 보존할 초안');
-  await expect(page).toHaveURL('http://localhost:3000/?lang=ko');
+  await expect(page).toHaveURL(localUrl('/?lang=ko'));
   await page.clock.fastForward(46_000);
   await page.reload();
   await expect(page.locator('#logout-button')).toBeVisible();
@@ -784,7 +785,7 @@ test('canceling admin reauthentication consumes the entry flags and keeps existi
   await expect(page.locator('#login-dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#login-dialog')).toBeHidden();
-  await expect(page).toHaveURL('http://localhost:3000/?lang=ko');
+  await expect(page).toHaveURL(localUrl('/?lang=ko'));
   await page.reload();
   await expect(page.locator('#admin-link')).toBeVisible();
   await expect(page.locator('#login-dialog')).toBeHidden();

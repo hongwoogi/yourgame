@@ -1,8 +1,44 @@
 import { isValidProfileAlias } from '../public/profile-policy.js';
+import { INITIAL_CUTOFF, pendingProposalClosesAtSql } from './daily-schedule.mjs';
 
 // Public participation policy is separate from the Teen game-input policy.
 export const PUBLICATION_POLICY_VERSION = 'public-default-v1';
 export const COMMUNITY_VOTE_LIMIT = 3;
+export const COMMUNITY_DAILY_ROUNDS_VERSION = 1;
+export const COMMUNITY_DAILY_ROUND_TRIGGER_NAMES = [
+  'community_daily_round_insert_check', 'community_daily_round_no_update', 'community_daily_round_no_delete',
+  'community_daily_round_no_replace', 'community_daily_proposal_round',
+  'community_daily_vote_insert_cap', 'community_daily_vote_update_cap',
+];
+export const COMMUNITY_DAILY_ROUNDS_READY_SQL = `((SELECT value FROM community_meta
+  WHERE key = 'daily_voting_rounds_schema_version') = ${COMMUNITY_DAILY_ROUNDS_VERSION}
+  AND (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+    ${COMMUNITY_DAILY_ROUND_TRIGGER_NAMES.map(name => `'${name}'`).join(',')})) = ${COMMUNITY_DAILY_ROUND_TRIGGER_NAMES.length})`;
+
+function column(value) {
+  if (typeof value !== 'string' || !/^(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new TypeError('INVALID_COMMUNITY_COLUMN');
+  }
+  return value;
+}
+
+export function dailyVotingRoundIdSql(createdAtColumn) {
+  const closesAt = pendingProposalClosesAtSql(column(createdAtColumn));
+  return `('daily-' || strftime('%Y-%m-%d', (${closesAt}) / 1000, 'unixepoch', '+9 hours'))`;
+}
+
+// proposals.round_id remains the immutable intake pool (initial/pending).
+// Each pending proposal belongs to exactly one dated voting collection by its
+// original submission time, including submissions exactly at the 23:00 cutoff.
+export function proposalVotingRoundIdSql(roundColumn = 'p.round_id', createdAtColumn = 'p.created_at') {
+  return `(CASE WHEN ${column(roundColumn)} = 'initial' THEN 'initial'
+    WHEN ${column(roundColumn)} = 'pending' THEN ${dailyVotingRoundIdSql(createdAtColumn)} END)`;
+}
+
+export function currentVotingRoundIdSql(clockColumn = 'clock.now_ms') {
+  return `(CASE WHEN ${column(clockColumn)} < ${INITIAL_CUTOFF} THEN 'initial'
+    ELSE ${dailyVotingRoundIdSql(clockColumn)} END)`;
+}
 export const COMMUNITY_PROFILE_NAMES_VERSION = 1;
 export const COMMUNITY_PROFILE_NAMES_READY_SQL = `((SELECT value FROM community_meta
   WHERE key = 'profile_names_schema_version') = ${COMMUNITY_PROFILE_NAMES_VERSION}
@@ -34,6 +70,7 @@ export const COMMUNITY_DEFAULT_READY_SQL = `(${COMMUNITY_DEFAULT_ACTIVE_SQL} AND
 // vote validity. Development/export uses approvedSafetySql independently.
 export const PUBLIC_PUBLICATIONS_SQL = `eligible_publications AS (
   SELECT cp.*, p.user_id AS author_user_id, p.body, p.created_at AS proposal_created_at, p.round_id AS proposal_round_id,
+    ${proposalVotingRoundIdSql()} AS voting_collection_id,
     pr.public_id AS author_public_id, pr.alias, sr.id AS safety_review_id, sr.revision AS safety_revision,
     COALESCE(ma.revision, 1) AS current_author_revision, COALESCE(pm.revision, 1) AS moderation_revision
   FROM community_publications cp JOIN proposals p ON p.id = cp.proposal_id
@@ -53,7 +90,7 @@ export const PUBLIC_PUBLICATIONS_SQL = `eligible_publications AS (
 )`;
 export const PUBLIC_VOTES_SQL = `valid_votes AS (
   SELECT v.* FROM community_votes v JOIN eligible_publications ep ON ep.public_id = v.public_id
-  JOIN community_rounds r ON r.id = v.round_id AND r.proposal_round_id = ep.proposal_round_id
+  JOIN community_rounds r ON r.id = v.round_id AND r.id = ep.voting_collection_id AND r.proposal_round_id = r.id
   LEFT JOIN member_access va ON va.user_id = v.user_id
   WHERE v.direction IN ('up', 'down') AND v.user_id != ep.author_user_id
     AND v.proposal_revision = ep.proposal_revision AND v.publication_revision = ep.revision

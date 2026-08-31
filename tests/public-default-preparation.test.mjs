@@ -8,11 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import { SCHEMA, checkSchema } from '../server/database.mjs';
+import { DATABASE_NOW_SQL } from '../server/database-clock.mjs';
+import { INITIAL_CUTOFF, DAY_MS } from '../server/daily-schedule.mjs';
 import { initializeAdminDatabase, checkAdminSchema } from '../server/admin-schema.mjs';
 import { initializeSafetyDatabase, checkSafetySchema } from '../server/safety-schema.mjs';
 import { COMMUNITY_SCHEMA, checkCommunitySchema } from '../server/community-schema.mjs';
 import { initializeContributionDatabase, checkContributionSchema } from '../server/contribution-schema.mjs';
-import { COMMUNITY_DEFAULT_TRIGGER_NAMES } from '../server/community-policy.mjs';
+import { COMMUNITY_DEFAULT_TRIGGER_NAMES, COMMUNITY_DAILY_ROUND_TRIGGER_NAMES } from '../server/community-policy.mjs';
 import { parsePreparationArgs, preparationFailure, preparePublicDefaultSchema } from '../scripts/prepare-public-defaults.mjs';
 
 const script = fileURLToPath(new URL('../scripts/prepare-public-defaults.mjs', import.meta.url));
@@ -109,8 +111,10 @@ async function snapshot(client) {
   return { shape: digest(shape), tables };
 }
 
-function observe(client, { afterBatch, afterCommit } = {}) {
+function observe(client, { afterBatch, afterCommit, databaseClockSql = DATABASE_NOW_SQL } = {}) {
   const facts = { transactions: 0, writeMode: true, mutations: 0, batches: 0, rollbacks: 0, commits: 0 };
+  const withClock = statement => typeof statement === 'string' ? statement.replaceAll(DATABASE_NOW_SQL, databaseClockSql)
+    : { ...statement, sql: statement.sql.replaceAll(DATABASE_NOW_SQL, databaseClockSql) };
   const count = statement => {
     if (/^\s*(?:CREATE|INSERT|UPDATE|DELETE|DROP|ALTER|REPLACE)\b/i.test(typeof statement === 'string' ? statement : statement.sql)) facts.mutations += 1;
   };
@@ -119,11 +123,11 @@ function observe(client, { afterBatch, afterCommit } = {}) {
     facts.writeMode &&= mode === 'write';
     const transaction = await client.transaction(mode);
     return {
-      execute: async statement => { count(statement); return transaction.execute(statement); },
+      execute: async statement => { count(statement); return transaction.execute(withClock(statement)); },
       batch: async statements => {
         facts.batches += 1;
         statements.forEach(count);
-        const result = await transaction.batch(statements);
+        const result = await transaction.batch(statements.map(withClock));
         await afterBatch?.(transaction, statements);
         return result;
       },
@@ -231,15 +235,21 @@ test('preparation detects an initializer changing the service notice and rolls i
 test('inactive preparation commits preserve every original row and repeated preparation changes nothing', async t => {
   const f = await fixture(t);
   const before = await snapshot(f.client);
-  const result = await preparePublicDefaultSchema(f.client, { expectedServiceRevision: 1 });
+  const originalRounds = (await f.client.execute('SELECT * FROM community_rounds ORDER BY id')).rows;
+  // Fix only the test database clock so a midnight run cannot add a different
+  // collection between preparation and its idempotent replay.
+  const preparedClient = observe(f.client, { databaseClockSql: String(INITIAL_CUTOFF + 60000) }).client;
+  const result = await preparePublicDefaultSchema(preparedClient, { expectedServiceRevision: 1 });
   assert.equal(result.prepared, true);
   assert.equal(result.committed, true);
   assert.equal(result.policyState, 'inactive');
   assert.equal(result.serviceControlPreserved, true);
-  // A fresh/local installation also prepares the additive display-name table;
+  // A fresh/local installation also prepares display names and daily voting;
   // it must not create a custom name or change a generated profile identity.
-  assert.deepEqual(result.schemaAdded, { tables: 7, triggers: COMMUNITY_DEFAULT_TRIGGER_NAMES.length + 2 });
+  assert.deepEqual(result.schemaAdded, { tables: 7,
+    triggers: COMMUNITY_DEFAULT_TRIGGER_NAMES.length + 2 + COMMUNITY_DAILY_ROUND_TRIGGER_NAMES.length });
   assert.equal((await f.client.execute("SELECT value FROM community_meta WHERE key = 'profile_names_schema_version'")).rows[0].value, 1);
+  assert.equal((await f.client.execute("SELECT value FROM community_meta WHERE key = 'daily_voting_rounds_schema_version'")).rows[0].value, 1);
   assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM community_profile_names')).rows[0].n, 0);
   assert.deepEqual(result.counts, { users: 1, proposals: 1, bodyHistory: 1, safetyReviews: 1, contributionAwards: 0,
     profiles: 1, publications: 0, votes: 0 });
@@ -249,10 +259,13 @@ test('inactive preparation commits preserve every original row and repeated prep
   const after = await snapshot(f.client);
   for (const [table, rows] of Object.entries(before.tables)) {
     for (const row of rows) assert.ok(after.tables[table].includes(row), 'An original row changed.');
-    if (table !== 'community_meta') assert.deepEqual(after.tables[table], rows);
+    if (!['community_meta', 'community_rounds'].includes(table)) assert.deepEqual(after.tables[table], rows);
   }
+  assert.deepEqual((await f.client.execute('SELECT * FROM community_rounds ORDER BY id')).rows,
+    [{ id: 'daily-2026-09-01', proposal_round_id: 'daily-2026-09-01', opens_at: INITIAL_CUTOFF,
+      closes_at: INITIAL_CUTOFF + DAY_MS }, ...originalRounds]);
   assert.equal((await f.client.execute('SELECT state FROM community_public_policy WHERE id = 1')).rows[0].state, 'inactive');
-  const repeat = await preparePublicDefaultSchema(f.client, { expectedServiceRevision: 1 });
+  const repeat = await preparePublicDefaultSchema(preparedClient, { expectedServiceRevision: 1 });
   assert.deepEqual(repeat.schemaAdded, { tables: 0, triggers: 0 });
   assert.deepEqual(await snapshot(f.client), after);
 });

@@ -59,7 +59,7 @@ import { createGameHost } from './game-host.js';
     'alias-dialog', 'close-alias', 'alias-form', 'alias-input', 'alias-count', 'alias-current',
     'alias-message', 'alias-retry', 'alias-reload', 'alias-cancel', 'alias-save',
     'open-ideas', 'ideas-dialog', 'close-ideas', 'ideas-total', 'ideas-vote-note',
-    'ideas-panel', 'ideas-status', 'ideas-list', 'ideas-refresh', 'ideas-retry',
+    'ideas-panel', 'ideas-status', 'ideas-table', 'ideas-list', 'ideas-refresh', 'ideas-retry',
     'ideas-prev', 'ideas-next', 'ideas-page', 'ideas-feedback', 'ideas-feedback-message', 'ideas-action-retry',
   ].map((id) => [id, byId(id)]));
 
@@ -72,6 +72,7 @@ import { createGameHost } from './game-host.js';
   let communityLoading = true;
   let communitySort = 'recent';
   let communityPage = 0;
+  let includeClosedIdeas = false;
   let communitySequence = 0;
   let communityMe = null;
   let communityMeSequence = 0;
@@ -1355,12 +1356,13 @@ import { createGameHost } from './game-host.js';
   const publicRound = value => value === null || (value && typeof value.id === 'string'
     && ['open', 'closed', 'waiting'].includes(value.status));
 
-  function validateCommunity(data) {
+  function validateCommunity(data, includeClosed) {
     if (!data || !Array.isArray(data.recent) || !Array.isArray(data.popular)
       || data.recent.length > 100 || data.popular.length > 100
       || !data.recent.every(publicIdea) || !data.popular.every(publicIdea) || !Array.isArray(data.leaderboard?.items)
       || !data.leaderboard.items.every(leaderboardEntry)
-      || !publicRound(data.round)) {
+      || !publicRound(data.round)
+      || (data.includeClosed !== undefined && data.includeClosed !== includeClosed)) {
       throw new RequestError(m('communityInvalid'));
     }
     return data;
@@ -1388,14 +1390,15 @@ import { createGameHost } from './game-host.js';
 
   async function loadCommunity() {
     const sequence = ++communitySequence;
+    const requestedIncludeClosed = includeClosedIdeas;
     communityLoading = true;
     communityError = '';
     refreshOpenLeaderboard();
     refreshOpenIdeas();
     renderCommunity();
     try {
-      const data = validateCommunity(await request('/api/community'));
-      if (sequence !== communitySequence) return;
+      const data = validateCommunity(await request('/api/community' + (requestedIncludeClosed ? '?includeClosed=1' : '')), requestedIncludeClosed);
+      if (sequence !== communitySequence || requestedIncludeClosed !== includeClosedIdeas) return;
       communityData = data;
     } catch (error) {
       if (sequence !== communitySequence) return;
@@ -1511,13 +1514,14 @@ import { createGameHost } from './game-host.js';
           + ' · ' + t('voteQuotaNote');
   }
 
-  function validateIdeasPage(data, sort, offset) {
+  function validateIdeasPage(data, sort, offset, includeClosed) {
     if (!data || !Array.isArray(data.items) || data.items.length > IDEAS_PAGE_SIZE
       || !data.items.every(publicIdea) || !publicRound(data.round)
       || data.sort !== sort || data.offset !== offset || data.limit !== IDEAS_PAGE_SIZE
       || !nonnegativeInteger(data.total) || typeof data.hasMore !== 'boolean'
       || data.items.length !== Math.max(0, Math.min(IDEAS_PAGE_SIZE, data.total - offset))
       || data.hasMore !== (offset + data.items.length < data.total)
+      || (data.includeClosed !== undefined && data.includeClosed !== includeClosed)
       || new Set(data.items.map(idea => idea.id)).size !== data.items.length) {
       throw new RequestError(m('ideasInvalid'));
     }
@@ -1540,6 +1544,7 @@ import { createGameHost } from './game-host.js';
     const sequence = ++ideasSequence;
     const epoch = authEpoch;
     const sort = ideasSort;
+    const requestedIncludeClosed = includeClosedIdeas;
     const requestedOffset = Math.max(0, offset);
     ideasOffset = requestedOffset;
     ideasLoading = true;
@@ -1550,8 +1555,10 @@ import { createGameHost } from './game-host.js';
     renderIdeasDialog();
     try {
       const data = validateIdeasPage(await request('/api/community?view=ideas&sort=' + sort
-        + '&offset=' + requestedOffset + '&limit=' + IDEAS_PAGE_SIZE), sort, requestedOffset);
-      if (sequence !== ideasSequence || epoch !== authEpoch || !ui['ideas-dialog'].open || sort !== ideasSort) return;
+        + '&offset=' + requestedOffset + '&limit=' + IDEAS_PAGE_SIZE + (requestedIncludeClosed ? '&includeClosed=1' : '')),
+      sort, requestedOffset, requestedIncludeClosed);
+      if (sequence !== ideasSequence || epoch !== authEpoch || !ui['ideas-dialog'].open
+        || sort !== ideasSort || requestedIncludeClosed !== includeClosedIdeas) return;
       if (ideasRefreshQueued) return;
       const lastOffset = Math.max(0, Math.floor((data.total - 1) / IDEAS_PAGE_SIZE) * IDEAS_PAGE_SIZE);
       if (requestedOffset > lastOffset) {
@@ -1610,7 +1617,8 @@ import { createGameHost } from './game-host.js';
     const loginReturnId = loginReturnFocus?.closest?.('#ideas-list [data-public-id]')?.dataset.publicId;
     const loginReturnDirection = loginReturnFocus?.dataset.direction;
     ui['ideas-total'].textContent = fullIdeas ? t('ideasTotal', { total: fullIdeas.total.toLocaleString(i18n.intlLocale) }) : '';
-    const message = ideasError || (ideasLoading ? m('communityLoading') : fullIdeas && !fullIdeas.items.length ? m('communityEmpty') : '');
+    const message = ideasError || (ideasLoading ? m('communityLoading') : fullIdeas && !fullIdeas.items.length
+      ? m(includeClosedIdeas ? 'communityEmpty' : 'currentIdeasEmpty') : '');
     ui['ideas-status'].hidden = !message;
     ui['ideas-status'].textContent = localize(message);
     ui['ideas-status'].dataset.kind = ideasError ? 'error' : '';
@@ -1624,6 +1632,7 @@ import { createGameHost } from './game-host.js';
     ui['ideas-page'].textContent = fullIdeas ? t('feedPage', { page: Math.floor(ideasOffset / IDEAS_PAGE_SIZE) + 1,
       pages: Math.max(1, Math.ceil(fullIdeas.total / IDEAS_PAGE_SIZE)) }) : '';
     ui['ideas-list'].replaceChildren();
+    ui['ideas-table'].hidden = !fullIdeas?.items.length;
     for (const [index, idea] of (fullIdeas?.items || []).entries()) {
       ui['ideas-list'].append(createCommunityCard(idea, 'all', index));
     }
@@ -1917,6 +1926,10 @@ import { createGameHost } from './game-host.js';
 
   function updateCommunityControls() {
     const busy = communityMutating || submitting || authenticating;
+    for (const toggle of document.querySelectorAll('[data-ideas-history-toggle]')) {
+      toggle.checked = includeClosedIdeas;
+      toggle.disabled = busy;
+    }
     for (const button of document.querySelectorAll('[data-community-action]')) {
       button.disabled = busy || Boolean(communityAttempt?.unknown) || button.dataset.baseDisabled === 'true';
     }
@@ -1933,19 +1946,20 @@ import { createGameHost } from './game-host.js';
   }
 
   function createCommunityCard(idea, source = 'main', index = 0) {
+    const tableRow = source === 'all';
     const mine = communityMe?.profile.id === idea.author.id;
     const ownNoteId = 'own-vote-' + source + '-' + index;
-    const article = document.createElement('article');
-    article.className = 'community-entry';
+    const article = document.createElement(tableRow ? 'tr' : 'article');
+    article.className = tableRow ? 'ideas-row' : 'community-entry';
     article.dataset.publicId = idea.id;
     article.dataset.ideaSource = source;
-    const header = document.createElement('div');
+    const header = document.createElement(tableRow ? 'span' : 'div');
     header.className = 'community-entry-header';
     const alias = document.createElement('strong');
     alias.className = 'community-alias';
     alias.textContent = idea.author.alias;
     alias.title = idea.author.alias;
-    const authorLine = document.createElement('div');
+    const authorLine = document.createElement(tableRow ? 'span' : 'div');
     authorLine.className = 'community-author';
     authorLine.append(alias);
     if (mine) {
@@ -1957,11 +1971,11 @@ import { createGameHost } from './game-host.js';
     const time = document.createElement('time');
     time.dateTime = idea.createdAt;
     time.textContent = proposalDate(idea.createdAt);
-    const details = document.createElement('div');
+    const details = document.createElement(tableRow ? 'span' : 'div');
     details.className = 'community-entry-details';
     details.append(time);
     header.append(authorLine, details);
-    const body = document.createElement('p');
+    const body = document.createElement(tableRow ? 'span' : 'p');
     body.className = 'community-body';
     body.textContent = idea.body;
     const voting = document.createElement('div');
@@ -1984,6 +1998,7 @@ import { createGameHost } from './game-host.js';
       button.setAttribute('aria-label', t('voteCountAria', { action: t(selected
         ? direction === 'up' ? 'removeUpvote' : 'removeDownvote'
         : direction === 'up' ? 'upvote' : 'downvote'), count }));
+      if (tableRow) button.title = button.getAttribute('aria-label');
       const arrow = document.createElement('span');
       arrow.textContent = direction === 'up' ? '↑' : '↓';
       arrow.setAttribute('aria-hidden', 'true');
@@ -2007,14 +2022,37 @@ import { createGameHost } from './game-host.js';
     read.setAttribute('aria-haspopup', 'dialog');
     read.setAttribute('aria-controls', 'idea-dialog');
     read.addEventListener('click', () => openIdea(idea, read, source));
-    voting.append(read);
-    article.append(header, body, voting);
+    let noteContainer = article;
+    if (tableRow) {
+      const detailsCell = document.createElement('td');
+      detailsCell.className = 'ideas-details-cell';
+      const votesCell = document.createElement('td');
+      votesCell.className = 'ideas-votes-cell';
+      const excerpt = document.createElement('span');
+      excerpt.className = 'ideas-excerpt';
+      const arrow = document.createElement('span');
+      arrow.className = 'ideas-open-mark';
+      arrow.textContent = '↗';
+      arrow.setAttribute('aria-hidden', 'true');
+      excerpt.append(body, arrow);
+      body.id = 'idea-excerpt-' + source + '-' + index;
+      read.setAttribute('aria-describedby', body.id);
+      read.classList.add('ideas-row-read');
+      read.replaceChildren(excerpt, header);
+      detailsCell.append(read);
+      votesCell.append(voting);
+      article.append(detailsCell, votesCell);
+      noteContainer = detailsCell;
+    } else {
+      voting.append(read);
+      article.append(header, body, voting);
+    }
     if (mine) {
       const note = document.createElement('span');
       note.className = 'sr-only';
       note.id = ownNoteId;
       note.textContent = t('ownVoteExplanation');
-      article.append(note);
+      noteContainer.append(note);
     }
     return article;
   }
@@ -2023,7 +2061,8 @@ import { createGameHost } from './game-host.js';
     const rows = communityData?.[communitySort] || [];
     const pages = Math.max(1, Math.ceil(rows.length / 3));
     communityPage = Math.min(communityPage, pages - 1);
-    const statusMessage = communityError || (!communityData ? m('communityLoading') : !rows.length ? m('communityEmpty') : '');
+    const statusMessage = communityError || (!communityData || (communityLoading && !rows.length) ? m('communityLoading')
+      : !rows.length ? m(includeClosedIdeas ? 'communityEmpty' : 'currentIdeasEmpty') : '');
     ui['community-feed-status'].hidden = !statusMessage;
     ui['community-feed-status'].textContent = localize(statusMessage);
     ui['community-feed-status'].dataset.kind = communityError ? 'error' : '';
@@ -2215,6 +2254,24 @@ import { createGameHost } from './game-host.js';
     }
   }
 
+  for (const toggle of document.querySelectorAll('[data-ideas-history-toggle]')) {
+    toggle.addEventListener('change', () => {
+      if (communityMutating || submitting || authenticating || includeClosedIdeas === toggle.checked) {
+        updateCommunityControls();
+        return;
+      }
+      includeClosedIdeas = toggle.checked;
+      communityPage = 0;
+      // Never leave rows from the previous scope visible while its replacement
+      // loads. Keep the unrelated ranking, draft and session state intact.
+      if (communityData) communityData = { ...communityData, recent: [], popular: [] };
+      if (activeIdea) closeIdea();
+      ideasOffset = 0;
+      clearIdeasView();
+      ui['ideas-panel'].scrollTop = 0;
+      loadCommunity().catch(() => {});
+    });
+  }
   for (const tab of document.querySelectorAll('[data-feed-sort]')) {
     tab.addEventListener('click', () => { communitySort = tab.dataset.feedSort; communityPage = 0; renderCommunity(); });
     tab.addEventListener('keydown', event => {

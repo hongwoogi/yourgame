@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { INITIAL_CUTOFF } from '../server/config.mjs';
+import { dailyCycleAt } from '../server/daily-schedule.mjs';
 import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
 import { initializeDatabase } from '../server/database.mjs';
 import { createCommunityStore, COMMUNITY_RATE_LIMIT, COMMUNITY_RATE_WINDOW_MS } from '../server/community-store.mjs';
@@ -51,7 +52,8 @@ async function publish(f, member, body) {
   const proposal = await create(f, member, body);
   const item = (await f.community.privateState(member.session)).publications.find(value => value.proposalId === proposal.id);
   return { proposal, id: item.publicId, proposalRevision: item.proposalRevision,
-    publicationRevision: item.publicationRevision, roundId: proposal.roundId === 'initial' ? 'initial' : null };
+    publicationRevision: item.publicationRevision,
+    roundId: proposal.roundId === 'initial' ? 'initial' : dailyCycleAt(Date.parse(proposal.createdAt)).cycleId };
 }
 
 function voteInput(item, direction = 'up', values = {}) {
@@ -337,27 +339,43 @@ test('suspend/restore hides the author while suspended and never reactivates old
   assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
 });
 
-test('exact round close disables new, switched and cancelled votes; pending proposals never get an unlimited voting round', async t => {
+test('exact round close locks every old vote operation while pending proposals receive separate bounded daily budgets', async t => {
   const f = await fixture(t, { time: INITIAL_CUTOFF - 1000 });
   const author = await f.login();
   const viewer = await f.login('boundary-voter');
   const item = await publish(f, author);
   const input = voteInput(item);
   await f.community.mutate(viewer.session, input);
+  const initialVotes = (await f.client.execute("SELECT * FROM community_votes WHERE round_id='initial'")).rows;
   await f.setTime(INITIAL_CUTOFF);
   for (const direction of ['up', 'down', 'none']) await assert.rejects(f.community.mutate(viewer.session, voteInput(item, direction)), errorCode('VOTING_CLOSED'));
   await f.community.mutate(viewer.session, input); // receipt is still readable
   const closedFeed = await f.community.publicFeed();
-  assert.equal(closedFeed.round.status, 'closed');
-  assert.equal(closedFeed.recent[0].votingOpen, false);
-  assert.equal(closedFeed.recent[0].upvotes, 1);
-  assert.equal((await f.community.privateState(viewer.session)).voteQuota.remaining, 0);
+  assert.deepEqual(closedFeed.recent, []);
+  assert.deepEqual(closedFeed.round, { id: 'daily-2026-09-01', status: 'open', closesAt: '2026-09-01T14:00:00.000Z', limit: 3 });
+  const history = await f.community.publicFeed({ includeClosed: true });
+  assert.equal(history.recent[0].votingOpen, false);
+  assert.equal(history.recent[0].upvotes, 1);
+  assert.deepEqual((await f.community.privateState(viewer.session)).voteQuota,
+    { roundId: 'daily-2026-09-01', limit: 3, used: 0, remaining: 3, closesAt: '2026-09-01T14:00:00.000Z' });
   const pending = await publish(f, author, 'Next-round puzzle suggestion.');
   const pendingItem = (await f.community.publicFeed()).recent.find(value => value.id === pending.id);
-  assert.equal(pendingItem.roundId, null);
-  assert.equal(pendingItem.votingOpen, false);
+  assert.equal(pendingItem.roundId, 'daily-2026-09-01');
+  assert.equal(pendingItem.votingOpen, true);
   await assert.rejects(f.community.mutate(viewer.session, voteInput(pendingItem, 'up', { roundId: 'initial' })), errorCode('VOTING_CLOSED'));
-  assert.deepEqual((await f.client.execute('SELECT id FROM community_rounds')).rows.map(row => row.id), ['initial']);
+  await f.community.mutate(viewer.session, voteInput(pendingItem));
+  assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 1);
+  assert.equal((await f.community.privateState(viewer.session)).voteQuota.remaining, 2);
+  assert.deepEqual((await f.client.execute("SELECT * FROM community_votes WHERE round_id='initial'")).rows, initialVotes);
+  assert.deepEqual((await f.client.execute("SELECT id,proposal_round_id,opens_at,closes_at FROM community_rounds WHERE id='daily-2026-09-01'")).rows,
+    [{ id: 'daily-2026-09-01', proposal_round_id: 'daily-2026-09-01', opens_at: INITIAL_CUTOFF, closes_at: Date.parse('2026-09-01T14:00:00.000Z') }]);
+
+  const completedVotes = (await f.client.execute('SELECT * FROM community_votes ORDER BY round_id')).rows;
+  await f.setTime(Date.parse('2026-09-01T14:00:00.000Z'));
+  for (const direction of ['up', 'down', 'none']) await assert.rejects(f.community.mutate(viewer.session, voteInput(pendingItem, direction)), errorCode('VOTING_CLOSED'));
+  assert.deepEqual((await f.community.privateState(viewer.session)).voteQuota,
+    { roundId: 'daily-2026-09-02', limit: 3, used: 0, remaining: 3, closesAt: '2026-09-02T14:00:00.000Z' });
+  assert.deepEqual((await f.client.execute('SELECT * FROM community_votes ORDER BY round_id')).rows, completedVotes);
 });
 
 test('a vote whose write is delayed until cutoff is rejected using database execution time', async t => {
@@ -446,7 +464,8 @@ test('service controls gate publication, opt-in and voting while explicit privac
   const profile = (await f.community.privateState(author.session)).profile;
   await f.community.mutate(author.session, operation('set_profile_visibility', { visible: true, revision: profile.revision }));
   await setService(f, { mode: 'maintenance' });
-  assert.equal((await f.community.publicFeed()).recent[0].votingOpen, false);
+  assert.deepEqual((await f.community.publicFeed()).recent, []);
+  assert.equal((await f.community.publicFeed({ includeClosed: true })).recent[0].votingOpen, false);
   await assert.rejects(publication(f, author, item.proposal), errorCode('SERVICE_MAINTENANCE'));
   await assert.rejects(f.community.mutate(viewer.session, voteInput(item)), errorCode('SERVICE_MAINTENANCE'));
   await f.community.mutate(author.session, operation('set_profile_visibility', { visible: false, revision: 2 }));

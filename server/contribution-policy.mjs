@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 
-// No interpretation of the user's ** notation has been activated. These
-// calculators are explicit previews; they never establish release evidence or
-// authorize ledger writes. The voter formula is unambiguous in both previews.
-export const CONTRIBUTION_POLICY_VERSION = null;
+// The user confirmed per-vote weighting on 2026-09-01. Calculators remain
+// explicit previews; only the trusted settlement store can issue points after
+// verifying actual publication, fulfillment, inputs and historical votes.
+export const CONTRIBUTION_POLICY_VERSION = 'contribution-weighted-v1';
+// The legacy/public settle entry point stays closed even with an active policy.
 export const CONTRIBUTION_ISSUANCE_BLOCK = 'RELEASE_REVIEW_UNAVAILABLE';
 export const MAX_VOTE_COUNT = 9223372036854775807n;
 const FORMULAS = new Set(['weighted', 'exponent']);
@@ -12,10 +13,10 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export function publicContributionPolicy() {
   return {
     policyVersion: CONTRIBUTION_POLICY_VERSION,
-    status: 'pending_confirmation',
-    issuanceEnabled: false,
-    blockedReason: CONTRIBUTION_ISSUANCE_BLOCK,
-    proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } },
+    status: 'active',
+    issuanceEnabled: true,
+    blockedReason: null,
+    proposer: { base: '100', upvote: { operation: 'multiply', value: '5' }, downvote: { operation: 'multiply', value: '2' } },
     voter: { base: '10', upvote: { operation: 'multiply', value: '1' }, downvote: { operation: 'multiply', value: '0.5' } },
     negativeAllowed: true,
     pointStep: '0.5',
@@ -46,7 +47,7 @@ export function formatHalfPoints(units) {
 }
 
 export function previewContribution({ formula, role, upvotes, downvotes } = {}) {
-  if (!FORMULAS.has(formula)) throw new TypeError('Choose an explicit weighted or exponent preview; no score policy is active.');
+  if (!FORMULAS.has(formula)) throw new TypeError('Choose an explicit weighted or exponent preview.');
   if (!['proposer', 'voter'].includes(role)) throw new TypeError('Choose a proposer or voter role.');
   const up = voteCount(upvotes, 'upvotes');
   const down = voteCount(downvotes, 'downvotes');

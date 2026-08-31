@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createApiHandler } from '../server/app.mjs';
 import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
+import { INITIAL_CUTOFF } from '../server/config.mjs';
 import { ApiError } from '../server/errors.mjs';
 import { apiErrorMessage } from '../public/error-messages.js';
 import { backendFixture as baseFixture, request, signedHeaders } from './backend-helpers.mjs';
@@ -55,13 +56,19 @@ test('anonymous community reads are bounded public DTOs and never create session
   for (const url of ['/api/community', '/api/community?view=public']) {
     const result = await request(f.handler, url, { origin: null });
     assert.equal(result.status, 200);
-    assert.deepEqual(Object.keys(result.body).sort(), ['leaderboard', 'popular', 'publicationPolicy', 'recent', 'round', 'scoring', 'serverTime']);
+    assert.deepEqual(Object.keys(result.body).sort(), ['includeClosed', 'leaderboard', 'popular', 'publicationPolicy', 'recent', 'round', 'scoring', 'serverTime']);
+    assert.equal(result.body.includeClosed, false);
     assert.equal(result.body.recent[0].body, 'Private unshared idea.');
     assert.deepEqual(result.body.popular, result.body.recent);
     assert.equal(result.body.leaderboard.items.length, 1);
     assert.equal(result.body.leaderboard.items[0].points, '0');
     assert.deepEqual(result.body.publicationPolicy, { version: 'public-default-v1', defaultPublic: true });
-    assert.equal(result.body.scoring.issuanceEnabled, false);
+    assert.deepEqual(result.body.scoring, {
+      policyVersion: 'contribution-weighted-v1', status: 'active', issuanceEnabled: true, blockedReason: null,
+      proposer: { base: '100', upvote: { operation: 'multiply', value: '5' }, downvote: { operation: 'multiply', value: '2' } },
+      voter: { base: '10', upvote: { operation: 'multiply', value: '1' }, downvote: { operation: 'multiply', value: '0.5' } },
+      negativeAllowed: true, pointStep: '0.5',
+    });
     assert.equal(result.headers['set-cookie'], undefined);
     assert.match(result.headers['cache-control'], /no-store/);
     assert.equal(result.headers['x-content-type-options'], 'nosniff');
@@ -124,10 +131,58 @@ test('private community state requires a live owner session while generated alia
   assert.equal(revoked.body.profile, undefined);
 });
 
+test('closed proposals are hidden by default and returned only by the explicit history filter', async t => {
+  const f = await backendFixture(t);
+  const author = await participant(f, 'history-author', 'Private history author');
+  const proposal = await reviewedProposal(f, author, { approve: false });
+  const visible = (await request(f.handler, '/api/community')).body.recent[0];
+  assert.equal(visible.body, proposal.body);
+  assert.equal(visible.votingOpen, true);
+  await f.setTime(INITIAL_CUTOFF);
+  const before = (await f.client.execute(`SELECT (SELECT COUNT(*) FROM sessions) AS sessions,
+    (SELECT COUNT(*) FROM community_profiles) AS profiles,(SELECT COUNT(*) FROM community_votes) AS votes,
+    (SELECT COUNT(*) FROM contribution_ledger) AS awards`)).rows;
+
+  for (const url of ['/api/community', '/api/community?view=public&includeClosed=0']) {
+    const response = await request(f.handler, url, { origin: null });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.includeClosed, false);
+    assert.deepEqual(response.body.recent, []);
+    assert.deepEqual(response.body.popular, []);
+  }
+  for (const url of ['/api/community?view=ideas', '/api/community?view=ideas&includeClosed=0']) {
+    const response = await request(f.handler, url, { origin: null });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.includeClosed, false);
+    assert.deepEqual(response.body.items, []);
+  }
+  for (const url of ['/api/community?includeClosed=1', '/api/community?view=public&includeClosed=1']) {
+    const response = await request(f.handler, url, { origin: null });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.includeClosed, true);
+    assert.equal(response.body.recent.length, 1);
+    assert.equal(response.body.recent[0].id, visible.id);
+    assert.equal(response.body.recent[0].votingOpen, false);
+    assert.equal(response.body.recent[0].body, proposal.body);
+    assert.equal(response.headers['set-cookie'], undefined);
+  }
+  const history = await request(f.handler, '/api/community?view=ideas&includeClosed=1', { origin: null });
+  assert.equal(history.status, 200);
+  assert.equal(history.body.includeClosed, true);
+  assert.equal(history.body.items.length, 1);
+  assert.equal(history.body.items[0].id, visible.id);
+  assert.equal(history.body.items[0].votingOpen, false);
+  assert.deepEqual((await f.client.execute(`SELECT (SELECT COUNT(*) FROM sessions) AS sessions,
+    (SELECT COUNT(*) FROM community_profiles) AS profiles,(SELECT COUNT(*) FROM community_votes) AS votes,
+    (SELECT COUNT(*) FROM contribution_ledger) AS awards`)).rows, before);
+});
+
 test('community view and method parsing reject ambiguous or unbounded requests before public reads', async t => {
   const f = await backendFixture(t);
   for (const query of ['view=public&view=me', 'view=public&view=public', 'view=', 'view=admin',
-    'limit=1000000', 'ownerId=someone', `view=${'x'.repeat(200)}`]) {
+    'limit=1000000', 'ownerId=someone', `view=${'x'.repeat(200)}`,
+    'includeClosed=', 'includeClosed=true', 'includeClosed=2', 'includeClosed=1&includeClosed=1',
+    'view=me&includeClosed=1', 'view=leaderboard&includeClosed=1']) {
     const result = await request(f.handler, `/api/community?${query}`);
     assert.equal(result.status, 422, query);
     assert.equal(result.body.error.code, 'INVALID_COMMUNITY_INPUT');

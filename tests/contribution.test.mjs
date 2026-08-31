@@ -71,27 +71,29 @@ function fictionalRecord(user, changes = {}) {
 
 async function seedRecord(client, record, verb = 'INSERT') {
   // Direct SQL is used only to test immutable storage and exact read projection.
-  // This does NOT exercise or substitute a trusted issuer: production settle()
-  // remains closed, including for objects that look like these fixtures.
+  // This does NOT exercise or substitute a trusted issuer: public-store
+  // settle() remains closed, including for objects that look like these fixtures.
   const keys = Object.keys(record);
   return client.execute({ sql: `${verb} INTO contribution_ledger(${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`,
     args: keys.map(key => record[key]) });
 }
 
-test('unconfirmed notation does not activate either preview or permit issuance', () => {
-  assert.equal(CONTRIBUTION_POLICY_VERSION, null);
+test('the confirmed weighted policy exposes exact coefficients without making calculator results awards', () => {
+  assert.equal(CONTRIBUTION_POLICY_VERSION, 'contribution-weighted-v1');
   assert.deepEqual(publicContributionPolicy(), {
-    policyVersion: null, status: 'pending_confirmation', issuanceEnabled: false, blockedReason: 'RELEASE_REVIEW_UNAVAILABLE',
-    proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } },
+    policyVersion: 'contribution-weighted-v1', status: 'active', issuanceEnabled: true, blockedReason: null,
+    proposer: { base: '100', upvote: { operation: 'multiply', value: '5' }, downvote: { operation: 'multiply', value: '2' } },
     voter: { base: '10', upvote: { operation: 'multiply', value: '1' }, downvote: { operation: 'multiply', value: '0.5' } },
     negativeAllowed: true, pointStep: '0.5',
   });
   assert.throws(() => previewContribution({ role: 'proposer', upvotes: 2, downvotes: 1 }), /explicit/);
   const changed = publicContributionPolicy();
   changed.proposer.upvote.operation = 'exponent';
-  changed.issuanceEnabled = true;
-  assert.equal(publicContributionPolicy().proposer.upvote.operation, null);
-  assert.equal(publicContributionPolicy().issuanceEnabled, false);
+  changed.issuanceEnabled = false;
+  changed.blockedReason = 'CALLER_OVERRIDE';
+  assert.equal(publicContributionPolicy().proposer.upvote.operation, 'multiply');
+  assert.equal(publicContributionPolicy().issuanceEnabled, true);
+  assert.equal(publicContributionPolicy().blockedReason, null);
 });
 
 test('both explicit interpretations are calculated exactly and never claim an award', () => {
@@ -188,7 +190,9 @@ test('zero-score visibility is explicit, deterministic and uses tied ranks rathe
   await f.user({ visible: false });
   const board = await f.store.leaderboard();
   assert.deepEqual(board.items, [first, second].map(user => ({ rank: 1, author: { id: user.publicId, alias: user.alias }, points: '0', adoptedCount: 0 })));
-  assert.equal(board.scoring.issuanceEnabled, false);
+  assert.equal(board.scoring.issuanceEnabled, true);
+  assert.equal(board.scoring.policyVersion, 'contribution-weighted-v1');
+  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, 0);
 });
 
 test('public ranking excludes nonconsenting and currently suspended accounts without exposing Google identity', async t => {
@@ -395,7 +399,7 @@ test('separate real participants and later additional fulfillment can retain sep
   assert.deepEqual(await f.store.privateSummary(bob.session), { points: '100', adoptedCount: 1, rank: null });
 });
 
-test('plans, approvals, completed tasks, forged receipts and admin flags never open settlement', async t => {
+test('plans, approvals, completed tasks, forged receipts and admin flags never open public-store settlement', async t => {
   const f = await fixture(t);
   const member = await f.user({ visible: true });
   const payloads = [undefined, {}, { isAdmin: true, points: '999999' }, { safetyApproved: true, status: 'completed' },

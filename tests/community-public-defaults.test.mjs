@@ -107,7 +107,9 @@ test('preparation remains inactive and legacy original/history/health schema sur
     'community_events_no_delete','community_events_no_replace','community_requests_no_update','community_requests_no_delete','community_requests_no_replace')`)).rows[0].n, 8);
   await activate(f);
   assert.deepEqual(await snapshot(f), before);
-  assert.equal((await f.store.community.publicFeed()).recent[0].body, proposal.body);
+  // These legacy fixtures test publication policy independently of the
+  // current voting collection; historical visibility still honors opt-out.
+  assert.equal((await f.store.community.publicFeed({ includeClosed: true })).recent[0].body, proposal.body);
   assert.equal((await f.store.community.privateState(member.session)).profile.leaderboardVisible, true);
 });
 
@@ -137,7 +139,7 @@ test('activation reconciles current explicit hide/show choices without fabricati
   assert.equal(result.publicationsAdded, 1);
   assert.deepEqual(await snapshot(f), protectedBefore);
   assert.deepEqual((await rows(f.client, 'community_profiles')).map(row => [row.user_id, row.public_id, row.alias, row.created_at]), identities);
-  const feed = await f.store.community.publicFeed();
+  const feed = await f.store.community.publicFeed({ includeClosed: true });
   assert.deepEqual(feed.recent.map(item => item.body).sort(), [first.body, third.body].sort());
   const hiddenState = await f.store.community.privateState(hidden.session);
   assert.equal(hiddenState.profile.leaderboardVisible, false);
@@ -168,21 +170,21 @@ test('old deployed inserts, edits and privacy actions on either side of activati
   const member = await f.login();
   let old = await legacyProposal(f, member, 'Before activation');
   await activate(f);
-  const initial = (await f.store.community.publicFeed()).recent[0];
+  const initial = (await f.store.community.publicFeed({ includeClosed: true })).recent[0];
   const late = await legacyProposal(f, member, 'Late insert from the old deployment');
-  assert.equal((await f.store.community.publicFeed()).recent.length, 2);
+  assert.equal((await f.store.community.publicFeed({ includeClosed: true })).recent.length, 2);
   old = await legacyProposal(f, member, 'Late old deployment edit', old);
-  const edited = (await f.store.community.publicFeed()).recent.find(item => item.id === initial.id);
+  const edited = (await f.store.community.publicFeed({ includeClosed: true })).recent.find(item => item.id === initial.id);
   assert.equal(edited.body, old.body);
   assert.equal(edited.publicationRevision, initial.publicationRevision + 1);
   await legacyChoice(f, member, old, false);
   old = await legacyProposal(f, member, 'An edit after explicit hiding', old);
-  assert.deepEqual((await f.store.community.publicFeed()).recent.map(item => item.body), [late.body]);
+  assert.deepEqual((await f.store.community.publicFeed({ includeClosed: true })).recent.map(item => item.body), [late.body]);
   await activate(f);
-  assert.deepEqual((await f.store.community.publicFeed()).recent.map(item => item.body), [late.body]);
+  assert.deepEqual((await f.store.community.publicFeed({ includeClosed: true })).recent.map(item => item.body), [late.body]);
   await legacyChoice(f, member, old, true);
   await activate(f);
-  assert.equal((await f.store.community.publicFeed()).recent.length, 2);
+  assert.equal((await f.store.community.publicFeed({ includeClosed: true })).recent.length, 2);
   assert.equal((await f.store.community.privateState(member.session)).publications.find(item => item.proposalId === old.id).visibilitySource, 'author_choice');
   assert.equal((await f.store.listProposals(member.session.user.id)).proposals.find(item => item.id === old.id).safety.status, 'pending');
   // A code rollback only restores the old stricter read behavior. Defaults are

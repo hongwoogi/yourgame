@@ -47,11 +47,12 @@ async function fixture(page, options = {}) {
     serverTime: START,
     collection: { id: 'initial', status: 'open', closesAt: CLOSE, releaseAt: RELEASE, initialClosed: false },
     ideas: [], leaders: [], round: { id: 'initial', status: 'open', closesAt: CLOSE, limit: 3 },
-    scoring: { status: 'pending_confirmation', policyVersion: null, issuanceEnabled: false,
-      proposer: { base: '100', upvote: { operation: null, value: '5' }, downvote: { operation: null, value: '2' } } },
+    scoring: { status: 'active', policyVersion: 'contribution-weighted-v1', issuanceEnabled: true, blockedReason: null,
+      proposer: { base: '100', upvote: { operation: 'multiply', value: '5' }, downvote: { operation: 'multiply', value: '2' } },
+      voter: { base: '10', upvote: { operation: 'multiply', value: '1' }, downvote: { operation: 'multiply', value: '0.5' } } },
     posts: [], patches: [], actions: [], effects: [], receipts: new Map(), publicReads: 0, meReads: 0,
     sessionReads: 0, loginCalls: 0, publicFailure: false, meFailure: false, sessionFailure: false,
-    leaderboardReads: [], leaderboardFailure: false, ideasReads: [], ideasFailure: false,
+    leaderboardReads: [], leaderboardFailure: false, ideasReads: [], ideasFailure: false, publicQueries: [],
     ...options };
   state.me ||= privateCommunity(state.session);
   const publishDefault = proposal => {
@@ -86,7 +87,7 @@ async function fixture(page, options = {}) {
         && idea.revision === publication.proposalRevision) }));
     return result;
   };
-  const publicSnapshot = ({ all = false } = {}) => {
+  const publicSnapshot = ({ all = false, includeClosed = false } = {}) => {
     const mine = meSnapshot();
     const own = mine.publications.filter(item => item.eligible).map(item => {
       const idea = state.proposals.find(entry => entry.id === item.proposalId);
@@ -94,10 +95,14 @@ async function fixture(page, options = {}) {
         publicationRevision: item.publicationRevision, author: { id: mine.profile.id, alias: mine.profile.alias },
         createdAt: idea.createdAt, upvotes: 0, downvotes: 0, votingOpen: state.round?.status === 'open', roundId: state.round?.id || null };
     });
-    const recent = [...structuredClone(state.ideas), ...own].slice(0, all ? undefined : state.mainLimit);
+    const recent = [...structuredClone(state.ideas), ...own]
+      .filter(idea => includeClosed || (idea.votingOpen && idea.roundId === state.round?.id && state.round?.status === 'open'
+        && (!state.round.closesAt || Date.parse(state.round.closesAt) > state.serverTime)))
+      .slice(0, all ? undefined : state.mainLimit);
     const items = leaderboardSnapshot();
     return { recent, popular: [...recent].sort((a, b) => b.upvotes - b.downvotes - (a.upvotes - a.downvotes)),
-      leaderboard: { items: items.slice(0, 10) }, round: state.round, scoring: state.scoring, serverTime: new Date(state.serverTime).toISOString() };
+      leaderboard: { items: items.slice(0, 10) }, round: state.round, includeClosed,
+      scoring: state.scoring, serverTime: new Date(state.serverTime).toISOString() };
   };
   await page.clock.install({ time: new Date(state.serverTime) });
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -194,8 +199,9 @@ async function fixture(page, options = {}) {
       const sort = url.searchParams.get('sort') || 'recent';
       const offset = Number(url.searchParams.get('offset') || 0);
       const limit = Number(url.searchParams.get('limit') || 24);
-      state.ideasReads.push({ sort, offset, limit, language: request.headers()['x-yourgame-language'] });
-      const items = publicSnapshot({ all: true }).recent.sort((a, b) => {
+      const includeClosed = url.searchParams.get('includeClosed') === '1';
+      state.ideasReads.push({ sort, offset, limit, includeClosed, language: request.headers()['x-yourgame-language'] });
+      const items = publicSnapshot({ all: true, includeClosed }).recent.sort((a, b) => {
         if (sort === 'popular') {
           const difference = (b.upvotes - b.downvotes) - (a.upvotes - a.downvotes) || b.upvotes - a.upvotes;
           if (difference) return difference;
@@ -203,7 +209,7 @@ async function fixture(page, options = {}) {
         return Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id);
       });
       const snapshot = { items: items.slice(offset, offset + limit), sort, offset, limit, total: items.length,
-        hasMore: offset + limit < items.length, round: structuredClone(state.round),
+        hasMore: offset + limit < items.length, round: structuredClone(state.round), includeClosed,
         publicationPolicy: { version: 'public-default-v1', defaultPublic: true }, serverTime: new Date(state.serverTime).toISOString() };
       const wait = state.holdNextIdeas;
       state.holdNextIdeas = null;
@@ -213,7 +219,13 @@ async function fixture(page, options = {}) {
     }
     if (url.pathname === '/api/community' && request.method() === 'GET') {
       state.publicReads += 1;
-      return state.publicFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503) : reply(publicSnapshot());
+      const includeClosed = url.searchParams.get('includeClosed') === '1';
+      state.publicQueries.push({ includeClosed });
+      const snapshot = publicSnapshot({ includeClosed });
+      const wait = state.holdNextPublic;
+      state.holdNextPublic = null;
+      if (wait) { wait.started(); await wait.promise; }
+      return state.publicFailure ? failure('COMMUNITY_SCHEMA_UNAVAILABLE', 503) : reply(snapshot);
     }
     if (url.pathname === '/api/community' && request.method() === 'POST') {
       const payload = request.postDataJSON();
@@ -284,6 +296,104 @@ async function fixture(page, options = {}) {
 function manyIdeas(count = 30) {
   return Array.from({ length: count }, (_, index) => sharedIdea(index + 1));
 }
+
+test('the shared history toggle defaults to the current round and preserves the draft, locale and self-vote guard', async ({ page }) => {
+  const current = manyIdeas(3);
+  current[0].author = { id: 'public-profile-a', alias: ALIAS };
+  const history = Array.from({ length: 30 }, (_, index) => sharedIdea(index + 101, {
+    body: `Closed idea ${index + 1}\n` + 'A complete archived requirement. '.repeat(35),
+    roundId: 'previous-round', votingOpen: false,
+    createdAt: new Date(START - 86400000 - index * 1000).toISOString(),
+  }));
+  const state = await fixture(page, { session: structuredClone(accountA), ideas: [...current, ...history], mainLimit: 6 });
+  const draft = 'Keep this unsubmitted 한국어 draft while I browse.';
+  await page.locator('#prompt').fill(draft);
+  await expect(page.getByRole('switch', { name: 'Show all ideas', exact: true }).first()).not.toBeChecked();
+  await expect(page.locator('#community-feed-list > *')).toHaveCount(3);
+  await expect(page.locator('#community-feed-list [data-public-id="public-idea-101"]')).toHaveCount(0);
+  expect(state.publicQueries.at(-1)).toEqual({ includeClosed: false });
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(3);
+  await expect(page.locator('#ideas-table')).toHaveRole('table');
+  await expect(page.locator('#ideas-table th')).toHaveCount(2);
+  await expect(page.locator('#ideas-include-closed')).not.toBeChecked();
+  const own = page.locator('#ideas-list [data-public-id="public-idea-1"]');
+  await expect(own.locator('.own-idea-badge')).toHaveText('My idea');
+  await expect(own.locator('[data-direction="up"]')).toBeDisabled();
+  await page.locator('#ideas-include-closed').check();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(24);
+  await expect(page.locator('#community-include-closed')).toBeChecked();
+  expect(state.publicQueries.at(-1)).toEqual({ includeClosed: true });
+  expect(state.ideasReads.at(-1)).toMatchObject({ includeClosed: true, offset: 0 });
+  await page.locator('#ideas-next').click();
+  await expect(page.locator('#ideas-page')).toHaveText('2 / 2');
+  const closed = page.locator('#ideas-list > tr').first();
+  await expect(closed.locator('[data-direction="up"]')).toBeDisabled();
+  await expect(closed.locator('[data-direction="down"]')).toBeDisabled();
+  await expect(closed.locator('.vote-note')).toHaveText('Voting closed');
+  await expect(closed.locator('.community-read')).toHaveAccessibleDescription(history[21].body.replace(/\s+/g, ' ').trim());
+  await closed.locator('.community-read').click();
+  await expect(page.locator('#idea-body')).toHaveText(history[21].body);
+  await page.locator('#idea-language-select').selectOption('ko');
+  await expect(page.locator('#idea-body')).toHaveText(history[21].body);
+  await page.locator('#close-idea').click();
+  await expect(page.locator('#ideas-include-closed')).toBeChecked();
+  await expect(page.getByRole('switch', { name: '전체 의견 보기', exact: true }).last()).toBeChecked();
+  await page.locator('#ideas-include-closed').uncheck();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(3);
+  await expect(page.locator('#ideas-page')).toHaveText('1 / 1');
+  await expect(page.locator('#community-include-closed')).not.toBeChecked();
+  await expect(own.locator('.own-idea-badge')).toHaveText('내 의견');
+  await expect(own.locator('[data-direction="down"]')).toBeDisabled();
+  expect(state.ideasReads.at(-1)).toMatchObject({ includeClosed: false, offset: 0, language: 'ko' });
+  await page.locator('#close-ideas').click();
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  expect(state.actions).toHaveLength(0);
+  expect(state.posts).toHaveLength(0);
+  expect(state.patches).toHaveLength(0);
+});
+
+test('history scope changes reject delayed main and modal replies without restoring old rows', async ({ page }) => {
+  const history = sharedIdea(2, { roundId: 'previous-round', votingOpen: false });
+  const state = await fixture(page, { ideas: [sharedIdea(), history] });
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(1);
+  const publicReply = gate();
+  const ideasReply = gate();
+  state.holdNextPublic = publicReply;
+  state.holdNextIdeas = ideasReply;
+  await page.locator('#ideas-include-closed').check();
+  await Promise.all([publicReply.began, ideasReply.began]);
+  await page.locator('#ideas-include-closed').uncheck();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(1);
+  await expect(page.locator('#community-feed-list > *')).toHaveCount(1);
+  publicReply.release();
+  ideasReply.release();
+  await page.clock.runFor(100);
+  await expect(page.locator('#ideas-list [data-public-id="public-idea-2"]')).toHaveCount(0);
+  await expect(page.locator('#community-feed-list [data-public-id="public-idea-2"]')).toHaveCount(0);
+  await expect(page.locator('#ideas-include-closed')).not.toBeChecked();
+  await expect(page.locator('#ideas-panel')).toHaveAttribute('aria-busy', 'false');
+  expect(state.actions).toHaveLength(0);
+});
+
+test('temporarily non-votable current ideas appear only with Show all ideas and stay read-only', async ({ page }) => {
+  const idea = sharedIdea(1, { votingOpen: false });
+  const state = await fixture(page, { ideas: [idea] });
+  await expect(page.locator('#community-feed-list > *')).toHaveCount(0);
+  await expect(page.locator('#community-feed-status')).toHaveText('No ideas open for voting right now.');
+  await page.locator('#open-ideas').click();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(0);
+  await expect(page.locator('#ideas-table')).toBeHidden();
+  await page.locator('#ideas-include-closed').check();
+  await expect(page.locator('#ideas-list > tr')).toHaveCount(1);
+  await expect(page.locator('#ideas-list [data-direction="up"]')).toBeDisabled();
+  await expect(page.locator('#ideas-list [data-direction="down"]')).toBeDisabled();
+  await page.locator('#ideas-list .community-read').click();
+  await expect(page.locator('#idea-body')).toHaveText(idea.body);
+  expect(state.actions).toHaveLength(0);
+  expect(state.loginCalls).toBe(0);
+});
 
 test('all ideas paginates 24 records, sorts on the server and preserves reader focus, language and IME drafts', async ({ page }) => {
   const ideas = manyIdeas();
@@ -545,6 +655,7 @@ test('all ideas rejects inconsistent pagination and still reads closed proposals
   state.ideasTransform = null;
   state.round = null;
   state.ideas = manyIdeas(1).map(idea => ({ ...idea, roundId: null, votingOpen: false }));
+  await page.locator('#community-include-closed').check();
   await page.locator('#open-ideas').click();
   await expect(page.locator('#ideas-list > *')).toHaveCount(1);
   await expect(page.locator('#ideas-list [data-direction="up"]')).toBeDisabled();
@@ -634,7 +745,7 @@ test('all ideas fits long data in desktop and mobile dialogs while the three-car
   page.on('pageerror', error => errors.push(error.name));
   for (const locale of ['en', 'ko']) {
     await page.locator('#language-select').selectOption(locale);
-    for (const [width, height] of [[1280, 720], [1366, 768], [1600, 900], [1920, 1080], [320, 740], [360, 780], [390, 844]]) {
+    for (const [width, height] of [[1280, 720], [1366, 768], [1440, 810], [1600, 900], [1920, 1080], [320, 740], [360, 780], [390, 844]]) {
       await page.setViewportSize({ width, height });
       await page.clock.runFor(50);
       if (width >= 1280) await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1)).toBe(true);
@@ -655,7 +766,7 @@ test('all ideas fits long data in desktop and mobile dialogs while the three-car
       expect(mainGeometry.touch, locale + ' ' + width).toBe(true);
       if (width >= 1280) expect(mainGeometry.essentials, locale + ' ' + width).toBe(true);
       await expect(page.locator('#community-feed-list > *')).toHaveCount(3);
-      if ([1366, 390].includes(width)) await page.screenshot({ path: testInfo.outputPath('ideas-main-' + locale + '-' + width + '.png'), fullPage: width < 800 });
+      if ([1366, 1440, 390].includes(width)) await page.screenshot({ path: testInfo.outputPath('ideas-main-' + locale + '-' + width + '.png'), fullPage: width < 800 });
       await page.locator('#open-ideas').click();
       await expect(page.locator('#ideas-list > *')).toHaveCount(24);
       const modalGeometry = await page.locator('#ideas-dialog').evaluate(dialog => {
@@ -665,14 +776,18 @@ test('all ideas fits long data in desktop and mobile dialogs while the three-car
         const buttons = [...dialog.querySelectorAll('button,select')].filter(element => element.getClientRects().length);
         return { inside: rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight + 1,
           noOverflow: dialog.scrollWidth <= dialog.clientWidth + 1 && panel.scrollWidth <= panel.clientWidth + 1,
-          scrolls: panel.scrollHeight > panel.clientHeight, columns: getComputedStyle(list).gridTemplateColumns.split(' ').length,
+          scrolls: panel.scrollHeight > panel.clientHeight,
+          nativeTable: list.tagName === 'TBODY' && [...list.children].every(row => row.tagName === 'TR' && row.cells.length === 2),
+          visibleRows: [...list.children].filter(row => { const bounds = row.getBoundingClientRect();
+            return bounds.top >= panel.getBoundingClientRect().top + 36 && bounds.bottom <= panel.getBoundingClientRect().bottom; }).length,
           targets: buttons.every(element => { const target = element.getBoundingClientRect(); return target.width >= 44 && target.height >= 44; }) };
       });
       expect(modalGeometry.inside, locale + ' ' + width).toBe(true);
       expect(modalGeometry.noOverflow, locale + ' ' + width).toBe(true);
       expect(modalGeometry.scrolls, locale + ' ' + width).toBe(true);
       expect(modalGeometry.targets, locale + ' ' + width).toBe(true);
-      expect(modalGeometry.columns).toBe(width >= 1360 ? 4 : width >= 1280 ? 3 : 1);
+      expect(modalGeometry.nativeTable).toBe(true);
+      expect(modalGeometry.visibleRows, locale + ' ' + width).toBeGreaterThanOrEqual(width >= 1280 ? 7 : 4);
       const lastRead = page.locator('#ideas-list .community-read').last();
       await lastRead.scrollIntoViewIfNeeded();
       expect(await page.locator('.ideas-dialog-footer').evaluate(element => element.getBoundingClientRect().bottom <= innerHeight + 1)).toBe(true);
@@ -681,7 +796,7 @@ test('all ideas fits long data in desktop and mobile dialogs while the three-car
       await page.keyboard.press('Escape');
       await expect(lastRead).toBeFocused();
       await page.locator('#ideas-panel').evaluate(element => { element.scrollTop = 0; });
-      if ([1366, 390].includes(width)) await page.locator('#ideas-dialog').screenshot({ path: testInfo.outputPath('ideas-dialog-' + locale + '-' + width + '.png') });
+      if ([1366, 1440, 390].includes(width)) await page.locator('#ideas-dialog').screenshot({ path: testInfo.outputPath('ideas-dialog-' + locale + '-' + width + '.png') });
       await page.locator('#close-ideas').click();
       await expect(page.locator('#open-ideas')).toBeFocused();
     }
@@ -1095,7 +1210,7 @@ test('long public names and large scores fit every desktop frame and narrow rank
 
 test('blank preview and empty feeds remain honest in the compact desktop and mobile layout', async ({ page }, testInfo) => {
   const state = await fixture(page);
-  await expect(page.locator('#community-feed-status')).toContainText('No ideas yet');
+  await expect(page.locator('#community-feed-status')).toHaveText('No ideas open for voting right now.');
   await expect(page.locator('#community-feed-list > *')).toHaveCount(0);
   await expect(page.locator('#leaderboard-list > *')).toHaveCount(0);
   await expect(page.locator('#my-contribution')).toBeHidden();
@@ -1129,7 +1244,7 @@ test('blank preview and empty feeds remain honest in the compact desktop and mob
     await page.screenshot({ path: testInfo.outputPath('community-empty-' + width + '.png'), fullPage: true });
   }
   await page.locator('#language-select').selectOption('ko');
-  await expect(page.locator('#community-feed-status')).toContainText('아직 공개된 제안');
+  await expect(page.locator('#community-feed-status')).toHaveText('지금 투표할 수 있는 의견이 없습니다.');
   await expect(page.locator('#game-preview-canvas')).toHaveAttribute('aria-label', /아직 플레이할 게임/);
   await expect(page.locator('.preview-ratio')).toHaveAttribute('aria-label', '가로 9, 세로 16 비율');
   await expect(page.locator('#submit-button')).toBeEnabled();
@@ -1299,6 +1414,8 @@ test('a failed community login preserves the draft and still never casts a vote 
 test('a waiting idea with no voting round stays readable without opening a vote budget', async ({ page }) => {
   const idea = sharedIdea(1, { votingOpen: false, roundId: null });
   const state = await fixture(page, { session: structuredClone(accountA), ideas: [idea], round: null });
+  await expect(page.locator('#community-feed-list > *')).toHaveCount(0);
+  await page.locator('#community-include-closed').check();
   await expect(page.locator('.community-body')).toHaveText(idea.body);
   await expect(voteButton(page)).toBeDisabled();
   await expect(page.locator('#community-vote-note')).toContainText('not open');
@@ -1325,19 +1442,26 @@ test('a vote revision conflict refreshes the current source without repeating a 
   expect(state.quota.remaining).toBe(3);
 });
 
-test('unknown vote results retain the same request through a read outage and rotated CSRF token', async ({ page }) => {
+test('unknown vote results retain the same request through history filters, a read outage and rotated CSRF token', async ({ page }) => {
   const state = await fixture(page, { session: structuredClone(accountA), ideas: [sharedIdea()], failAfterNextCommit: true });
+  await page.locator('#prompt').fill('Draft kept while checking the original vote');
   await voteButton(page).click();
   await expect(page.locator('#community-retry')).toBeEnabled();
   await expect(page.locator('#community-feedback-message')).toContainText("Couldn't confirm");
   expect(state.effects).toHaveLength(1);
   state.publicFailure = true;
   state.meFailure = true;
+  await page.locator('#community-include-closed').check();
+  await expect(page.locator('#community-feed-panel')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#community-retry')).toBeEnabled();
   await refreshCommunity(page);
   await expect(page.locator('#community-retry')).toBeEnabled();
   await expect(page.locator('#community-feedback-message')).toContainText("Couldn't confirm");
   state.publicFailure = false;
   state.meFailure = false;
+  await page.locator('#community-include-closed').uncheck();
+  await expect(page.locator('#community-feed-panel')).toHaveAttribute('aria-busy', 'false');
+  expect(state.actions).toHaveLength(1);
   state.session.csrfToken = 'csrf-a-rotated';
   const reads = state.sessionReads;
   await page.locator('#community-retry').click();
@@ -1350,6 +1474,8 @@ test('unknown vote results retain the same request through a read outage and rot
   expect(new Set(state.actions.map(action => JSON.stringify(action.payload))).size).toBe(1);
   expect(state.actions.map(action => action.csrf)).toEqual(['csrf-a', 'csrf-a', 'csrf-a-rotated']);
   expect(state.effects).toHaveLength(1);
+  await expect(page.locator('#community-include-closed')).not.toBeChecked();
+  await expect(page.locator('#prompt')).toHaveValue('Draft kept while checking the original vote');
 });
 
 test('community owner mismatch hides both accounts private data until the session is synchronized', async ({ page }) => {
@@ -1640,6 +1766,7 @@ for (const scenario of [
       ...(scenario.own ? {} : { round: null,
         collection: { id: 'pending', status: 'open', closesAt: null, releaseAt: null, initialClosed: true } }),
     });
+    if (!scenario.own) await page.locator('#community-include-closed').check();
     await page.locator('#prompt').fill(body);
     await expect(page.locator('#admin-link')).toHaveAttribute('href', '/master');
     const errors = [];

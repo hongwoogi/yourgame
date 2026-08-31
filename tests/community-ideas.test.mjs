@@ -5,6 +5,7 @@ import { createApiHandler } from '../server/app.mjs';
 import { createCommunityStore } from '../server/community-store.mjs';
 import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
 import { INITIAL_CUTOFF } from '../server/config.mjs';
+import { dailyCycleAt } from '../server/daily-schedule.mjs';
 import { apiErrorMessage } from '../public/error-messages.js';
 import { backendFixture, request, signedHeaders, errorCode, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
@@ -32,10 +33,12 @@ async function create(f, author, body = 'A new fantasy puzzle idea.') {
   const proposal = (await f.store.createProposal(author.session.user.id, { body, requestId: randomUUID() })).proposal;
   const state = await f.store.community.privateState(author.session);
   const publication = state.publications.find(row => row.proposalId === proposal.id);
+  const cycle = proposal.roundId === 'pending' ? dailyCycleAt(Date.parse(proposal.createdAt)) : null;
   return { author, proposal, item: { id: publication.publicId, body: proposal.body,
     proposalRevision: proposal.revision, publicationRevision: publication.publicationRevision,
     author: { id: state.profile.id, alias: state.profile.alias }, createdAt: proposal.createdAt,
-    upvotes: 0, downvotes: 0, votingOpen: proposal.roundId === 'initial', roundId: proposal.roundId === 'initial' ? 'initial' : null } };
+    upvotes: 0, downvotes: 0, votingOpen: f.now() < (cycle ? Date.parse(cycle.closesAt) : INITIAL_CUTOFF),
+    roundId: proposal.roundId === 'initial' ? 'initial' : cycle.cycleId } };
 }
 
 async function populate(f, amount) {
@@ -89,7 +92,7 @@ test('an empty ideas page has complete default context without creating a partic
   const response = await request(f.handler, '/api/community?view=ideas', { origin: null });
   assert.equal(response.status, 200);
   assert.deepEqual(response.body, {
-    items: [], sort: 'recent', offset: 0, limit: 24, total: 0, hasMore: false,
+    items: [], sort: 'recent', offset: 0, limit: 24, total: 0, hasMore: false, includeClosed: false,
     round: { id: 'initial', status: 'open', closesAt: new Date(INITIAL_CUTOFF).toISOString(), limit: 3 },
     publicationPolicy: { version: 'public-default-v1', defaultPublic: true }, serverTime: new Date(f.now()).toISOString(),
   });
@@ -243,6 +246,8 @@ test('invalid ideas query controls are rejected before opening storage and never
     'view=ideas&offset=1.0', 'view=ideas&offset=1e2', 'view=ideas&offset=9007199254740992',
     'view=ideas&limit=', 'view=ideas&limit=0', 'view=ideas&limit=51', 'view=ideas&limit=01', 'view=ideas&limit=2.4',
     'view=ideas&ownerId=other', 'view=ideas&safety=approved', 'view=ideas&includeHidden=true', 'view=ideas&filter=all',
+    'view=ideas&includeClosed=', 'view=ideas&includeClosed=true', 'view=ideas&includeClosed=2',
+    'view=ideas&includeClosed=1&includeClosed=0', 'view=ideas&includeClosed=1&%69ncludeClosed=1',
     'view=leaderboard&sort=recent', 'view=public&sort=recent', 'sort=recent', `view=ideas&sort=${'x'.repeat(256)}`]) {
     const response = await request(handler, `/api/community?${query}`, { origin: null });
     assert.equal(response.status, 422);
@@ -254,7 +259,8 @@ test('invalid ideas query controls are rejected before opening storage and never
   assert.equal((await request(handler, '/api/community?view=ideas', { origin: 'https://outside.invalid' })).status, 403);
   assert.equal(opened, 0);
   for (const input of [{ sort: '' }, { sort: 'RECENT' }, { sort: {} }, { offset: -1 }, { offset: 0.1 },
-    { offset: Number.MAX_SAFE_INTEGER + 1 }, { offset: '0' }, { limit: 0 }, { limit: 51 }, { limit: '24' }]) {
+    { offset: Number.MAX_SAFE_INTEGER + 1 }, { offset: '0' }, { limit: 0 }, { limit: 51 }, { limit: '24' },
+    { includeClosed: '1' }, { includeClosed: 1 }, { includeClosed: null }]) {
     await assert.rejects(f.store.community.publicIdeas(input), errorCode('INVALID_COMMUNITY_INPUT'));
   }
 });
@@ -272,7 +278,7 @@ test('page items, total and clock reflect one snapshot across a queued cutoff an
       if (intercepted) return target.batch(statements, mode);
       intercepted = true;
       await f.setTime(INITIAL_CUTOFF);
-      later = await create(f, laterAuthor, 'A proposal for the next round, without invented voting dates.');
+      later = await create(f, laterAuthor, 'A proposal for the next bounded daily round.');
       const result = await target.batch(statements, mode);
       // A change committed after this read cannot splice a new total/clock
       // into its earlier rows. It must appear on the subsequent page request.
@@ -282,16 +288,18 @@ test('page items, total and clock reflect one snapshot across a queued cutoff an
     };
   } });
   const store = createCommunityStore(client, { databaseClockSql: TEST_CLOCK_SQL });
-  const beforeHide = await store.publicIdeas({ limit: 1 });
+  const beforeHide = await store.publicIdeas({ limit: 1, includeClosed: true });
+  assert.equal(beforeHide.includeClosed, true);
   assert.equal(beforeHide.total, 2);
   assert.equal(beforeHide.items.length, 1);
   assert.equal(beforeHide.hasMore, true);
   assert.equal(beforeHide.items[0].id, later.item.id);
-  assert.equal(beforeHide.items[0].roundId, null);
-  assert.equal(beforeHide.items[0].votingOpen, false);
-  assert.equal(beforeHide.round.status, 'closed');
+  assert.equal(beforeHide.items[0].roundId, 'daily-2026-09-01');
+  assert.equal(beforeHide.items[0].votingOpen, true);
+  assert.deepEqual(beforeHide.round, { id: 'daily-2026-09-01', status: 'open', closesAt: '2026-09-01T14:00:00.000Z', limit: 3 });
   assert.equal(beforeHide.serverTime, new Date(INITIAL_CUTOFF).toISOString());
-  const afterHide = await store.publicIdeas();
+  const afterHide = await store.publicIdeas({ includeClosed: true });
+  assert.equal(afterHide.includeClosed, true);
   assert.equal(afterHide.total, 1);
   assert.equal(afterHide.items.length, 1);
   assert.equal(afterHide.hasMore, false);
@@ -330,15 +338,20 @@ test('voting on an idea outside the main six retains ownership, CSRF, idempotenc
   assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, 0);
 });
 
-test('intentional service closure keeps ideas readable with voting disabled, while missing readiness is a localized error', async t => {
+test('service closure or participation pause exposes ideas only through history, while missing readiness is a localized error', async t => {
   const f = await fixture(t);
   await create(f, await f.login('paused-ideas-author'));
-  for (const mode of ['maintenance', 'ended']) {
-    await f.client.execute({ sql: 'UPDATE service_control SET mode = ?, proposals_enabled = 0, development_enabled = 0, revision = revision + 1', args: [mode] });
+  for (const [mode, proposalsEnabled] of [['maintenance', 1], ['ended', 0], ['active', 0]]) {
+    await f.client.execute({ sql: 'UPDATE service_control SET mode = ?, proposals_enabled = ?, development_enabled = 0, revision = revision + 1', args: [mode, proposalsEnabled] });
     const response = await request(f.handler, '/api/community?view=ideas', { origin: null });
     assert.equal(response.status, 200);
-    assert.equal(response.body.total, 1);
-    assert.equal(response.body.items[0].votingOpen, false);
+    assert.equal(response.body.total, 0);
+    assert.deepEqual(response.body.items, []);
+    const history = await request(f.handler, '/api/community?view=ideas&includeClosed=1', { origin: null });
+    assert.equal(history.status, 200);
+    assert.equal(history.body.includeClosed, true);
+    assert.equal(history.body.total, 1);
+    assert.equal(history.body.items[0].votingOpen, false);
   }
   await f.client.execute("UPDATE community_public_policy SET state = 'inactive'");
   for (const locale of ['en', 'ko']) {

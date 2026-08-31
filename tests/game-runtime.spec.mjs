@@ -182,7 +182,7 @@ test('language changes, writing a proposal, explicit resume, and reload preserve
   expect(state.mutations).toEqual([]);
 });
 
-test('opaque game frame cannot read parent/session storage or connect to APIs or the network', async ({ page, context }) => {
+test('opaque game frame cannot read parent/session storage or connect to APIs or the network', async ({ page, context, baseURL }) => {
   const state = await fixture(context);
   await openMain(page);
   await readyFrame(page);
@@ -216,12 +216,12 @@ test('opaque game frame cannot read parent/session storage or connect to APIs or
   expect(state.externalProbes).toEqual([]);
   const originalUrl = page.url();
   const originalPages = context.pages().length;
-  const navigation = await frame.evaluate(() => {
+  const navigation = await frame.evaluate(origin => {
     let topNavigation;
-    try { top.location.href = 'http://localhost:3000/?isolationProbe=navigation'; topNavigation = 'allowed'; }
+    try { top.location.href = new URL('/?isolationProbe=navigation', origin).href; topNavigation = 'allowed'; }
     catch (error) { topNavigation = error.name; }
-    return { topNavigation, popup: window.open('http://localhost:3000/?isolationProbe=popup') === null };
-  });
+    return { topNavigation, popup: window.open(new URL('/?isolationProbe=popup', origin).href) === null };
+  }, new URL(baseURL).origin);
   expect(navigation).toEqual({ topNavigation: 'SecurityError', popup: true });
   expect(page.url()).toBe(originalUrl);
   expect(context.pages()).toHaveLength(originalPages);

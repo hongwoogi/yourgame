@@ -251,12 +251,12 @@ test('confirmed exponent scoring preserves negative and half-point awards end to
   assert.equal((await f.store.contribution.privateSummary(f.members.get('supporter-a').session)).points, '-0.5');
 });
 
-test('a plan cannot activate its own formula or replace the trusted registered scoring policy', async t => {
+test('the confirmed weighted default requires actual proof while disabled or mismatched policies cannot issue', async t => {
   const f = await fixture(t);
   const before = await effects(f.client);
-  const unconfirmed = createContributionSettlementStore(f.client, { databaseClockSql: TEST_CLOCK_SQL });
-  // Explicit private simulations remain useful while the operator is choosing
-  // a policy. They verify evidence but do not activate a scoring policy.
+  const unconfirmed = createContributionSettlementStore(f.client, { databaseClockSql: TEST_CLOCK_SQL, scoringPolicy: null });
+  // An explicitly disabled issuer still permits private simulations. A
+  // calculator result never replaces the configured policy or release proof.
   assert.equal((await unconfirmed.preview(f.plan)).awardable, false);
   await assert.rejects(unconfirmed.settle(f.plan), errorCode('CONTRIBUTION_POLICY_UNCONFIRMED'));
   const alternative = await f.settlements.preview({ ...f.plan, formula: 'exponent' });
@@ -270,6 +270,15 @@ test('a plan cannot activate its own formula or replace the trusted registered s
     }).settle(f.plan), errorCode('CONTRIBUTION_POLICY_MISMATCH'));
   }
   assert.deepEqual(await effects(f.client), before);
+  const defaults = createContributionSettlementStore(f.client, { databaseClockSql: TEST_CLOCK_SQL });
+  await assert.rejects(defaults.settle({ ...f.plan, formula: 'exponent' }), errorCode('CONTRIBUTION_POLICY_MISMATCH'));
+  await assert.rejects(defaults.settle({ ...f.plan, reviewId: randomUUID() }), errorCode('CONTRIBUTION_PUBLICATION_UNVERIFIED'));
+  assert.deepEqual(await effects(f.client), before);
+  const issued = await defaults.settle(f.plan);
+  assert.equal(issued.issuedCount, 2);
+  assert.equal(issued.totalPoints, '113.5');
+  assert.equal(issued.pointsIssued, true);
+  assert.equal((await effects(f.client)).receipts[0].scoring_policy_version, 'contribution-weighted-v1');
 });
 
 test('malformed fulfillment plans and caller-written approval or point fields never mutate the ledger', async t => {

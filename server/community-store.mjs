@@ -3,10 +3,12 @@ import { ApiError } from './errors.mjs';
 import { writeBatch } from './database.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { bodyDigest } from './safety-store.mjs';
+import { DAY_MS, INITIAL_CUTOFF, pendingProposalClosesAtSql } from './daily-schedule.mjs';
 import {
   PUBLICATION_POLICY_VERSION, PUBLICATION_POLICY_DTO, COMMUNITY_DEFAULT_READY_SQL,
   PUBLIC_PUBLICATIONS_SQL as PUBLICATIONS, PUBLIC_VOTES_SQL as VOTES, COMMUNITY_VOTE_LIMIT,
   COMMUNITY_PROFILE_NAMES_READY_SQL, profileDisplayAlias,
+  COMMUNITY_DAILY_ROUNDS_READY_SQL, currentVotingRoundIdSql, proposalVotingRoundIdSql,
 } from './community-policy.mjs';
 import { normalizeProfileAlias } from '../public/profile-policy.js';
 
@@ -36,6 +38,7 @@ function closed() { return new ApiError(409, 'VOTING_CLOSED', 'Voting is unavail
 
 const CTE = `WITH ${PUBLICATIONS}, ${VOTES}`;
 const PARTICIPATION = `EXISTS (SELECT 1 FROM service_control WHERE id = 1 AND mode = 'active' AND proposals_enabled = 1)`;
+const COMMUNITY_READY = `(${COMMUNITY_DEFAULT_READY_SQL} AND ${COMMUNITY_DAILY_ROUNDS_READY_SQL})`;
 
 function assertService(row) {
   if (!row) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Service controls are unavailable.');
@@ -63,19 +66,33 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const guard = live(session);
     const result = await writeBatch(client, [actor(session), {
       sql: `INSERT INTO community_profiles(user_id, public_id, alias, created_at, updated_at)
-        SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} WHERE ${guard.sql} AND ${COMMUNITY_DEFAULT_READY_SQL}
+        SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} WHERE ${guard.sql} AND ${COMMUNITY_READY}
         ON CONFLICT(user_id) DO NOTHING`,
       args: [session?.user?.id || '', randomUUID(), `Player-${randomBytes(6).toString('hex')}`, ...guard.args],
     }, { sql: 'SELECT * FROM community_profiles WHERE user_id = ?', args: [session?.user?.id || ''] },
-    `SELECT ${COMMUNITY_DEFAULT_READY_SQL} AS ready`]);
+    `SELECT ${COMMUNITY_READY} AS ready`]);
     assertActor(result[0].rows[0]);
     assertReady(result[3].rows[0]);
     return result[2].rows[0];
   }
 
-  const roundStatement = () => ({ sql: `SELECT r.*, s.mode, s.proposals_enabled, ${databaseClockSql} AS now_ms,
-      ${COMMUNITY_DEFAULT_READY_SQL} AS ready
-    FROM service_control s LEFT JOIN community_rounds r ON r.id = 'initial' WHERE s.id = 1`, args: [] });
+  const dailyClose = pendingProposalClosesAtSql('clock.now_ms');
+  const roundContext = `snapshot_clock AS MATERIALIZED (SELECT ${databaseClockSql} AS now_ms),
+    current_round AS (
+      SELECT ${currentVotingRoundIdSql()} AS id,
+        CASE WHEN clock.now_ms < ${INITIAL_CUTOFF} THEN r.opens_at ELSE ${dailyClose} - ${DAY_MS} END AS opens_at,
+        CASE WHEN clock.now_ms < ${INITIAL_CUTOFF} THEN r.closes_at ELSE ${dailyClose} END AS closes_at,
+        s.mode, s.proposals_enabled, clock.now_ms,
+        (${COMMUNITY_READY} AND CASE WHEN clock.now_ms < ${INITIAL_CUTOFF}
+          THEN r.id = 'initial' AND r.proposal_round_id = 'initial'
+          ELSE r.id IS NULL OR (r.proposal_round_id = r.id AND r.opens_at = ${dailyClose} - ${DAY_MS}
+            AND r.closes_at = ${dailyClose}) END) AS ready
+      FROM service_control s CROSS JOIN snapshot_clock clock
+      LEFT JOIN community_rounds r ON r.id = ${currentVotingRoundIdSql()} WHERE s.id = 1
+    )`;
+  // An empty future collection can have schedule context without a persisted
+  // row. A real proposal insert creates its immutable round; reads never do.
+  const roundStatement = () => ({ sql: `WITH ${roundContext} SELECT * FROM current_round`, args: [] });
   function roundView(row) {
     if (!row?.id) return null;
     const now = Number(row.now_ms);
@@ -85,7 +102,8 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
   function voteQuota(row, used) {
     const round = roundView(row);
     return { roundId: round?.id ?? null, limit: COMMUNITY_VOTE_LIMIT, used,
-      remaining: round?.status === 'open' ? Math.max(0, COMMUNITY_VOTE_LIMIT - used) : 0, closesAt: round?.closesAt ?? null };
+      remaining: round?.status === 'open' && row.mode === 'active' && Number(row.proposals_enabled) === 1
+        ? Math.max(0, COMMUNITY_VOTE_LIMIT - used) : 0, closesAt: round?.closesAt ?? null };
   }
   function idea(row) {
     const alias = profileDisplayAlias(row.alias, row.custom_alias);
@@ -95,79 +113,78 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
       upvotes: Number(row.upvotes), downvotes: Number(row.downvotes), votingOpen: Number(row.voting_open) === 1, roundId: row.voting_round_id ?? null };
   }
 
-  async function publicFeed() {
-    const select = `${CTE}, counts AS (SELECT public_id,
-      SUM(CASE WHEN direction = 'up' THEN 1 ELSE 0 END) AS upvotes,
-      SUM(CASE WHEN direction = 'down' THEN 1 ELSE 0 END) AS downvotes FROM valid_votes GROUP BY public_id)
-      SELECT ep.*, pn.alias AS custom_alias, COALESCE(c.upvotes, 0) AS upvotes, COALESCE(c.downvotes, 0) AS downvotes,
-        r.id AS voting_round_id, (${PARTICIPATION} AND ${databaseClockSql} >= r.opens_at AND ${databaseClockSql} < r.closes_at) AS voting_open
-      FROM eligible_publications ep LEFT JOIN counts c ON c.public_id = ep.public_id
-      LEFT JOIN community_profile_names pn ON pn.user_id = ep.author_user_id
-      LEFT JOIN community_rounds r ON r.proposal_round_id = ep.proposal_round_id`;
-    const result = await client.batch([
-      roundStatement(),
-      `${select} ORDER BY ep.proposal_created_at DESC, ep.public_id DESC LIMIT 6`,
-      `${select} ORDER BY (COALESCE(c.upvotes, 0) - COALESCE(c.downvotes, 0)) DESC,
-        COALESCE(c.upvotes, 0) DESC, ep.proposal_created_at DESC, ep.public_id DESC LIMIT 6`,
-    ], 'read');
-    if (!result[0].rows[0]) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
-    assertReady(result[0].rows[0]);
-    return { recent: result[1].rows.map(idea), popular: result[2].rows.map(idea), round: roundView(result[0].rows[0]),
-      publicationPolicy: PUBLICATION_POLICY_DTO, serverTime: iso(result[0].rows[0].now_ms) };
-  }
+  const ideaOrder = (sort, prefix = '') => sort === 'popular'
+    ? `(${prefix}upvotes - ${prefix}downvotes) DESC, ${prefix}upvotes DESC,
+        ${prefix}proposal_created_at DESC, ${prefix}public_id DESC`
+    : `${prefix}proposal_created_at DESC, ${prefix}public_id DESC`;
 
-  async function publicIdeas({ sort = 'recent', offset = 0, limit = 24 } = {}) {
-    if (!['recent', 'popular'].includes(sort) || !Number.isSafeInteger(offset) || offset < 0
-        || !Number.isInteger(limit) || limit < 1 || limit > 50) throw invalid();
-    const order = prefix => sort === 'popular'
-      ? `(${prefix}upvotes - ${prefix}downvotes) DESC, ${prefix}upvotes DESC,
-          ${prefix}proposal_created_at DESC, ${prefix}public_id DESC`
-      : `${prefix}proposal_created_at DESC, ${prefix}public_id DESC`;
-    // One read statement binds visibility, vote totals, pagination and context
-    // to one snapshot. Materializing the clock also keeps round/voting state
-    // consistent at the exact cutoff. The context row survives an empty page.
-    const result = await client.batch([{
-      sql: `WITH snapshot_clock AS MATERIALIZED (SELECT ${databaseClockSql} AS now_ms),
-        ${PUBLICATIONS}, ${VOTES},
+  function ideasStatement({ sort = 'recent', offset = 0, limit = 24, includeClosed, feed = false }) {
+    // Feed, pagination, total and current round share one clock and database
+    // snapshot, so a read at 23:00 cannot mix the old and new collections.
+    return { sql: `WITH ${roundContext}, ${PUBLICATIONS}, ${VOTES},
         vote_counts AS (SELECT public_id,
           SUM(CASE WHEN direction = 'up' THEN 1 ELSE 0 END) AS upvotes,
           SUM(CASE WHEN direction = 'down' THEN 1 ELSE 0 END) AS downvotes FROM valid_votes GROUP BY public_id),
         visible_ideas AS (
           SELECT ep.*, pn.alias AS custom_alias, COALESCE(c.upvotes, 0) AS upvotes, COALESCE(c.downvotes, 0) AS downvotes,
             r.id AS voting_round_id,
-            (${PARTICIPATION} AND clock.now_ms >= r.opens_at AND clock.now_ms < r.closes_at) AS voting_open
-          FROM eligible_publications ep CROSS JOIN snapshot_clock clock
+            (${PARTICIPATION} AND collection.now_ms >= r.opens_at AND collection.now_ms < r.closes_at) AS voting_open
+          FROM eligible_publications ep CROSS JOIN current_round collection
           LEFT JOIN vote_counts c ON c.public_id = ep.public_id
           LEFT JOIN community_profile_names pn ON pn.user_id = ep.author_user_id
-          LEFT JOIN community_rounds r ON r.proposal_round_id = ep.proposal_round_id
-        ), page_items AS (SELECT * FROM visible_ideas ORDER BY ${order('')} LIMIT ? OFFSET ?),
+          LEFT JOIN community_rounds r ON r.id = ep.voting_collection_id AND r.proposal_round_id = r.id
+          WHERE ${includeClosed ? 'true' : `ep.voting_collection_id = collection.id AND ${PARTICIPATION}
+            AND collection.now_ms >= r.opens_at AND collection.now_ms < r.closes_at`}
+        ), ${feed ? `ranked_ideas AS (SELECT *, ROW_NUMBER() OVER (ORDER BY ${ideaOrder('recent')}) AS recent_rank,
+          ROW_NUMBER() OVER (ORDER BY ${ideaOrder('popular')}) AS popular_rank FROM visible_ideas),
+          page_items AS (SELECT * FROM ranked_ideas WHERE recent_rank <= 6 OR popular_rank <= 6)`
+        : `page_items AS (SELECT * FROM visible_ideas ORDER BY ${ideaOrder(sort)} LIMIT ? OFFSET ?)`},
         page_context AS (
-          SELECT r.id AS collection_id, r.opens_at AS collection_opens_at, r.closes_at AS collection_closes_at,
-            clock.now_ms, ${COMMUNITY_DEFAULT_READY_SQL} AS ready,
-            (SELECT COUNT(*) FROM eligible_publications) AS total
-          FROM service_control s CROSS JOIN snapshot_clock clock
-          LEFT JOIN community_rounds r ON r.id = 'initial' WHERE s.id = 1
+          SELECT id AS collection_id, opens_at AS collection_opens_at, closes_at AS collection_closes_at,
+            now_ms, ready, (SELECT COUNT(*) FROM visible_ideas) AS total FROM current_round
         )
         SELECT context.*, page.* FROM page_context context LEFT JOIN page_items page ON true
-        ORDER BY ${order('page.')}`,
-      args: [limit, offset],
-    }], 'read');
-    const rows = result[0].rows;
-    const context = rows[0];
+        ${feed ? '' : `ORDER BY ${ideaOrder(sort, 'page.')}`}`,
+      args: feed ? [] : [limit, offset] };
+  }
+
+  function publicContext(context) {
     if (!context || !Number.isSafeInteger(Number(context.total)) || Number(context.total) < 0) {
       throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
     }
     assertReady(context);
-    const total = Number(context.total);
-    return { items: rows.filter(row => row.public_id != null).map(idea), sort, offset, limit, total,
-      hasMore: offset < total && total - offset > limit,
-      round: roundView({ id: context.collection_id, opens_at: context.collection_opens_at,
-        closes_at: context.collection_closes_at, now_ms: context.now_ms }),
+    return { round: roundView({ id: context.collection_id, opens_at: context.collection_opens_at,
+      closes_at: context.collection_closes_at, now_ms: context.now_ms }),
       publicationPolicy: PUBLICATION_POLICY_DTO, serverTime: iso(context.now_ms) };
   }
 
+  async function publicFeed({ includeClosed = false } = {}) {
+    if (typeof includeClosed !== 'boolean') throw invalid();
+    const result = await client.batch([ideasStatement({ includeClosed, feed: true })], 'read');
+    const rows = result[0].rows;
+    const context = publicContext(rows[0]);
+    const items = rows.filter(row => row.public_id != null);
+    return { recent: items.filter(row => Number(row.recent_rank) <= 6).sort((a, b) => a.recent_rank - b.recent_rank).map(idea),
+      popular: items.filter(row => Number(row.popular_rank) <= 6).sort((a, b) => a.popular_rank - b.popular_rank).map(idea),
+      includeClosed, ...context };
+  }
+
+  async function publicIdeas({ sort = 'recent', offset = 0, limit = 24, includeClosed = false } = {}) {
+    if (!['recent', 'popular'].includes(sort) || !Number.isSafeInteger(offset) || offset < 0
+        || !Number.isInteger(limit) || limit < 1 || limit > 50 || typeof includeClosed !== 'boolean') throw invalid();
+    const result = await client.batch([ideasStatement({ sort, offset, limit, includeClosed })], 'read');
+    const rows = result[0].rows;
+    const context = rows[0];
+    const responseContext = publicContext(context);
+    const total = Number(context.total);
+    return { items: rows.filter(row => row.public_id != null).map(idea), sort, offset, limit, total, includeClosed,
+      hasMore: offset < total && total - offset > limit,
+      ...responseContext };
+  }
+
   async function privateState(session) {
-    await ensureProfile(session);
+    // Active public-default enrollment creates profiles on the authenticated
+    // user write. This GET must not create missing identities or round rows.
     const userId = session?.user?.id || '';
     const result = await client.batch([
       actor(session),
@@ -242,7 +259,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const payloadHash = hash(canonical(input));
     const eventId = randomUUID();
     const guard = live(session);
-    const common = `${guard.sql} AND ${COMMUNITY_DEFAULT_READY_SQL}
+    const common = `${guard.sql} AND ${COMMUNITY_READY}
       AND NOT EXISTS(SELECT 1 FROM community_requests WHERE user_id = ? AND request_id = ?)`;
     const commonArgs = [...guard.args, userId, requestId];
     const lookup = { sql: 'SELECT * FROM community_requests WHERE user_id = ? AND request_id = ?', args: [userId, requestId] };
@@ -311,7 +328,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
           ${databaseClockSql} AS now_ms
         FROM community_publications cp JOIN proposals p ON p.id = cp.proposal_id
         LEFT JOIN eligible_publications ep ON ep.public_id = cp.public_id
-        LEFT JOIN community_rounds cr ON cr.proposal_round_id = p.round_id
+        LEFT JOIN community_rounds cr ON cr.id = ${proposalVotingRoundIdSql()} AND cr.proposal_round_id = cr.id
         WHERE cp.public_id = ?`, args: [input.publicId] };
       if (input.direction === 'none') {
         primary = { sql: `UPDATE community_votes SET direction = 'none', revision = revision + 1, updated_at = ${databaseClockSql}
@@ -326,7 +343,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
           SELECT ?, cr.id, ep.public_id, ?, ep.proposal_revision, ep.revision, ep.body_hash, ep.policy_version,
             ep.safety_review_id, ep.safety_revision, ep.current_author_revision, COALESCE(va.revision, 1), ep.moderation_revision,
             COALESCE(old.revision, 0) + 1, ${databaseClockSql}, ${databaseClockSql}
-          FROM eligible_publications ep JOIN community_rounds cr ON cr.proposal_round_id = ep.proposal_round_id
+          FROM eligible_publications ep JOIN community_rounds cr ON cr.id = ep.voting_collection_id AND cr.proposal_round_id = cr.id
           LEFT JOIN member_access va ON va.user_id = ?
           LEFT JOIN community_votes old ON old.user_id = ? AND old.round_id = cr.id AND old.public_id = ep.public_id
           WHERE ep.public_id = ? AND ep.proposal_revision = ? AND ep.revision = ? AND ep.author_user_id != ? AND cr.id = ?

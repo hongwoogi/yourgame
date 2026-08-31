@@ -34,7 +34,7 @@ async function fixture(page, options = {}) {
     conflictOnce: false, loseNextReceipt: false, readFailure: false, safetyConflictOnce: false, ...options,
   };
   const reply = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store' }, body: JSON.stringify(body) });
-  await page.route('http://localhost:3000/**', async (route) => {
+  await page.route(new URL(test.info().project.use.baseURL).origin + '/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/master' || url.pathname === '/master/') return route.fulfill({ contentType: 'text/html', headers: { 'Cache-Control': 'no-store' }, body: html });

@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createCommunityStore } from '../server/community-store.mjs';
-import { prepareCommunityProfiles } from '../server/community-schema.mjs';
+import { activateCommunityPublicDefaults, prepareCommunityProfiles } from '../server/community-schema.mjs';
 import { normalizeProfileAlias, isValidProfileAlias, PROFILE_ALIAS_LIMITS } from '../public/profile-policy.js';
 import { backendFixture, request, signedHeaders, errorCode, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
@@ -95,24 +95,51 @@ test('rename changes only an explicit display name across every DTO and preserve
   await assert.rejects(f.client.execute("UPDATE community_events SET details_json = '{}'"), /immutable/);
 });
 
-test('the first private community read prepares a legacy missing profile before computing its global rank', async t => {
+test('a private read cannot create a missing legacy profile, while trusted backfill and active enrollment remain readable without writes', async t => {
   const f = await backendFixture(t, { publicDefaults: false });
   const person = await f.login('legacy-without-a-profile');
   assert.equal(await count(f.client, 'community_profiles'), 0);
   // Synthetic upgrade state: this account predates the policy/profile trigger.
-  // Do not invoke activation/backfill, which would conceal the missing-profile
-  // case that the lazy private read is required to handle.
+  // A read must not silently repair enrollment or invent a global rank.
   await f.client.execute("UPDATE community_public_policy SET state = 'active'");
-  const privateState = f.store.community.privateState;
-  f.store.community.privateState = async session => {
-    await new Promise(resolve => setImmediate(resolve));
-    return privateState(session);
+  const tables = (await f.client.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"))
+    .rows.map(row => row.name);
+  const snapshot = () => Promise.all(tables.map(table => rows(f.client, table)));
+  const before = await snapshot();
+  await f.client.execute('PRAGMA query_only = ON');
+  try {
+    const response = await request(f.handler, '/api/community?view=me', signedHeaders(person));
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error.code, 'COMMUNITY_SCHEMA_UNAVAILABLE');
+    assert.equal(response.body.profile, undefined);
+    assert.equal(response.body.contribution, undefined);
+    assert.equal(response.headers['set-cookie'], undefined);
+    assert.deepEqual(await snapshot(), before);
+  } finally { await f.client.execute('PRAGMA query_only = OFF'); }
+  assert.equal(await count(f.client, 'community_profiles'), 0);
+
+  const backfill = await activateCommunityPublicDefaults(f.client,
+    { expectedServiceRevision: 1, databaseClockSql: TEST_CLOCK_SQL });
+  assert.equal(backfill.profilesAdded, 1);
+  const assertReadableWithoutWrites = async people => {
+    const saved = await snapshot();
+    await f.client.execute('PRAGMA query_only = ON');
+    try {
+      for (const member of people) {
+        const response = await request(f.handler, '/api/community?view=me', signedHeaders(member));
+        assert.equal(response.status, 200);
+        assert.equal(response.body.profile.leaderboardVisible, true);
+        assert.deepEqual(response.body.contribution, { points: '0', adoptedCount: 0, rank: 1 });
+        assert.equal(response.headers['set-cookie'], undefined);
+      }
+      assert.deepEqual(await snapshot(), saved);
+    } finally { await f.client.execute('PRAGMA query_only = OFF'); }
   };
-  const response = await request(f.handler, '/api/community?view=me', signedHeaders(person));
-  assert.equal(response.status, 200);
-  assert.equal(response.body.profile.leaderboardVisible, true);
-  assert.deepEqual(response.body.contribution, { points: '0', adoptedCount: 0, rank: 1 });
+  await assertReadableWithoutWrites([person]);
   assert.equal(await count(f.client, 'community_profiles'), 1);
+  const enrolled = await f.login('new-active-profile');
+  assert.equal(await count(f.client, 'community_profiles'), 2);
+  await assertReadableWithoutWrites([person, enrolled]);
   assert.equal(await count(f.client, 'community_profile_names'), 0);
   assert.equal(await count(f.client, 'contribution_ledger'), 0);
 });

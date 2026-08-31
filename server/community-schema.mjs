@@ -1,10 +1,13 @@
 import { ApiError } from './errors.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { INITIAL_CUTOFF } from './config.mjs';
+import { DAY_MS, pendingProposalClosesAtSql } from './daily-schedule.mjs';
 import {
   PUBLICATION_POLICY_VERSION, COMMUNITY_DEFAULT_ACTIVE_SQL, COMMUNITY_DEFAULT_READY_SQL,
   COMMUNITY_DEFAULT_TRIGGER_NAMES, PUBLIC_PUBLICATIONS_SQL, PUBLIC_VOTES_SQL, COMMUNITY_VOTE_LIMIT,
   COMMUNITY_PROFILE_NAMES_VERSION, COMMUNITY_PROFILE_NAMES_READY_SQL,
+  COMMUNITY_DAILY_ROUNDS_VERSION, COMMUNITY_DAILY_ROUNDS_READY_SQL, COMMUNITY_DAILY_ROUND_TRIGGER_NAMES,
+  dailyVotingRoundIdSql,
 } from './community-policy.mjs';
 
 export const COMMUNITY_SCHEMA_VERSION = 1;
@@ -86,6 +89,7 @@ export async function initializeCommunityDatabase(client) {
   // existing production database uses prepareCommunityProfiles(), never a full
   // initialization or another public-default policy activation.
   await client.batch(COMMUNITY_PROFILE_NAMES_SCHEMA, 'write');
+  await client.batch(COMMUNITY_DAILY_ROUNDS_SCHEMA, 'write');
   await checkCommunitySchema(client);
 }
 
@@ -110,14 +114,17 @@ export async function checkCommunitySchema(client) {
       (SELECT revision FROM community_profile_names LIMIT 1) AS display_revision_check,
       ${COMMUNITY_PROFILE_NAMES_READY_SQL} AS display_names_ready,
       ${profileDefinitionsCompatibleSql} AS display_names_compatible,
+      ${COMMUNITY_DAILY_ROUNDS_READY_SQL} AS daily_rounds_ready,
+      ${dailyDefinitionsCompatibleSql} AS daily_rounds_compatible,
       (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
         'community_profile_identity_immutable', 'community_publication_identity_immutable',
         'community_events_no_update', 'community_events_no_delete', 'community_events_no_replace',
         'community_requests_no_update', 'community_requests_no_delete', 'community_requests_no_replace')) AS immutable_triggers`,
-      args: profileDefinitionArgs });
+      args: [...profileDefinitionArgs, ...dailyDefinitionArgs] });
     if (Number(result.rows[0]?.version) !== COMMUNITY_SCHEMA_VERSION || Number(result.rows[0]?.immutable_triggers) !== 8
         || Number(result.rows[0]?.defaults_version) !== 1 || !['inactive', 'active'].includes(result.rows[0]?.defaults_state)
-        || Number(result.rows[0]?.display_names_ready) !== 1 || Number(result.rows[0]?.display_names_compatible) !== 1) {
+        || Number(result.rows[0]?.display_names_ready) !== 1 || Number(result.rows[0]?.display_names_compatible) !== 1
+        || Number(result.rows[0]?.daily_rounds_ready) !== 1 || Number(result.rows[0]?.daily_rounds_compatible) !== 1) {
       throw new Error('Incomplete community storage.');
     }
   } catch {
@@ -204,6 +211,136 @@ export async function prepareCommunityProfiles(client, { expectedServiceRevision
   if (Number(checked?.ready) !== 1) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Display name preparation is incomplete.');
   return { prepared: true, schemaVersion: COMMUNITY_PROFILE_NAMES_VERSION, serviceRevision: expectedServiceRevision,
     displayNames: Number(checked.display_names), generatedAliasesChanged: false, pointsIssued: false };
+}
+
+function dailyRoundInsertSql(source) {
+  const closesAt = pendingProposalClosesAtSql('scope.created_at');
+  const roundId = dailyVotingRoundIdSql('scope.created_at');
+  return `INSERT INTO community_rounds(id, proposal_round_id, opens_at, closes_at)
+    SELECT DISTINCT ${roundId}, ${roundId}, ${closesAt} - ${DAY_MS}, ${closesAt}
+    FROM (${source}) scope WHERE true ON CONFLICT(id) DO NOTHING`;
+}
+
+const validDailyRoundSql = alias => `COALESCE((${alias}.id = ${alias}.proposal_round_id
+  AND typeof(${alias}.opens_at) = 'integer' AND typeof(${alias}.closes_at) = 'integer'
+  AND ${alias}.opens_at >= ${INITIAL_CUTOFF}
+  AND ${alias}.closes_at = ${pendingProposalClosesAtSql(`${alias}.opens_at`)}
+  AND ${alias}.opens_at = ${alias}.closes_at - ${DAY_MS}
+  AND ${alias}.id = ${dailyVotingRoundIdSql(`${alias}.opens_at`)}), 0)`;
+
+export const COMMUNITY_DAILY_ROUND_DDL = [
+  `CREATE TRIGGER IF NOT EXISTS community_daily_round_insert_check BEFORE INSERT ON community_rounds
+    WHEN NEW.id GLOB 'daily-*' OR NEW.proposal_round_id GLOB 'daily-*'
+    BEGIN SELECT RAISE(ABORT, 'invalid daily voting round') WHERE NOT ${validDailyRoundSql('NEW')}; END`,
+  `CREATE TRIGGER IF NOT EXISTS community_daily_round_no_update BEFORE UPDATE ON community_rounds
+    WHEN OLD.id GLOB 'daily-*' OR OLD.proposal_round_id GLOB 'daily-*'
+      OR NEW.id GLOB 'daily-*' OR NEW.proposal_round_id GLOB 'daily-*'
+    BEGIN SELECT RAISE(ABORT, 'daily voting round is immutable'); END`,
+  `CREATE TRIGGER IF NOT EXISTS community_daily_round_no_delete BEFORE DELETE ON community_rounds
+    WHEN OLD.id GLOB 'daily-*' OR OLD.proposal_round_id GLOB 'daily-*'
+    BEGIN SELECT RAISE(ABORT, 'daily voting round is immutable'); END`,
+  `CREATE TRIGGER IF NOT EXISTS community_daily_round_no_replace BEFORE INSERT ON community_rounds
+    WHEN (NEW.id GLOB 'daily-*' OR NEW.proposal_round_id GLOB 'daily-*')
+      AND EXISTS(SELECT 1 FROM community_rounds r WHERE (r.id = NEW.id OR r.proposal_round_id = NEW.proposal_round_id)
+        AND (r.id != NEW.id OR r.proposal_round_id != NEW.proposal_round_id
+          OR r.opens_at != NEW.opens_at OR r.closes_at != NEW.closes_at))
+    BEGIN SELECT RAISE(ABORT, 'daily voting round cannot be replaced'); END`,
+  `CREATE TRIGGER IF NOT EXISTS community_daily_proposal_round AFTER INSERT ON proposals WHEN NEW.round_id = 'pending'
+    BEGIN ${dailyRoundInsertSql('SELECT NEW.created_at AS created_at')}; END`,
+  // The old production cap embeds its original initial-only join. Keep it
+  // intact for rollback, and add the daily guard alongside it. New and old app
+  // versions therefore cannot create an unlimited permanent pending budget.
+  ...['INSERT', 'UPDATE'].map(operation => `CREATE TRIGGER IF NOT EXISTS community_daily_vote_${operation.toLowerCase()}_cap
+    BEFORE ${operation} ON community_votes WHEN NEW.round_id GLOB 'daily-*' AND NEW.direction IN ('up', 'down')
+    BEGIN SELECT RAISE(ABORT, 'community vote quota exceeded') WHERE
+      (WITH ${PUBLIC_PUBLICATIONS_SQL}, ${PUBLIC_VOTES_SQL} SELECT COUNT(*) FROM valid_votes
+        WHERE user_id = NEW.user_id AND round_id = NEW.round_id AND public_id != NEW.public_id) >= ${COMMUNITY_VOTE_LIMIT}; END`),
+];
+
+// SQLite omits IF NOT EXISTS from sqlite_master.sql. Match that single
+// leading clause only; changing case or whitespace inside a string literal
+// can change a trigger's eligibility condition and must never compare equal.
+const dailyDefinitionArgs = COMMUNITY_DAILY_ROUND_DDL.map(sql => sql.replace(
+  /^CREATE TRIGGER IF NOT EXISTS /, 'CREATE TRIGGER '));
+const dailyDefinitionsCompatibleSql = `NOT EXISTS(SELECT 1 FROM sqlite_master
+  WHERE lower(name) IN (${COMMUNITY_DAILY_ROUND_TRIGGER_NAMES.map(name => `'${name}'`).join(', ')}) AND NOT (
+    ${COMMUNITY_DAILY_ROUND_TRIGGER_NAMES.map(name => `(name = '${name}' COLLATE BINARY AND type = 'trigger'
+      AND COALESCE(sql, '') = ? COLLATE BINARY)`).join(' OR ')}))`;
+const dailyRowsCompatibleSql = `NOT EXISTS(SELECT 1 FROM community_rounds r
+  WHERE (r.id GLOB 'daily-*' OR r.proposal_round_id GLOB 'daily-*') AND NOT ${validDailyRoundSql('r')})`;
+
+function dailyRoundSeedSql(databaseClockSql = DATABASE_NOW_SQL) {
+  return dailyRoundInsertSql(`SELECT created_at FROM proposals WHERE round_id = 'pending'
+    UNION ALL SELECT ${databaseClockSql} WHERE ${databaseClockSql} >= ${INITIAL_CUTOFF}`);
+}
+
+export const COMMUNITY_DAILY_ROUNDS_SCHEMA = [
+  ...COMMUNITY_DAILY_ROUND_DDL,
+  dailyRoundSeedSql(),
+  `INSERT INTO community_meta(key, value) VALUES ('daily_voting_rounds_schema_version', ${COMMUNITY_DAILY_ROUNDS_VERSION})
+    ON CONFLICT(key) DO NOTHING`,
+];
+
+export async function prepareCommunityVotingRounds(client, { expectedServiceRevision, databaseClockSql = DATABASE_NOW_SQL } = {}) {
+  if (!Number.isSafeInteger(expectedServiceRevision) || expectedServiceRevision < 1) {
+    throw new ApiError(422, 'INVALID_COMMUNITY_INPUT', 'An exact service revision is required.');
+  }
+  try {
+    const dailyCountSql = `(SELECT COUNT(DISTINCT ${dailyVotingRoundIdSql('p.created_at')})
+      FROM proposals p WHERE p.round_id = 'pending')`;
+    const initial = (await client.execute({ sql: `SELECT s.*, ${COMMUNITY_DEFAULT_READY_SQL} AS ready,
+      (SELECT value FROM community_meta WHERE key = 'daily_voting_rounds_schema_version') AS daily_version,
+      ${dailyDefinitionsCompatibleSql} AS definitions_compatible, ${dailyRowsCompatibleSql} AS rows_compatible,
+      ${dailyCountSql} AS daily_count
+      FROM service_control s WHERE s.id = 1`, args: dailyDefinitionArgs })).rows[0];
+    if (!initial || Number(initial.ready) !== 1 || Number(initial.definitions_compatible) !== 1
+        || Number(initial.rows_compatible) !== 1 || Number(initial.daily_count) > 5000
+        || (initial.daily_version != null && Number(initial.daily_version) !== COMMUNITY_DAILY_ROUNDS_VERSION)) {
+      throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Compatible daily voting storage is required.');
+    }
+    if (Number(initial.revision) !== expectedServiceRevision) {
+      throw new ApiError(409, 'REVISION_CONFLICT', 'Service controls changed before preparation.');
+    }
+    if (initial.mode !== 'active' || Number(initial.proposals_enabled) !== 1 || Number(initial.development_enabled) !== 1) {
+      throw new ApiError(409, 'PROPOSALS_PAUSED', 'Preparation requires active participation and development.');
+    }
+    const allowed = `(${COMMUNITY_DEFAULT_READY_SQL} AND ${dailyDefinitionsCompatibleSql}
+      AND ${dailyRowsCompatibleSql} AND ${dailyCountSql} <= 5000
+      AND NOT EXISTS(SELECT 1 FROM community_meta WHERE key = 'daily_voting_rounds_schema_version'
+        AND value != ${COMMUNITY_DAILY_ROUNDS_VERSION})
+      AND EXISTS(SELECT 1 FROM service_control WHERE id = 1 AND mode = 'active'
+        AND proposals_enabled = 1 AND development_enabled = 1 AND revision = ${expectedServiceRevision}))`;
+    let results;
+    try {
+      results = await client.batch([
+        // NOT NULL is checked before ON CONFLICT, including repeated
+        // preparation. This guard rechecks every preflight condition inside
+        // the same write transaction as the additive DDL and round inserts.
+        { sql: `INSERT INTO community_meta(key, value) SELECT 'daily_voting_rounds_schema_version',
+          CASE WHEN ${allowed} THEN ${COMMUNITY_DAILY_ROUNDS_VERSION} ELSE NULL END
+          ON CONFLICT(key) DO NOTHING`, args: dailyDefinitionArgs },
+        ...COMMUNITY_DAILY_ROUND_DDL,
+        dailyRoundSeedSql(databaseClockSql),
+        `SELECT ${COMMUNITY_DAILY_ROUNDS_READY_SQL} AS ready, ${dailyRowsCompatibleSql} AS compatible`,
+      ], 'write');
+    } catch (error) {
+      if (/^SQLITE_CONSTRAINT(?:_|$)/.test(String(error?.code || ''))
+          && String(error?.message || '').includes('community_meta.value')) {
+        throw new ApiError(409, 'REVISION_CONFLICT', 'Service or voting storage changed during preparation.');
+      }
+      throw error;
+    }
+    const inserted = results.at(-2);
+    const checked = results.at(-1).rows[0];
+    if (Number(checked?.ready) !== 1 || Number(checked?.compatible) !== 1) {
+      throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Daily voting preparation is incomplete.');
+    }
+    return { prepared: true, schemaVersion: COMMUNITY_DAILY_ROUNDS_VERSION, serviceRevision: expectedServiceRevision,
+      roundsAdded: Number(inserted.rowsAffected), existingVotesChanged: false, proposalsChanged: false, pointsIssued: false };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Daily voting storage is temporarily unavailable.');
+  }
 }
 
 const uuidSql = `(lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2)

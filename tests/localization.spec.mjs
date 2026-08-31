@@ -42,8 +42,8 @@ async function openPage(page, url = '/') {
   await expect(page.locator('#submit-button')).toBeEnabled();
 }
 
-test('the original HTML and share preview are English even without JavaScript in a Korean browser', async ({ browser }) => {
-  const context = await browser.newContext({ javaScriptEnabled: false, locale: 'ko-KR', baseURL: 'http://localhost:3000' });
+test('the original HTML and share preview are English even without JavaScript in a Korean browser', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, locale: 'ko-KR', baseURL });
   try {
     const page = await context.newPage();
     const response = await page.goto('/');
@@ -144,9 +144,9 @@ test('real cross-tab language events preserve each draft and do not trigger auth
   expect(state.localeReads).toBe(countryReads);
 });
 
-test('the English sharing URL overrides Korean preference and preserves unrelated URL state when changed', async ({ page, context }) => {
+test('the English sharing URL overrides Korean preference and preserves unrelated URL state when changed', async ({ page, context, baseURL }) => {
   const state = await mockApi(context);
-  await context.addCookies([{ name: 'yourgame_language', value: 'ko', url: 'http://localhost:3000' }]);
+  await context.addCookies([{ name: 'yourgame_language', value: 'ko', url: new URL(baseURL).origin }]);
   await openPage(page, '/?campaign=reddit&lang=en#prompt');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   expect(state.localeReads).toBe(0);

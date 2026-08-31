@@ -1050,6 +1050,10 @@ const copy = {
     "No ideas yet. Be the first to suggest something.",
     "아직 공개된 제안이 없어요. 첫 아이디어를 남겨주세요."
   ],
+  "currentIdeasEmpty": [
+    "No ideas open for voting right now.",
+    "지금 투표할 수 있는 의견이 없습니다."
+  ],
   "leaderboardEmpty": [
     "No contribution points have been issued yet.",
     "아직 발행된 기여도 점수가 없습니다."
@@ -1426,9 +1430,12 @@ const copy = {
   "saveAlias": ["Save name", "별명 저장"],
   "closeAliasButton": ["Close", "닫기"],
   "releaseTimezoneTitle": ["Washington, D.C. (Eastern Time)", "한국 표준시 (UTC+9)"],
-  "ideasViewAll": ["View all", "더보기"],
-  "allIdeas": ["All ideas", "전체 의견"],
-  "closeIdeas": ["Close all ideas", "전체 의견 닫기"],
+  "ideasViewAll": ["More", "더보기"],
+  "allIdeas": ["More ideas", "의견 더보기"],
+  "closeIdeas": ["Close ideas", "의견 더보기 닫기"],
+  "showAllIdeas": ["Show all ideas", "전체 의견 보기"],
+  "ideasDetailsColumn": ["Idea · Author", "의견 · 작성자"],
+  "ideasVotesColumn": ["Votes", "투표"],
   "refreshIdeas": ["Refresh ideas", "의견 새로고침"],
   "ideasTotal": ["{total} ideas", "의견 {total}개"],
   "ideasPrevious": ["Previous ideas page", "이전 의견 페이지"],

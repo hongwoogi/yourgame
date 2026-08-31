@@ -3,10 +3,9 @@ import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { formatHalfPoints, publicContributionPolicy, CONTRIBUTION_ISSUANCE_BLOCK } from './contribution-policy.mjs';
 import { profileDisplayAlias } from './community-policy.mjs';
 
-// The first release has no trusted award issuer, so this is a bounded read model.
 // Use exact BigInt aggregation instead of SQLite SUM/REAL or Number arithmetic.
-// A future production issuer must also provide an exact scalable read model;
-// crossing this bound fails explicitly, never yields an approximate leaderboard.
+// The trusted issuer checks this bound before adding awards. Crossing it fails
+// explicitly instead of returning an approximate leaderboard.
 export const MAX_CONTRIBUTION_READ_ROWS = 50000;
 const UNITS = /^(?:0|[1-9][0-9]{0,127}|-[1-9][0-9]{0,126})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -124,7 +123,7 @@ export function createContributionStore(client, { databaseClockSql = DATABASE_NO
       // role cannot replace independent publication and fulfillment evidence.
       // Enabling a reviewed scoring formula will not enable this path either.
       throw new ApiError(409, CONTRIBUTION_ISSUANCE_BLOCK,
-        '실제 게임 공개와 반영 근거를 검증하는 경로가 준비되지 않아 기여도를 발행할 수 없습니다.');
+        '기여도는 실제 공개와 반영 근거를 검증하는 운영 정산 경로에서만 발행할 수 있습니다.');
     },
   };
 }
