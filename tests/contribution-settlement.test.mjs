@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, unlink, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Worker } from 'node:worker_threads';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createClient } from '@libsql/client';
 import { initializeDatabase } from '../server/database.mjs';
 import { DATABASE_NOW_SQL } from '../server/database-clock.mjs';
@@ -423,46 +424,99 @@ test('renaming a settled group cannot reissue its fulfillment, while a genuinely
   assert.equal((await f.store.contribution.privateSummary(f.members.get('author-a').session)).points, '206');
 });
 
-test('concurrent exact requests on separate native connections leave one settlement and one award set', async t => {
+test('concurrent exact requests in separate Node processes leave one settlement and one award set', async t => {
   const f = await fixture(t);
-  const source = `const { parentPort, workerData } = require('node:worker_threads');
-    const { createClient } = require('@libsql/client');
-    (async () => {
-      const { createContributionSettlementStore } = await import(workerData.module);
-      const client = createClient({ url: workerData.databaseUrl, timeout: 10000 });
-      await client.execute('PRAGMA foreign_keys=ON');
-      const store = createContributionSettlementStore(client, workerData.options);
-      parentPort.once('message', async () => {
-        try { parentPort.postMessage({ result: await store.settle(workerData.plan) }); }
-        catch (error) { parentPort.postMessage({ error: { code: error.code, message: error.message } }); }
-        finally { client.close(); parentPort.close(); }
+  // Keep the native SQLite addon in separate OS processes. Worker isolates
+  // shared one addon lifecycle and could crash Windows during teardown after
+  // their assertions passed. The result is valid only after both children exit
+  // cleanly; receiving an IPC success message alone is not test completion.
+  const source = `import { createClient } from '@libsql/client';
+    const send = message => new Promise((resolve, reject) => process.send(message, error => error ? reject(error) : resolve()));
+    process.once('message', async data => {
+      let client;
+      try {
+        const { createContributionSettlementStore } = await import(data.module);
+        client = createClient({ url: data.databaseUrl, timeout: 10000 });
+        await client.execute('PRAGMA foreign_keys=ON');
+        const store = createContributionSettlementStore(client, data.options);
+        process.once('message', async () => {
+          try {
+            const result = await store.settle(data.plan);
+            client.close();
+            await send({ result });
+          } catch (error) {
+            process.exitCode = 1;
+            client.close();
+            await send({ failure: error.code || 'TEST_CHILD_FAILURE' });
+          } finally { process.disconnect(); }
+        });
+        await send({ ready: true, pid: process.pid });
+      } catch (error) {
+        process.exitCode = 1;
+        client?.close();
+        await send({ failure: error.code || 'TEST_CHILD_FAILURE' });
+        process.disconnect();
+      }
+    });`;
+  const children = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const child = spawn(process.execPath, ['--input-type=module', '--eval', source], {
+        cwd: fileURLToPath(new URL('../', import.meta.url)), env: {}, windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       });
-      parentPort.postMessage({ ready: true });
-    })().catch(error => { parentPort.postMessage({ error: { code: error.code, message: error.message } }); parentPort.close(); });`;
-  const workers = Array.from({ length: 2 }, () => new Worker(source, { eval: true, workerData: {
-    module: new URL('../server/contribution-settlement.mjs', import.meta.url).href, databaseUrl: f.databaseUrl,
-    options: { databaseClockSql: TEST_CLOCK_SQL, scoringPolicy: scoringPolicy('weighted') }, plan: f.plan,
-  } }));
-  t.after(async () => { await Promise.all(workers.map(worker => worker.terminate())); });
-  const results = workers.map(worker => new Promise((resolve, reject) => {
-    worker.on('error', reject);
-    worker.on('message', message => {
-      if (message.error) reject(Object.assign(new Error(message.error.message), { code: message.error.code }));
-      else if (message.result) resolve(message.result);
-    });
-  }));
-  await Promise.all(workers.map(worker => new Promise((resolve, reject) => {
-    worker.on('error', reject);
-    worker.on('message', message => { if (message.ready) resolve(); else if (message.error) reject(new Error(message.error.message)); });
-  })));
-  for (const worker of workers) worker.postMessage('start');
-  const completed = await Promise.all(results);
-  assert.deepEqual(completed.map(result => result.replayed).sort(), [false, true]);
-  assert.equal(completed.reduce((sum, result) => sum + result.issuedCount, 0), 2);
-  const after = await effects(f.client);
-  assert.equal(after.receipts.length, 1);
-  assert.equal(after.ledger.length, 2);
-  assert.equal(after.audits.filter(row => row.action === 'operator_settle_contributions').length, 1);
+      let resolveReady, rejectReady, result, failure, stderrBytes = 0;
+      const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+      // The ready barrier is awaited below. This handler only prevents an early
+      // spawn failure from becoming an unrelated unhandled-rejection failure.
+      ready.catch(() => {});
+      const timeout = setTimeout(() => {
+        failure = 'TEST_CHILD_TIMEOUT';
+        rejectReady(new Error(failure));
+        child.kill();
+      }, 30000);
+      const closed = new Promise(resolve => child.once('close', (exitCode, signal) => {
+        clearTimeout(timeout);
+        rejectReady(new Error(failure || `TEST_CHILD_EARLY_EXIT:${exitCode}:${signal}`));
+        resolve({ exitCode, signal, result, failure, stderrBytes });
+      }));
+      child.on('error', error => { failure = error.code || 'TEST_CHILD_SPAWN_FAILURE'; rejectReady(new Error(failure)); });
+      child.stderr.on('data', bytes => { stderrBytes += bytes.length; });
+      child.on('message', message => {
+        if (message.ready) resolveReady(message.pid);
+        if (message.result) result = message.result;
+        if (message.failure) { failure = message.failure; rejectReady(new Error(failure)); }
+      });
+      children.push({ child, ready, closed });
+      child.send({ module: new URL('../server/contribution-settlement.mjs', import.meta.url).href,
+        databaseUrl: f.databaseUrl, options: { databaseClockSql: TEST_CLOCK_SQL, scoringPolicy: scoringPolicy('weighted') }, plan: f.plan },
+      error => { if (error) { failure = error.code || 'TEST_CHILD_IPC_FAILURE'; rejectReady(new Error(failure)); child.kill(); } });
+    }
+    const pids = await Promise.all(children.map(child => child.ready));
+    assert.equal(new Set(pids).size, 2);
+    assert.ok(pids.every(pid => Number.isSafeInteger(pid) && pid !== process.pid));
+    // Release both independently opened database connections together.
+    for (const { child } of children) child.send('start');
+    const exits = await Promise.all(children.map(child => child.closed));
+    for (const outcome of exits) {
+      assert.equal(outcome.exitCode, 0, `settlement child exit: ${outcome.exitCode}; stderr bytes: ${outcome.stderrBytes}`);
+      assert.equal(outcome.signal, null);
+      assert.equal(outcome.failure, undefined);
+      assert.equal(outcome.result?.ok, true);
+    }
+    const completed = exits.map(outcome => outcome.result);
+    assert.deepEqual(completed.map(result => result.replayed).sort(), [false, true]);
+    assert.equal(completed.reduce((sum, result) => sum + result.issuedCount, 0), 2);
+    const after = await effects(f.client);
+    assert.equal(after.receipts.length, 1);
+    assert.equal(after.ledger.length, 2);
+    assert.equal(after.audits.filter(row => row.action === 'operator_settle_contributions').length, 1);
+  } finally {
+    // Finish process teardown before the fixture closes/removes its database,
+    // including when startup, an assertion, or one child settlement fails.
+    for (const { child } of children) if (child.exitCode === null && child.signalCode === null) child.kill();
+    await Promise.all(children.map(child => child.closed));
+  }
 });
 
 test('failure after a ledger insert rolls back the whole award batch and its audit/receipt', async t => {
