@@ -12,8 +12,7 @@ const activeService = { mode: 'active', proposalsEnabled: true, developmentEnabl
 
 function savedProposal(id = 'existing-proposal') {
   return { id, body: '원래 접수한 제안', createdAt: new Date(START).toISOString(),
-    updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true,
-    safety: { status: 'pending', message: '안전 검토 대기' } };
+    updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true };
 }
 
 async function fixture(page, options = {}) {
@@ -22,7 +21,7 @@ async function fixture(page, options = {}) {
     quota: { remaining: 3, limit: 3, nextAvailableAt: null },
     proposals: [], posts: [], patches: [], loginCalls: 0, adminVisits: 0, statusCalls: 0, sessionCalls: 0, languages: [],
     localeResponse: { locale: 'ko', source: 'country' },
-    loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false, safetyRejection: false,
+    loginFailure: false, submissionFailure: false, privateFailure: false, statusFailure: false, validationRejection: false,
     serverTime: START, ...options,
   };
   await page.clock.install({ time: new Date(START) });
@@ -76,12 +75,14 @@ async function fixture(page, options = {}) {
     }
     if (pathname === '/api/community' && new URL(request.url()).searchParams.get('view') === 'me') {
       return reply({ ownerId: state.session.user?.id || null,
-        profile: { id: 'public-browser-profile', alias: 'Player-000000000001', leaderboardVisible: false, revision: 1 },
+        profile: { id: 'public-browser-profile', alias: 'Player-000000000001', leaderboardVisible: true, visibilitySource: 'service_default', revision: 1 },
+        publicationPolicy: { version: 'public-default-v1', defaultPublic: true },
         contribution: { points: '0', adoptedCount: 0 },
         voteQuota: { roundId: 'initial', limit: 3, used: 0, remaining: 3, closesAt: CUTOFF },
         votes: [], publications: [] });
     }
     if (pathname === '/api/community') return reply({ recent: [], popular: [], leaderboard: { items: [] },
+      publicationPolicy: { version: 'public-default-v1', defaultPublic: true },
       round: { id: 'initial', status: 'open', closesAt: CUTOFF, limit: 3 },
       scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null },
       serverTime: new Date(state.serverTime).toISOString() });
@@ -109,7 +110,7 @@ async function fixture(page, options = {}) {
       const payload = request.postDataJSON();
       state.posts.push(payload);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
-      if (state.safetyRejection) return reply({ error: { code: 'PROPOSAL_SAFETY_REJECTED', message: 'PRIVATE_FILTER_EVIDENCE_DO_NOT_DISPLAY' } }, 422);
+      if (state.validationRejection) return reply({ error: { code: 'INVALID_BODY', message: 'PRIVATE_VALIDATION_DETAILS_DO_NOT_DISPLAY' } }, 422);
       if (state.attemptRejection) return reply({ error: { code: state.attemptRejection, message: 'PRIVATE_RATE_LIMIT_EVIDENCE' } }, 429, { 'Retry-After': '3' });
       if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       if (state.submissionFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '저장에 실패했습니다. 입력 내용은 유지됩니다.' } }, 503);
@@ -118,7 +119,7 @@ async function fixture(page, options = {}) {
       if (existing) return reply({ proposal: existing, quota: state.quota });
       const proposal = { id: `proposal-${state.proposals.length + 1}`, requestId: payload.requestId,
         body: payload.body, createdAt: new Date(state.serverTime).toISOString(), updatedAt: new Date(state.serverTime).toISOString(),
-        roundId: 'initial', revision: 1, editable: true, safety: { status: 'pending', message: '안전 검토 대기' } };
+        roundId: 'initial', revision: 1, editable: true };
       state.proposals.unshift(proposal);
       state.quota = { ...state.quota, remaining: state.quota.remaining - 1,
         nextAvailableAt: new Date(state.serverTime + 3600000).toISOString() };
@@ -128,13 +129,13 @@ async function fixture(page, options = {}) {
       const payload = request.postDataJSON();
       state.patches.push(payload);
       expect(request.headers()['x-csrf-token']).toBe(state.session.csrfToken);
-      if (state.safetyRejection) return reply({ error: { code: 'PROPOSAL_SAFETY_REJECTED', message: 'PRIVATE_FILTER_EVIDENCE_DO_NOT_DISPLAY' } }, 422);
+      if (state.validationRejection) return reply({ error: { code: 'INVALID_BODY', message: 'PRIVATE_VALIDATION_DETAILS_DO_NOT_DISPLAY' } }, 422);
       if (state.attemptRejection) return reply({ error: { code: state.attemptRejection, message: 'PRIVATE_RATE_LIMIT_EVIDENCE' } }, 429, { 'Retry-After': '3' });
       if (operationCode() || state.serviceRejection) return reply({ error: { code: operationCode(), message: '운영 정책으로 제안 접수가 중지되었습니다.' } }, state.serviceRejection?.status || 409);
       const proposal = state.proposals.find((p) => p.id === payload.id);
       if (!proposal?.editable) return reply({ error: { code: 'PROPOSAL_FROZEN', message: '마감된 제안은 수정할 수 없습니다.' } }, 409);
       if (payload.revision !== proposal.revision) return reply({ error: { code: 'REVISION_CONFLICT', message: '다른 창에서 제안이 변경되었습니다.' } }, 409);
-      Object.assign(proposal, { body: payload.body, revision: proposal.revision + 1, safety: { status: 'pending', message: '안전 검토 대기' } });
+      Object.assign(proposal, { body: payload.body, revision: proposal.revision + 1 });
       return reply({ proposal, quota: state.quota });
     }
     return reply({ error: { code: 'NOT_FOUND', message: 'Unknown fixture endpoint' } }, 404);
@@ -167,43 +168,45 @@ test('desktop entry renders and measures UTF-8 bytes without truncating the draf
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('accepted proposals consume one slot while safety review and an edited revision stay pending', async ({ page }, testInfo) => {
+test('accepted public ideas consume one slot and editing through My ideas preserves the remaining quota', async ({ page }, testInfo) => {
   const state = await fixture(page, { session: structuredClone(signedIn) });
-  await expect(page.locator('#prompt-safety-note')).toContainText('검토 대기 중에도 제출 횟수 1회');
-  await page.locator('#safety-guidance summary').click();
-  await expect(page.locator('#safety-guidance')).toContainText('공식 등급을 취득했다는 뜻은 아닙니다');
-  await expect(page.locator('#safety-guidance')).toContainText('일반적인 판타지 전투 요구');
-  await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath('public-safety-form-desktop.png') });
+  await expect(page.locator('#public-idea-notice')).toHaveText('제안은 공개됩니다.');
+  await expect(page.locator('#safety-guidance, #prompt-safety-note, #publication-dialog')).toHaveCount(0);
+  await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath('compact-public-form-desktop.png') });
   await page.locator('#prompt').fill('회피 동작을 더 쉽게 조작하고 싶어요.');
   await page.locator('#submit-button').click();
-  await expect(page.locator('#form-message')).toContainText('안전 검토 대기');
+  await expect(page.locator('#form-message')).toContainText('제안이 접수됐어요');
   await expect(page.locator('#quota-status')).toContainText('2 / 3');
-  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'pending');
-  state.proposals[0].safety = { status: 'approved', message: 'PRIVATE_REVIEW_REASON' };
-  await page.reload();
-  await page.locator('#my-proposals summary').click();
-  await expect(page.locator('.proposal-safety')).toContainText('안전 승인');
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
+  await expect(page.locator('#proposal-count')).toHaveText('1');
+  await page.locator('#open-my-proposals').click();
+  await expect(page.locator('.proposal-body')).toHaveText('회피 동작을 더 쉽게 조작하고 싶어요.');
+  await expect(page.locator('.proposal-safety, .publication-button')).toHaveCount(0);
   await page.locator('.proposal-edit').click();
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
+  await expect(page.locator('#prompt')).toBeFocused();
   await page.locator('#prompt').fill('회피 동작의 터치 버튼 위치를 바꾸고 싶어요.');
   await page.locator('#submit-button').click();
-  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'pending');
+  await expect(page.locator('#form-message')).toContainText('수정 내용을 저장했어요');
   await expect(page.locator('#quota-status')).toContainText('2 / 3');
   expect(state.proposals[0].revision).toBe(2);
   expect(state.posts).toHaveLength(1);
   expect(state.patches).toHaveLength(1);
-  await expect(page.locator('body')).not.toContainText('PRIVATE_REVIEW_REASON');
+  await page.locator('#open-my-proposals').click();
+  await expect(page.locator('.proposal-body')).toHaveText('회피 동작의 터치 버튼 위치를 바꾸고 싶어요.');
 });
 
-test('safety rejection keeps the new draft and quota without revealing internal evidence', async ({ page }) => {
-  const state = await fixture(page, { session: structuredClone(signedIn), safetyRejection: true });
-  const draft = '이 입력은 서버의 안전 기준 검사에서 거절하는 테스트 초안입니다.';
+test('server validation rejection keeps the new draft and quota without revealing internal evidence', async ({ page }) => {
+  const state = await fixture(page, { session: structuredClone(signedIn), validationRejection: true });
+  const draft = '서버 유효성 검사 거절 후에도 보존할 테스트 초안입니다.';
   await page.locator('#prompt').fill(draft);
   await page.locator('#submit-button').click();
-  await expect(page.locator('#form-message')).toContainText('제출 횟수는 차감되지 않았어요');
-  await expect(page.locator('#form-feedback')).toHaveAttribute('data-reason', 'safety');
+  await expect(page.locator('#form-message')).toContainText('올바른 제안을 입력');
+  await expect(page.locator('#form-feedback')).toHaveAttribute('data-kind', 'error');
+  await expect(page.locator('#form-feedback')).not.toHaveAttribute('data-reason', 'quota');
   await expect(page.locator('#quota-status')).toContainText('3 / 3');
   await expect(page.locator('#prompt')).toHaveValue(draft);
-  await expect(page.locator('body')).not.toContainText('PRIVATE_FILTER_EVIDENCE');
+  await expect(page.locator('body')).not.toContainText('PRIVATE_VALIDATION_DETAILS');
   expect(state.proposals).toHaveLength(0);
   expect(state.posts).toHaveLength(1);
   await page.reload();
@@ -212,18 +215,18 @@ test('safety rejection keeps the new draft and quota without revealing internal 
   expect(state.posts).toHaveLength(1);
 });
 
-test('rejected edits retain the edit draft and the previously approved stored revision at zero quota', async ({ page }) => {
-  const proposal = { ...savedProposal(), safety: { status: 'approved', message: 'PRIVATE_REVIEW_REASON' } };
-  const state = await fixture(page, { session: structuredClone(signedIn), safetyRejection: true, proposals: [proposal],
+test('rejected edits retain the edit draft and previous stored revision at zero quota', async ({ page }) => {
+  const proposal = savedProposal();
+  const state = await fixture(page, { session: structuredClone(signedIn), validationRejection: true, proposals: [proposal],
     quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 3600000).toISOString() } });
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('.proposal-edit').click();
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
   const draft = '저장되지 않아야 하는 수정 테스트 초안';
   await page.locator('#prompt').fill(draft);
   await page.locator('#submit-button').click();
-  await expect(page.locator('#form-message')).toContainText('수정본을 저장하지 않았어요');
+  await expect(page.locator('#form-message')).toContainText('올바른 제안을 입력');
   await expect(page.locator('#prompt')).toHaveValue(draft);
-  await expect(page.locator('.proposal-safety')).toHaveAttribute('data-status', 'approved');
   expect(state.proposals[0].body).toBe('원래 접수한 제안');
   expect(state.proposals[0].revision).toBe(1);
   expect(state.posts).toHaveLength(0);
@@ -234,26 +237,27 @@ test('rejected edits retain the edit draft and the previously approved stored re
   await expect(page.locator('#quota-status')).toContainText('0 / 3');
 });
 
-test('private review states use safe labels and do not render supplied review messages or markup', async ({ page }) => {
+test('legacy review metadata stays hidden and My ideas renders source markup as inert text', async ({ page }) => {
   const proposals = ['pending', 'approved', 'held', 'blocked'].map((status) => ({
-    ...savedProposal(`safety-${status}`), body: `${status}: <img src=x onerror="window.__safetyXss=true">`,
-    safety: { status, message: `PRIVATE_REVIEW_REASON_${status}`, reason: 'PRIVATE_INTERNAL_REASON' },
+    ...savedProposal('legacy-' + status), body: status + ': <img src=x onerror="window.__proposalXss=true">',
+    safety: { status, message: 'PRIVATE_REVIEW_REASON_' + status, reason: 'PRIVATE_INTERNAL_REASON' },
   }));
   await fixture(page, { session: structuredClone(signedIn), proposals });
-  await page.locator('#my-proposals summary').click();
-  for (const [status, label] of Object.entries({ pending: '안전 검토 대기', approved: '안전 승인', held: '안전 검토 보류', blocked: '안전 기준 차단' })) {
-    await expect(page.locator(`.proposal-safety[data-status="${status}"]`)).toContainText(label);
-  }
+  await page.locator('#open-my-proposals').click();
+  await expect(page.locator('#my-proposals-dialog')).toBeVisible();
+  await expect(page.locator('.proposal-body')).toHaveCount(4);
+  await expect(page.locator('.proposal-safety')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('PRIVATE_REVIEW_REASON');
   await expect(page.locator('body')).not.toContainText('PRIVATE_INTERNAL_REASON');
   await expect(page.locator('#proposal-list img')).toHaveCount(0);
-  expect(await page.evaluate(() => window.__safetyXss)).toBeUndefined();
+  expect(await page.locator('.proposal-body').allTextContents()).toEqual(proposals.map(proposal => proposal.body));
+  expect(await page.evaluate(() => window.__proposalXss)).toBeUndefined();
 });
 
 for (const code of ['EDIT_RATE_LIMITED', 'PROPOSAL_ATTEMPT_RATE_LIMITED']) {
   test(`${code} preserves an edit and does not masquerade as exhausted submission quota`, async ({ page }) => {
     const state = await fixture(page, { session: structuredClone(signedIn), proposals: [savedProposal()], attemptRejection: code });
-    await page.locator('#my-proposals summary').click();
+    await page.locator('#open-my-proposals').click();
     await page.locator('.proposal-edit').click();
     await page.locator('#prompt').fill('잠시 후 직접 다시 저장할 수정 초안');
     await page.locator('#submit-button').click();
@@ -275,7 +279,8 @@ test('anonymous Send opens login then submits exactly once with the rotated CSRF
   await expect(page.locator('#prompt')).toHaveValue('');
   await expect.poll(() => state.posts.length).toBe(1);
   expect(state.posts[0].requestId).toBeTruthy();
-  await expect(page.locator('#my-proposals')).toBeVisible();
+  await expect(page.locator('#open-my-proposals')).toBeVisible();
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
 });
 
 test('header login keeps a draft and never implies Send', async ({ page }) => {
@@ -468,7 +473,7 @@ test('editing is available at zero quota and does not become a new submission', 
     updatedAt: new Date(START - 1000).toISOString(), roundId: 'initial', revision: 1, editable: true };
   const state = await fixture(page, { session: structuredClone(signedIn), proposals: [original],
     quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 3600000).toISOString() } });
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
   await page.locator('#prompt').fill('수정된 제안');
   await page.locator('#submit-button').click();
@@ -485,15 +490,18 @@ for (const width of [360, 390]) {
     const state = await fixture(page);
     await expect(page.locator('#hero-title')).toBeVisible();
     await expect(page.locator('#countdown')).toBeVisible();
-    await expect(page.locator('.hero-description')).toContainText('PC·모바일');
+    await expect(page.locator('.hero-description')).toContainText('싱글플레이 로그라이크');
     expect(await page.locator('#prompt').evaluate((element) => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
     const steps = await page.locator('.process-step').evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect(); return { x: rect.x, y: rect.y, bottom: rect.bottom };
     }));
-    for (let index = 1; index < steps.length; index += 1) {
-      expect(steps[index].x).toBe(steps[0].x);
-      expect(steps[index].y).toBeGreaterThan(steps[index - 1].bottom);
-    }
+    expect(steps).toHaveLength(4);
+    expect(steps[1].x).toBeGreaterThan(steps[0].x);
+    expect(steps[2].x).toBe(steps[0].x);
+    expect(steps[2].y).toBeGreaterThan(steps[0].bottom);
+    const voting = await page.locator('.community-section').boundingBox();
+    const form = await page.locator('.submission-section').boundingBox();
+    expect(voting.y + voting.height).toBeLessThan(form.y);
     await page.locator('#prompt').fill('가'.repeat(667));
     await expect(page.locator('#byte-count')).toContainText('2,001');
     await expect(page.locator('#submit-button')).toBeDisabled();
@@ -512,14 +520,16 @@ for (const width of [360, 390]) {
     await googleLogin(page);
     await expect.poll(() => state.posts.length).toBe(1);
     await expect(page.locator('#prompt')).toHaveValue('');
+    await page.locator('#open-my-proposals').click();
     await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
+    await expect(page.locator('#my-proposals-dialog')).toBeHidden();
     await page.locator('#prompt').fill('모바일에서도 터치로 수정하는 제안');
     await page.locator('#submit-button').click();
     await expect.poll(() => state.patches.length).toBe(1);
     expect(state.posts).toHaveLength(1);
     expect(state.patches[0].body).toBe('모바일에서도 터치로 수정하는 제안');
-    await page.locator('#safety-guidance summary').click();
-    await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath(`public-safety-form-${width}.png`) });
+    await expect(page.locator('#safety-guidance')).toHaveCount(0);
+    await page.locator('#prompt-form').screenshot({ path: testInfo.outputPath(`compact-public-form-${width}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
@@ -560,18 +570,21 @@ test('closing a Send login modal cancels auto-send before a later header login',
   expect(state.posts).toHaveLength(0);
 });
 
-test('logout removes private proposals while preserving the unsubmitted new draft', async ({ page }) => {
+test('logout clears account management content while preserving the unsubmitted new draft', async ({ page }) => {
   await fixture(page, { session: structuredClone(signedIn), proposals: [{
-    id: 'private-one', body: '로그인한 사용자에게만 보이는 제안', createdAt: new Date(START).toISOString(),
+    id: 'account-one', body: '이 계정에서 관리하는 접수 제안', createdAt: new Date(START).toISOString(),
     updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true,
   }] });
-  await page.locator('#my-proposals summary').click();
-  await expect(page.locator('#proposal-list')).toContainText('로그인한 사용자에게만 보이는 제안');
   await page.locator('#prompt').fill('아직 제출하지 않은 새 초안');
+  await page.locator('#open-my-proposals').click();
+  await expect(page.locator('#proposal-list')).toContainText('이 계정에서 관리하는 접수 제안');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
   await page.locator('#logout-button').click();
   await expect(page.locator('#login-button')).toBeVisible();
   await expect(page.locator('#proposal-list')).toBeEmpty();
   await expect(page.locator('#my-proposals')).toBeHidden();
+  await expect(page.locator('#open-my-proposals')).toBeHidden();
   await expect(page.locator('#prompt')).toHaveValue('아직 제출하지 않은 새 초안');
 });
 
@@ -580,7 +593,7 @@ test('a concurrent edit conflict retains the local edit and never creates a new 
     id: 'conflicted-one', body: '처음 저장한 제안', createdAt: new Date(START).toISOString(),
     updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true,
   }] });
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
   await page.locator('#prompt').fill('이 창에서 수정 중인 내용');
   Object.assign(state.proposals[0], { body: '다른 창에서 먼저 저장한 내용', revision: 2 });
@@ -598,7 +611,7 @@ test('temporary private-list failure locks submission without replacing an in-pr
     id: 'interrupted-edit', body: '원래 접수한 내용', createdAt: new Date(START).toISOString(),
     updatedAt: new Date(START).toISOString(), roundId: 'initial', revision: 1, editable: true,
   }] });
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
   await page.locator('#prompt').fill('조회 장애 중에도 계속 보존할 수정 초안');
   state.privateFailure = true;
@@ -721,13 +734,14 @@ for (const [name, service] of [
     await expect(page.locator('#service-message')).toContainText('<img');
     await expect(page.locator('#service-message img')).toHaveCount(0);
     await expect(page.locator('#admin-link')).toBeVisible();
-    await expect(page.locator('#my-proposals')).toBeVisible();
+    await expect(page.locator('#open-my-proposals')).toBeVisible();
+  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
     await page.locator('#prompt').fill('운영 중지 중에 작성하는 새 초안');
     await expect(page.locator('#prompt')).toBeEnabled();
     await expect(page.locator('#submit-button')).toBeDisabled();
     await page.locator('#prompt-form').dispatchEvent('submit');
     await expect(page.locator('#form-message')).toContainText('자동 전송하지');
-    await page.locator('#my-proposals summary').click();
+    await page.locator('#open-my-proposals').click();
     await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
     await page.locator('#prompt').fill('운영 중지 중에도 보존할 수정 초안');
     await expect(page.locator('#submit-button')).toBeDisabled();
@@ -802,7 +816,7 @@ test('a failed status check after discovering an existing login cancels the pend
 test('an operational 409 during edit is not a revision conflict and retains both drafts', async ({ page }) => {
   const state = await fixture(page, { session: structuredClone(signedIn), proposals: [savedProposal('pause-edit')] });
   await page.locator('#prompt').fill('수정과 별도로 남겨둔 새 제안');
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('#proposal-list').getByRole('button', { name: /수정/ }).click();
   await page.locator('#prompt').fill('저장 직전 점검이 시작된 수정 내용');
   state.service = { ...activeService, mode: 'maintenance' };
@@ -842,7 +856,7 @@ test('a 423 blocks repeat Send even if refreshing status fails, without losing t
   expect(state.posts).toHaveLength(1);
 });
 
-test('English copy, metadata and KST target are complete without translating participant data', async ({ page }) => {
+test('English copy, metadata and KST target stay concise without translating participant data', async ({ page }) => {
   const original = '원문은 그대로: <img src=x onerror="window.translationXss=true">';
   const announcement = '운영자가 작성한 한국어 공지를 번역하거나 변경하지 않습니다.';
   const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn),
@@ -850,30 +864,31 @@ test('English copy, metadata and KST target are complete without translating par
     proposals: [{ ...savedProposal(), body: original, safety: { status: 'held', reason: 'PRIVATE_EVIDENCE' } }] });
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page).toHaveTitle('yourga.me — One roguelike, shaped by your prompts');
-  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /first game is still in development/);
+  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /first game as it takes shape/);
+  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /desktop and mobile/);
   await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
   await expect(page.locator('#hero-title')).toContainText('One evolving roguelike.');
-  await expect(page.locator('.hero-description')).toContainText('desktop and mobile');
+  await expect(page.locator('.hero-description')).toContainText('single-player roguelike');
   await expect(page.locator('.release-date time')).toHaveAttribute('datetime', '2026-09-01T00:00:00+09:00');
   await expect(page.locator('.release-date')).toContainText('Sep 1, 2026 / 00:00 KST');
-  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', /For example/);
+  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', 'What would make this roguelike more fun?');
   await expect(page.locator('#user-name')).toHaveText(signedIn.user.name);
   await expect(page.locator('#service-message')).toHaveText(announcement);
-  await page.locator('#my-proposals summary').click();
+  await expect(page.locator('#public-idea-notice')).toHaveText('Ideas are public.');
+  await expect(page.locator('#safety-guidance, #prompt-safety-note, #publication-dialog')).toHaveCount(0);
+  await expect(page.locator('#process-title')).toHaveText('The planned cycle');
+  await page.locator('#open-my-proposals').click();
   await expect(page.locator('.proposal-body')).toHaveText(original);
-  await expect(page.locator('.proposal-safety')).toContainText('Safety review on hold');
+  await expect(page.locator('.proposal-safety')).toHaveCount(0);
   await expect(page.locator('#proposal-list img')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('PRIVATE_EVIDENCE');
-  await page.locator('#safety-guidance summary').click();
-  await expect(page.locator('#safety-guidance')).toContainText('has not received an official ESRB rating');
-  await expect(page.locator('#safety-guidance')).toContainText('Ordinary fantasy combat ideas are welcome');
-  await expect(page.locator('.process-status-note')).toContainText('not a live progress tracker');
-  await page.locator('#language-select').selectOption('ko');
-  await expect(page.locator('.proposal-safety')).toContainText('안전 검토 보류');
+  await page.locator('#my-ideas-language-select').selectOption('ko');
+  await expect(page.locator('#my-proposals-title')).toHaveText('내 제안');
   await expect(page.locator('.proposal-body')).toHaveText(original);
   await expect(page.locator('#service-message')).toHaveText(announcement);
-  await page.locator('#language-select').selectOption('en');
-  await expect(page.locator('.proposal-safety')).toContainText('Safety review on hold');
+  await page.locator('#my-ideas-language-select').selectOption('en');
+  await expect(page.locator('#my-proposals-title')).toHaveText('My ideas');
+  await expect(page.locator('.proposal-body')).toHaveText(original);
   expect(state.posts).toHaveLength(0);
   expect(state.patches).toHaveLength(0);
   expect(state.loginCalls).toBe(0);
@@ -912,27 +927,27 @@ test('changing language in a pending Google login preserves nonce and explicit S
   expect(state.posts[0].body).toBe(draft);
   expect(state.posts[0].requestId).toBe(queued);
   await expect(page.locator('#prompt')).toHaveValue('');
-  await expect(page.locator('#form-message')).toContainText('안전 검토 대기');
+  await expect(page.locator('#form-message')).toContainText('제안이 접수됐어요');
   await page.locator('#language-select').selectOption('en');
-  await expect(page.locator('#form-message')).toContainText('Safety review pending');
+  await expect(page.locator('#form-message')).toContainText('Idea submitted.');
   await expect(page.locator('#quota-status')).toHaveText('2 / 3 submissions left');
   expect(state.languages.find(entry => entry.pathname === '/api/login').value).toBe('en');
   expect(state.languages.find(entry => entry.pathname === '/api/proposals' && entry.method === 'POST').value).toBe('ko');
   expect(state.posts).toHaveLength(1);
 });
 
-test('active safety and API errors switch language without retrying or losing a draft', async ({ page }) => {
-  const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn), safetyRejection: true });
-  const draft = 'An unchanged draft with enough detail to review.';
+test('active validation and API errors switch language without retrying or losing a draft', async ({ page }) => {
+  const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn), validationRejection: true });
+  const draft = 'An unchanged draft after a server validation error.';
   await page.locator('#prompt').fill(draft);
   await page.locator('#submit-button').click();
-  await expect(page.locator('#form-message')).toContainText('no submission slot was used');
-  await expect(page.locator('#form-message')).not.toContainText('PRIVATE_FILTER');
+  await expect(page.locator('#form-message')).toContainText('Enter a nonempty proposal with valid text.');
+  await expect(page.locator('#form-message')).not.toContainText('PRIVATE_VALIDATION_DETAILS');
   await page.locator('#language-select').selectOption('ko');
-  await expect(page.locator('#form-message')).toContainText('제출 횟수는 차감되지 않았어요');
+  await expect(page.locator('#form-message')).toContainText('올바른 제안을 입력');
   expect(state.posts).toHaveLength(1);
   await page.locator('#language-select').selectOption('en');
-  state.safetyRejection = false;
+  state.validationRejection = false;
   state.submissionFailure = true;
   await page.locator('#submit-button').click();
   await expect(page.locator('#form-message')).toContainText('The service is temporarily unavailable');
@@ -971,7 +986,7 @@ test('English Google errors stay localized after switching and header login neve
 test('language changes preserve a zero-quota edit and active IME composition', async ({ page }) => {
   const state = await fixture(page, { locale: 'en', session: structuredClone(signedIn), proposals: [savedProposal()],
     quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 3600000).toISOString() } });
-  await page.locator('#my-proposals summary').click();
+  await page.locator('#open-my-proposals').click();
   await page.locator('.proposal-edit').click();
   await expect(page.locator('#form-message')).toContainText("doesn't use a new submission slot");
   await page.locator('#language-select').selectOption('ko');
@@ -992,7 +1007,7 @@ test('language changes preserve a zero-quota edit and active IME composition', a
   await expect(page.locator('#submit-button')).toBeEnabled();
   await page.locator('#submit-button').click();
   await expect.poll(() => state.patches.length).toBe(1);
-  await expect(page.locator('#form-message')).toContainText('without using a new slot');
+  await expect(page.locator('#form-message')).toContainText('No new submission slot was used.');
   await expect(page.locator('#quota-status')).toContainText('0 / 3');
   expect(state.posts).toHaveLength(0);
 });
@@ -1036,7 +1051,7 @@ for (const width of [320, 360, 390, 1440]) {
   test(`English UI at ${width}px keeps its form and login dialog inside the viewport`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
     await fixture(page, { locale: 'en', loginFailure: true });
-    await page.locator('#safety-guidance summary').click();
+    await expect(page.locator('#safety-guidance')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const language = await page.locator('#language-select').boundingBox();
     expect(language.height).toBeGreaterThanOrEqual(44);

@@ -51,7 +51,7 @@ test('the original HTML and share preview are English even without JavaScript in
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
     await expect(page.locator('#hero-title')).toContainText('One evolving roguelike.');
     await expect(page).toHaveTitle('yourga.me — One roguelike, shaped by your prompts');
-    await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /first game is still in development/);
+    await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /follow the first game as it takes shape/);
     await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
     await expect(page.locator('.noscript-notice')).toBeVisible();
     await expect(page.locator('.noscript-notice')).toHaveText('Enable JavaScript to submit ideas and log in with Google.');
@@ -82,9 +82,9 @@ test('English copy includes metadata and accessible names, and toggling never le
   await page.locator('#language-select').selectOption('ko');
   await expect(page.getByRole('combobox', { name: '언어', exact: true })).toHaveValue('ko');
   await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'ko_KR');
-  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', /^예:/);
+  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', '어떤 변화가 이 로그라이크를 더 재미있게 만들까요?');
   await page.locator('#language-select').selectOption('en');
-  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', /^For example:/);
+  await expect(page.locator('#prompt')).toHaveAttribute('placeholder', 'What would make this roguelike more fun?');
   await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'en_US');
   await expect(page.locator('body')).not.toContainText('[public.');
   expect(state.mutations).toEqual([]);

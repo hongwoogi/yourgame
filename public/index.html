@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101510">
-  <meta name="description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Share your ideas, then follow the planned cycle of review, Codex development, testing, and release. The first game is still in development.">
+  <meta name="description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Propose ideas, vote on what comes next, and follow the first game as it takes shape.">
   <meta property="og:type" content="website">
   <meta property="og:title" data-i18n-content="public.pageTitle" content="yourga.me — One roguelike, shaped by your prompts">
-  <meta property="og:description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Share your ideas, then follow the planned cycle of review, Codex development, testing, and release. The first game is still in development.">
+  <meta property="og:description" data-i18n-content="public.pageDescription" content="Help shape one single-player roguelike for desktop and mobile. Propose ideas, vote on what comes next, and follow the first game as it takes shape.">
   <meta property="og:locale" content="en_US">
   <title data-i18n="public.pageTitle">yourga.me — One roguelike, shaped by your prompts</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23101510'/%3E%3Cpath d='M10 10h7v7h6v-7h7v13h-7v7h-7V20h-6z' fill='%23d0ef8a'/%3E%3C/svg%3E">
@@ -42,12 +42,10 @@
     <main class="wrap" id="main">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="little-cross" aria-hidden="true">✳</span><span data-i18n="public.heroEyebrow">A ROGUELIKE, SHAPED BY YOUR PROMPTS</span></p>
-          <h1 id="hero-title"><span data-i18n="public.heroLead">Your prompts.</span><br><span class="hero-accent" data-i18n="public.heroAccent">One evolving roguelike.</span></h1>
-          <p class="hero-description" data-i18n="public.heroDescription">One single-player roguelike for desktop and mobile, shaped by everyone's ideas. Submit a prompt; Codex will build from reviewed ideas, with each version tested before release.</p>
+          <h1 id="hero-title"><span data-i18n="public.heroLead">Your prompts.</span> <span class="hero-accent" data-i18n="public.heroAccent">One evolving roguelike.</span></h1>
+          <p class="hero-description" data-i18n="public.heroDescription">One single-player roguelike. Your ideas shape what comes next.</p>
         </div>
         <div class="release-panel">
-          <div class="release-heading"><span class="index-label" data-i18n="public.firstReleaseIndex">01 / FIRST RELEASE</span><svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20 20 4M4 4h16v16" stroke="currentColor" stroke-width="1.3"/></svg></div>
           <h2 class="countdown-title" id="countdown-title">Until the first release</h2>
           <div class="countdown" id="countdown" aria-label="Time until the planned first release" aria-live="off">
             <div class="time-unit"><span id="count-days">00</span><small data-i18n="public.days">days</small></div><span class="time-separator" aria-hidden="true">:</span>
@@ -56,90 +54,64 @@
             <div class="time-unit"><span id="count-seconds">00</span><small data-i18n="public.seconds">sec</small></div>
           </div>
           <p id="release-message" class="release-message" hidden></p>
-          <div class="release-date"><span data-i18n="public.targetLabel">Planned first release</span><time datetime="2026-09-01T00:00:00+09:00" data-i18n="public.targetDate" data-i18n-title="public.koreaTime" title="Korea Standard Time (UTC+9)">Sep 1, 2026 / 00:00 KST</time></div>
+          <div class="release-date"><time datetime="2026-09-01T00:00:00+09:00" data-i18n="public.targetDate" data-i18n-title="public.koreaTime" title="Korea Standard Time (UTC+9)">Sep 1, 2026 / 00:00 KST</time></div>
           <p class="release-note" id="release-note">Checking the server time.</p>
         </div>
       </section>
-      <div class="connection-notice" id="connection-notice" role="status" hidden>
-        <p id="connection-message"></p><button type="button" id="retry-connection" class="text-button"><span class="button-copy" data-i18n="public.reconnect">Reconnect</span> <span aria-hidden="true">↻</span></button>
-      </div>
-      <section class="service-notice" id="service-notice" role="status" aria-live="polite" aria-labelledby="service-title" hidden>
-        <h2 id="service-title">Service notice</h2><p id="service-message" hidden></p><p id="service-detail"></p>
-      </section>
+      <div class="connection-notice" id="connection-notice" role="status" hidden><p id="connection-message"></p><button type="button" id="retry-connection" class="text-button"><span class="button-copy" data-i18n="public.reconnect">Reconnect</span> <span aria-hidden="true">↻</span></button></div>
+      <section class="service-notice" id="service-notice" role="status" aria-live="polite" aria-labelledby="service-title" hidden><h2 id="service-title">Service notice</h2><p id="service-message" hidden></p><p id="service-detail"></p></section>
+
       <div class="play-workspace">
         <section class="game-preview" aria-labelledby="preview-title">
-          <div class="preview-heading"><div><p class="index-label" data-i18n="public.previewEyebrow">THE GAME SPACE</p><h2 id="preview-title" data-i18n="public.previewTitle">Room for the first adventure.</h2></div><span class="preview-ratio" aria-label="9 to 16 aspect ratio" data-i18n-aria-label="public.previewAspect">9:16</span></div>
+          <div class="preview-heading"><h2 id="preview-title" data-i18n="public.previewTitle">The game space</h2><span class="preview-ratio" aria-label="9 to 16 aspect ratio" data-i18n-aria-label="public.previewAspect">9:16</span></div>
           <div class="preview-surface"><canvas id="game-preview-canvas" width="720" height="1280" role="img" aria-label="Empty white game preview. No playable game is available." data-i18n-aria-label="public.previewAria" aria-describedby="preview-note"><span data-i18n="public.previewFallback">This is a blank preview, not a playable game.</span></canvas></div>
-          <p class="preview-state" data-i18n="public.previewBadge">PREVIEW ONLY · NOT PLAYABLE</p>
-          <p id="preview-note" class="preview-note" data-i18n="public.previewNote">A blank 9:16 canvas marks the future game area. The first game is still being prepared; this is not a game screen or a live build.</p>
+          <p id="preview-note" class="preview-note"><span class="status-dot" aria-hidden="true"></span><span data-i18n="public.previewNote">Preview only. The first game is on its way.</span></p>
         </section>
-      <section class="submission-section" aria-labelledby="submission-title">
-        <div class="collection-line">
-          <p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">Checking submissions</span></p>
-          <p id="collection-deadline" class="collection-deadline">First-round deadline · Aug 31, 23:00 KST</p>
-        </div>
-        <form id="prompt-form" class="prompt-form" novalidate>
-          <div class="prompt-heading">
-            <div><p class="index-label" data-i18n="public.formEyebrow">YOUR IDEA, OUR NEXT CHAPTER</p><h2 id="submission-title"><label for="prompt" data-i18n="public.formTitle">What would you add to this game?</label></h2></div>
-            <div class="quota" id="quota-container"><span id="quota-status">Log in to share an idea</span><small id="quota-note">Up to 3 submissions per rolling 60 minutes</small></div>
-          </div>
-          <div id="edit-banner" class="edit-banner" hidden><span><span data-i18n="public.editingLabel">Editing your idea</span><span class="muted">· <span data-i18n="public.editingNoSlot">No submission slot used</span></span></span><button id="cancel-edit" class="text-button" type="button"><span class="button-copy" data-i18n="public.cancelEdit">Cancel edit</span> <span aria-hidden="true">×</span></button></div>
-          <textarea id="prompt" name="prompt" rows="4" data-i18n-placeholder="public.placeholder" placeholder="For example: I'd love a map that changes each run, with weapons I can craft from materials I find." aria-describedby="prompt-hint byte-count prompt-safety-note" spellcheck="false" autocomplete="off"></textarea>
-          <div class="prompt-bottom-line"><p id="prompt-hint">Small ideas welcome. Specific details help.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
-          <p class="prompt-safety-note" id="prompt-safety-note" data-i18n="public.safetyNote">Ideas become development candidates after safety review. A new submission uses one slot even while review is pending. Edits go through review again.</p>
-          <details class="safety-guidance" id="safety-guidance">
-            <summary><span class="safety-summary-copy" data-i18n="public.safetySummary">Submission guidelines · Teen content target</span><span class="safety-toggle" aria-hidden="true">＋</span></summary>
-            <div><p data-i18n="public.safetyRating">We aim for content at or below ESRB Teen. The game has not received an official ESRB rating.</p><ul>
-              <li data-i18n="public.safetyCombat">Ordinary fantasy combat ideas are welcome. We don't accept explicit sexual content, sexual objectification or exploitation, gore, dismemberment, or cruel or excessively realistic violence.</li>
-              <li data-i18n="public.safetyHarm">Don't submit instructions that encourage dangerous real-world acts, hate, harassment, threats, or exposure of personal information.</li>
-              <li data-i18n="public.safetyInjection">Don't ask to disable safety rules, change system permissions, or reveal personal information or secrets.</li>
-            </ul><p data-i18n="public.safetyLimits">We currently use basic checks and manual review. Acceptance or safety approval does not guarantee inclusion or release, and these checks cannot catch every unsafe input.</p></div>
-          </details>
-          <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden data-i18n="public.reloadEdit">Load the latest version</button><button id="copy-edit" type="button" class="text-button" hidden data-i18n="public.copyEdit">Use as a new idea</button></div></div>
-          <div class="prompt-actions"><p class="submission-rules"><span class="byte-rule" data-i18n="public.byteRule">Up to 2,000 UTF-8 bytes per idea</span><br><span data-i18n="public.editRule">Editable until the round closes · No deletion</span></p><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">Send idea</span><svg id="submit-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div>
-        </form>
-        <details class="my-proposals" id="my-proposals" hidden><summary><span><span data-i18n="public.myProposals">Your submissions</span> <span id="proposal-count" class="proposal-count">0</span></span><span class="summary-note"><span data-i18n="public.reviewEdit">View and edit</span> <span class="summary-chevron" aria-hidden="true">⌄</span></span></summary><div id="proposal-list" class="proposal-list"></div></details>
-        <p class="collection-footnote" id="collection-footnote" data-i18n="public.collectionFootnote">Ideas help shape the next version. Not every submission will be included as written.</p>
-      </section>
-      </div>
-      <section class="community-section" aria-labelledby="community-title">
-        <div class="community-heading"><div><p class="index-label" data-i18n="public.communityEyebrow">IDEAS FROM THE COMMUNITY</p><h2 id="community-title" data-i18n="public.communityTitle">See what others have in mind.</h2></div><p class="community-intro" data-i18n="public.communityIntro">Only ideas shared with the author's consent and approved for safety appear here. Public aliases are separate from Google profiles.</p></div>
-        <div class="community-grid">
-          <div class="community-feed">
-            <div class="community-feed-top"><div class="community-tabs" role="tablist" aria-label="Community feed order" data-i18n-aria-label="public.feedOrder"><button id="feed-recent-tab" class="community-tab" type="button" role="tab" aria-selected="true" aria-controls="community-feed-panel" data-feed-sort="recent" data-i18n="public.recentIdeas">Recent ideas</button><button id="feed-popular-tab" class="community-tab" type="button" role="tab" aria-selected="false" aria-controls="community-feed-panel" data-feed-sort="popular" tabindex="-1" data-i18n="public.popularIdeas">Popular ideas</button></div><button id="community-refresh" class="text-button" type="button" data-i18n="public.refreshCommunity">Refresh</button></div>
+
+        <div class="participation-column">
+          <section class="community-section" aria-labelledby="community-title">
+            <div class="community-feed-top">
+              <h2 id="community-title" data-i18n="public.communityTitle">Voting</h2>
+              <div class="community-tabs" role="tablist" aria-label="Community feed order" data-i18n-aria-label="public.feedOrder"><button id="feed-recent-tab" class="community-tab" type="button" role="tab" aria-selected="true" aria-controls="community-feed-panel" data-feed-sort="recent" data-i18n="public.recentIdeas">Recent</button><button id="feed-popular-tab" class="community-tab" type="button" role="tab" aria-selected="false" aria-controls="community-feed-panel" data-feed-sort="popular" tabindex="-1" data-i18n="public.popularIdeas">Popular</button></div>
+              <div class="community-pager"><button id="community-prev" class="icon-button" type="button" aria-label="Previous ideas" data-i18n-aria-label="public.feedPrevious" disabled><span aria-hidden="true">←</span></button><span id="community-page" class="community-page" aria-live="polite">1 / 1</span><button id="community-next" class="icon-button" type="button" aria-label="Next ideas" data-i18n-aria-label="public.feedNext" disabled><span aria-hidden="true">→</span></button></div>
+              <button id="community-refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh" data-i18n-aria-label="public.refreshCommunity" data-i18n-title="public.refreshCommunity"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.4 6.4a8 8 0 0 1 12.8 2.2M17.6 17.6A8 8 0 0 1 4.8 15.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
             <p id="community-vote-note" class="community-vote-note" hidden></p>
-            <div id="community-feed-panel" role="tabpanel" aria-labelledby="feed-recent-tab" aria-busy="true"><p id="community-feed-status" class="community-empty" role="status">Loading shared ideas…</p><div id="community-feed-list" class="community-feed-list"></div></div>
-          </div>
-          <aside class="contribution-board" aria-labelledby="leaderboard-title">
-            <p class="index-label" data-i18n="public.leaderboardEyebrow">CONTRIBUTIONS THAT MADE IT IN</p><h3 id="leaderboard-title" data-i18n="public.leaderboardTitle">Contribution board</h3><p class="leaderboard-note" data-i18n="public.leaderboardNote">Points reflect verified contributions to released game versions. No test scores or sample players are shown.</p>
-            <p id="leaderboard-status" class="community-empty" role="status">Loading contributions…</p><ol id="leaderboard-list" class="leaderboard-list"></ol>
-            <div id="my-contribution" class="my-contribution" hidden><p id="my-contribution-summary"></p><button id="leaderboard-privacy" class="text-button" type="button"></button></div><p id="community-scoring" class="community-scoring" hidden></p>
-          </aside>
+            <div id="community-feed-panel" role="tabpanel" aria-labelledby="feed-recent-tab" aria-busy="true"><p id="community-feed-status" class="community-empty" role="status">Loading ideas…</p><div id="community-feed-list" class="community-feed-list"></div></div>
+            <div id="community-feedback" class="community-feedback" role="status" aria-live="polite" hidden><p id="community-feedback-message"></p><button id="community-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button></div>
+          </section>
+
+          <section class="submission-section" aria-labelledby="submission-title">
+            <div class="collection-line"><p class="collection-state"><span class="status-dot" id="collection-dot" aria-hidden="true"></span><span id="collection-label">Checking submissions</span></p><p id="collection-deadline" class="collection-deadline">Closes Aug 31 · 23:00 KST</p></div>
+            <form id="prompt-form" class="prompt-form" novalidate>
+              <div class="prompt-heading"><h2 id="submission-title"><label for="prompt" data-i18n="public.formTitle">Your next idea</label></h2><div class="quota" id="quota-container"><span id="quota-status">Log in to share an idea</span><small id="quota-note">3 ideas per rolling 60 minutes</small></div></div>
+              <div id="edit-banner" class="edit-banner" hidden><span><span data-i18n="public.editingLabel">Editing your idea</span><span class="muted">· <span data-i18n="public.editingNoSlot">No submission slot used</span></span></span><button id="cancel-edit" class="text-button" type="button"><span class="button-copy" data-i18n="public.cancelEdit">Cancel edit</span> <span aria-hidden="true">×</span></button></div>
+              <textarea id="prompt" name="prompt" rows="3" data-i18n-placeholder="public.placeholder" placeholder="What would make this roguelike more fun?" aria-describedby="prompt-hint byte-count public-idea-notice" spellcheck="false" autocomplete="off"></textarea>
+              <div class="prompt-bottom-line"><p id="prompt-hint">Small ideas welcome. Specific details help.</p><output id="byte-count" for="prompt" aria-live="off">0 <span>/ 2,000 bytes</span></output></div>
+              <div id="form-feedback" class="form-feedback" role="status" aria-live="polite" hidden><p id="form-message"></p><div class="feedback-actions"><button id="reload-edit" type="button" class="text-button" hidden data-i18n="public.reloadEdit">Load the latest version</button><button id="copy-edit" type="button" class="text-button" hidden data-i18n="public.copyEdit">Use as a new idea</button></div></div>
+              <div class="prompt-actions"><p class="submission-rules"><span id="public-idea-notice" data-i18n="public.ideasPublic">Ideas are public.</span><br><span data-i18n="public.editRule">Edit until the round closes · No deletion</span></p><div class="prompt-buttons"><button id="open-my-proposals" class="button button-quiet my-ideas-button" type="button" aria-haspopup="dialog" aria-controls="my-proposals-dialog" hidden><span data-i18n="public.myIdeas">My ideas</span><span id="proposal-count" class="proposal-count">0</span></button><button class="button button-primary" id="submit-button" type="submit" disabled><span id="submit-label">Send idea</span><svg id="submit-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="spinner" id="submit-spinner" hidden aria-hidden="true"></span></button></div></div>
+            </form>
+          </section>
         </div>
-        <div id="community-feedback" class="community-feedback" role="status" aria-live="polite" hidden><p id="community-feedback-message"></p><button id="community-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button></div>
-      </section>
+
+        <aside class="contribution-board" aria-labelledby="leaderboard-title">
+          <div class="board-heading"><h2 id="leaderboard-title" data-i18n="public.leaderboardTitle">Leaderboard</h2><span aria-hidden="true">↗</span></div>
+          <p class="leaderboard-note" data-i18n="public.leaderboardNote">Contributions to released game versions.</p>
+          <p id="leaderboard-status" class="community-empty" role="status">Loading contributions…</p><ol id="leaderboard-list" class="leaderboard-list"></ol>
+          <div id="my-contribution" class="my-contribution" hidden><p id="my-contribution-summary"></p></div>
+        </aside>
+      </div>
+
       <section class="process-section" aria-labelledby="process-title">
-        <div class="process-heading"><div><p class="index-label" data-i18n="public.processEyebrow">FROM YOUR PROMPT TO THE NEXT VERSION</p><h2 id="process-title" data-i18n="public.processTitle">An idea today. A new version next.</h2></div><p class="process-intro" data-i18n="public.processIntro">Different ideas, one shared game. The combat, progression, and rules are ours to figure out together.</p></div>
-        <p class="process-status-note"><span class="process-status-label" data-i18n="public.processLabel">How it will work</span><span class="process-status-copy" data-i18n="public.processPending">The first game is still being prepared. The development and release cycle below is planned for the first round; it is not a live progress tracker.</span></p>
-        <figure class="process-diagram">
-          <ol class="process-flow" aria-label="The development cycle, from submissions to feedback on the next round" data-i18n-aria-label="public.processAria">
-            <li class="process-step"><span class="flow-number" aria-hidden="true">01</span><h3 data-i18n="public.step1Title">Collect ideas</h3><p data-i18n="public.step1Body">Gather everyone's prompts for each round.</p></li>
-            <li class="process-step"><span class="flow-number" aria-hidden="true">02</span><h3 data-i18n="public.step2Title">Review requests</h3><p data-i18n="public.step2Body">Check safety, group similar ideas, and resolve conflicts with the game's rules.</p></li>
-            <li class="process-step"><span class="flow-number" aria-hidden="true">03</span><h3 class="codex-label" data-i18n="public.step3Title">Codex builds</h3><p data-i18n="public.step3Body">Turn reviewed requests into game code.</p></li>
-            <li class="process-step"><span class="flow-number" aria-hidden="true">04</span><h3 data-i18n="public.step4Title">Test the game</h3><p data-i18n="public.step4Body">Run the game and check the changes.</p></li>
-            <li class="process-step"><span class="flow-number" aria-hidden="true">05</span><h3 data-i18n="public.step5Title">Release a version</h3><p data-i18n="public.step5Body">Publish a version that passes verification.</p></li>
-            <li class="process-step"><span class="flow-number" aria-hidden="true">06</span><h3 data-i18n="public.step6Title">Play, then suggest</h3><p data-i18n="public.step6Body">Use your play experience to suggest what comes next.</p></li>
-          </ol>
-          <div class="process-loop"><span data-i18n="public.processLoop">What you play informs the next round of ideas</span></div>
-          <div class="process-policies" aria-label="What happens if testing or a release fails" data-i18n-aria-label="public.policyAria">
-            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong data-i18n="public.validationFailed">If testing fails</strong><span class="policy-arrow" aria-hidden="true">→</span><span data-i18n="public.validationPolicy">Hold the release; keep the working version</span></span></p>
-            <p><span class="policy-branch" aria-hidden="true">↳</span><span><strong data-i18n="public.releaseFailed">If a release breaks</strong><span class="policy-arrow" aria-hidden="true">→</span><span data-i18n="public.releasePolicy">Return to the previous working version</span></span></p>
-          </div>
-          <figcaption data-i18n="public.processCaption">Keeping or restoring a working version only applies once a game has been released. If the first round fails verification, we will delay release and fix the problem.</figcaption>
-        </figure>
+        <h2 id="process-title" data-i18n="public.compactProcessTitle">The planned cycle</h2>
+        <ol class="process-flow" aria-label="The development cycle, from submissions to feedback on the next round" data-i18n-aria-label="public.processAria">
+          <li class="process-step"><span class="flow-number" aria-hidden="true">01</span><span data-i18n="public.compactStep1">Ideas &amp; planning</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">02</span><span class="codex-label" data-i18n="public.compactStep2">Codex builds</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">03</span><span data-i18n="public.compactStep3">Test &amp; release</span></li>
+          <li class="process-step"><span class="flow-number" aria-hidden="true">04</span><span data-i18n="public.compactStep4">Play &amp; repeat</span><span class="flow-repeat" aria-hidden="true">↺</span></li>
+        </ol>
       </section>
     </main>
-    <footer class="footer wrap"><span data-i18n="public.footerTagline">ONE GAME. MANY POSSIBILITIES.</span><span><span data-i18n="public.footerTogether">Built together. Played solo.</span><span class="footer-cross" aria-hidden="true">✳</span></span></footer>
   </div>
   <dialog id="login-dialog" class="login-dialog" aria-labelledby="login-title" aria-describedby="login-description">
     <label class="language-control dialog-language"><span class="sr-only" data-i18n="public.language">Language</span><select id="login-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label>
@@ -149,14 +121,13 @@
     <div class="google-button-area" id="google-button-area"><div id="google-signin"></div></div><p class="login-message" id="login-message" role="status" aria-live="polite">Preparing Google login.</p>
     <button id="retry-google" class="text-button" type="button" hidden data-i18n="public.retryGoogle">Try preparing login again</button><p class="login-draft-note" id="login-draft-note">Your draft stays in this browser.</p>
   </dialog>
-  <dialog id="publication-dialog" class="publication-dialog" aria-labelledby="publication-title" aria-describedby="publication-description">
-    <div class="publication-dialog-heading"><p class="index-label" data-i18n="public.publicationEyebrow">YOUR CHOICE TO SHARE</p><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="publication-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-publication" class="dialog-close" type="button" aria-label="Close sharing dialog" data-i18n-aria-label="public.closePublication">×</button></div>
-    <h2 id="publication-title"></h2><p id="publication-description"></p><p id="publication-alias" class="publication-alias"></p>
-    <div id="publication-source-wrap" class="publication-source-wrap"><p class="index-label" data-i18n="public.publicationSourceLabel">THE EXACT TEXT YOU WILL SHARE</p><p id="publication-source" class="publication-source"></p></div>
-    <label id="publication-consent-label" class="publication-consent"><input id="publication-consent" type="checkbox"><span id="publication-consent-copy"></span></label>
-    <p id="publication-message" class="publication-message" role="status" aria-live="polite" hidden></p>
-    <button id="publication-retry" class="text-button" type="button" hidden data-i18n="public.retryCommunityAction">Check the same request again</button>
-    <div class="publication-actions"><button id="cancel-publication" class="button button-quiet" type="button" data-i18n="public.cancelSharing">Cancel</button><button id="confirm-publication" class="button button-primary" type="button" disabled></button></div>
+  <dialog id="my-proposals-dialog" class="content-dialog my-proposals-dialog" aria-labelledby="my-proposals-title">
+    <div class="content-dialog-heading"><h2 id="my-proposals-title" data-i18n="public.myIdeas">My ideas</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="my-ideas-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-my-proposals" class="dialog-close" type="button" aria-label="Close my ideas" data-i18n-aria-label="public.closeMyIdeas"><span aria-hidden="true">×</span></button></div>
+    <div class="my-proposals" id="my-proposals" hidden><div id="proposal-list" class="proposal-list"></div></div>
+  </dialog>
+  <dialog id="idea-dialog" class="content-dialog idea-dialog" aria-labelledby="idea-title" aria-describedby="idea-author">
+    <div class="content-dialog-heading"><h2 id="idea-title" data-i18n="public.ideaTitle">Community idea</h2><label class="language-control"><span class="sr-only" data-i18n="public.language">Language</span><select id="idea-language-select" data-language-select aria-label="Language" data-i18n-aria-label="public.language"><option value="en" lang="en">English</option><option value="ko" lang="ko">한국어</option></select></label><button id="close-idea" class="dialog-close" type="button" aria-label="Close idea" data-i18n-aria-label="public.closeIdea"><span aria-hidden="true">×</span></button></div>
+    <p id="idea-author" class="idea-author"></p><p id="idea-body" class="idea-body"></p>
   </dialog>
   <noscript><div class="noscript-notice">Enable JavaScript to submit ideas and log in with Google.</div></noscript>
 </body>

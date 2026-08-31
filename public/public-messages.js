@@ -7,8 +7,8 @@ const copy = {
     "yourga.me — 프롬프트로 진화하는 로그라이크"
   ],
   "pageDescription": [
-    "Help shape one single-player roguelike for desktop and mobile. Share your ideas, then follow the planned cycle of review, Codex development, testing, and release. The first game is still in development.",
-    "모두의 프롬프트로 함께 만드는 하나의 PC·모바일 싱글플레이 로그라이크. 제안 수집, Codex 자동 개발, 실행 검증, 공개를 거치며 진화하는 게임, yourga.me."
+    "Help shape one single-player roguelike for desktop and mobile. Propose ideas, vote on what comes next, and follow the first game as it takes shape.",
+    "모두의 제안으로 함께 만드는 하나의 PC·모바일 싱글플레이 로그라이크. 아이디어를 제안하고 다음 변화에 투표하며 첫 게임을 함께 만들어가세요."
   ],
   "skipLink": [
     "Skip to the idea form",
@@ -51,8 +51,8 @@ const copy = {
     "진화하는 로그라이크."
   ],
   "heroDescription": [
-    "One single-player roguelike for desktop and mobile, shaped by everyone's ideas. Submit a prompt; Codex will build from reviewed ideas, with each version tested before release.",
-    "모두의 제안으로 함께 만드는 하나의 PC·모바일 싱글플레이 로그라이크.\n프롬프트를 모아 정리하고, Codex가 자동 개발해 검증 후 공개합니다."
+    "One single-player roguelike. Your ideas shape what comes next.",
+    "모두가 함께 만드는 하나의 싱글플레이 로그라이크. 다음 변화는 당신의 아이디어에서."
   ],
   "firstReleaseIndex": [
     "01 / FIRST RELEASE",
@@ -111,23 +111,23 @@ const copy = {
     "제안 모집 상태 확인 중"
   ],
   "initialDeadline": [
-    "First-round deadline · Aug 31, 23:00 KST",
-    "첫 제안 마감 · 08.31 23:00 KST"
+    "Closes Aug 31 · 23:00 KST",
+    "마감 08.31 · 23:00 KST"
   ],
   "formEyebrow": [
     "YOUR IDEA, OUR NEXT CHAPTER",
     "당신의 아이디어, 우리의 다음 이야기"
   ],
   "formTitle": [
-    "What would you add to this game?",
-    "이런 게임이면 좋겠어요."
+    "Your next idea",
+    "다음 변화의 아이디어"
   ],
   "quotaAnonymous": [
     "Log in to share an idea",
     "로그인 후 제안할 수 있어요"
   ],
   "quotaLimit": [
-    "Up to 3 submissions per rolling 60 minutes",
+    "3 ideas per rolling 60 minutes",
     "최근 60분 동안 최대 3개"
   ],
   "editingLabel": [
@@ -143,8 +143,8 @@ const copy = {
     "수정 취소"
   ],
   "placeholder": [
-    "For example: I'd love a map that changes each run, with weapons I can craft from materials I find.",
-    "예: 탐험할 때마다 지형이 달라지고, 주운 재료로 무기를 만들 수 있으면 좋겠어요."
+    "What would make this roguelike more fun?",
+    "어떤 변화가 이 로그라이크를 더 재미있게 만들까요?"
   ],
   "promptHint": [
     "Small ideas welcome. Specific details help.",
@@ -191,8 +191,8 @@ const copy = {
     "한 번에 2,000바이트까지"
   ],
   "editRule": [
-    "Editable until the round closes · No deletion",
-    "모집 마감 전 수정 가능 · 삭제 불가"
+    "Edit until the round closes · No deletion",
+    "마감 전 수정 가능 · 삭제 불가"
   ],
   "send": [
     "Send idea",
@@ -551,12 +551,12 @@ const copy = {
     "제안 접수 일시정지"
   ],
   "collectionNext": [
-    "Now collecting ideas for the next round",
-    "다음 회차 제안을 모집하고 있어요"
+    "Next round is open",
+    "다음 회차 모집 중"
   ],
   "collectionOpen": [
-    "The first round is open. Share your idea.",
-    "지금, 첫 제안을 모집하고 있어요"
+    "Round one is open",
+    "첫 제안 모집 중"
   ],
   "collectionPreparing": [
     "Getting ready to accept ideas",
@@ -727,12 +727,12 @@ const copy = {
     "접수 결과를 확인하지 못했어요. 작성한 내용은 그대로 남아 있습니다."
   ],
   "editSaved": [
-    "Your edit was saved without using a new slot. Current status: {status}.",
-    "수정 내용을 저장했어요. 새 제안 횟수는 차감되지 않았어요. 현재 상태: {status}."
+    "Your edit was saved. No new submission slot was used.",
+    "수정 내용을 저장했어요. 새 제안 횟수는 사용하지 않았습니다."
   ],
   "submitted": [
-    "Idea submitted. One slot was used. Current status: {status}. You can edit it below until the round closes.",
-    "제안이 접수됐어요. 제출 횟수 1회를 사용했으며 현재 상태는 {status}입니다. 모집 마감 전에는 아래에서 수정할 수 있어요."
+    "Idea submitted. One slot used. You can edit it in My ideas until the round closes.",
+    "제안이 접수됐어요. 제출 횟수 1회를 사용했습니다. 마감 전까지 내 제안에서 수정할 수 있어요."
   ],
   "retrySeconds": [
     "in {seconds} seconds",
@@ -915,8 +915,8 @@ const copy = {
     "게임이 들어올 공간"
   ],
   "previewTitle": [
-    "Room for the first adventure.",
-    "첫 모험을 기다리는 공간."
+    "The game space",
+    "게임 공간"
   ],
   "previewAria": [
     "Empty white game preview. No playable game is available.",
@@ -935,31 +935,31 @@ const copy = {
     "미리보기 전용 · 아직 플레이할 수 없어요"
   ],
   "previewNote": [
-    "A blank 9:16 canvas marks the future game area. The first game is still being prepared; this is not a game screen or a live build.",
-    "향후 게임이 표시될 자리를 흰색 9:16 캔버스로 마련했습니다. 첫 게임을 준비 중이며 실제 게임 화면이나 실행 중인 빌드가 아닙니다."
+    "Preview only. The first game is on its way.",
+    "미리보기입니다. 아직 게임을 준비 중이에요."
   ],
   "communityEyebrow": [
     "IDEAS FROM THE COMMUNITY",
     "함께 나누는 아이디어"
   ],
   "communityTitle": [
-    "See what others have in mind.",
-    "다른 참여자의 생각도 만나보세요."
+    "Voting",
+    "투표"
   ],
   "communityIntro": [
-    "Only ideas shared with the author's consent and approved for safety appear here. Public aliases are separate from Google profiles.",
-    "작성자가 공개에 동의하고 안전 승인을 받은 제안만 표시합니다. 공개 별명은 Google 프로필과 별개입니다."
+    "Ideas are public. Vote for what you want to see next.",
+    "제안은 공개됩니다. 원하는 다음 변화에 투표하세요."
   ],
   "feedOrder": [
     "Community feed order",
     "공개 제안 정렬"
   ],
   "recentIdeas": [
-    "Recent ideas",
+    "Recent",
     "최근 의견"
   ],
   "popularIdeas": [
-    "Popular ideas",
+    "Popular",
     "인기 의견"
   ],
   "refreshCommunity": [
@@ -979,12 +979,12 @@ const copy = {
     "실제로 반영된 기여"
   ],
   "leaderboardTitle": [
-    "Contribution board",
-    "기여도 리더보드"
+    "Leaderboard",
+    "기여도 순위"
   ],
   "leaderboardNote": [
-    "Points reflect verified contributions to released game versions. No test scores or sample players are shown.",
-    "실제 공개된 게임에 검증된 기여를 점수로 기록합니다. 테스트 점수나 가상의 참여자를 표시하지 않습니다."
+    "Contributions to released game versions.",
+    "공개된 게임에 반영된 기여 기록입니다."
   ],
   "leaderboardLoading": [
     "Loading contributions…",
@@ -1011,12 +1011,12 @@ const copy = {
     "취소"
   ],
   "communityEmpty": [
-    "No ideas have been shared and safety-approved yet. Your submissions remain private unless you choose to share them.",
-    "아직 공개 동의와 안전 승인을 모두 받은 제안이 없습니다. 직접 공개를 선택하지 않은 제안은 비공개로 유지됩니다."
+    "No ideas yet. Be the first to suggest something.",
+    "아직 공개된 제안이 없어요. 첫 아이디어를 남겨주세요."
   ],
   "leaderboardEmpty": [
-    "No verified contribution scores are listed yet. Only participants who opt in will appear.",
-    "아직 표시할 검증된 기여도 기록이 없습니다. 리더보드는 공개에 동의한 참여자만 표시합니다."
+    "No contribution points yet. The first game is still being prepared.",
+    "아직 기여도 기록이 없어요. 첫 게임을 준비 중입니다."
   ],
   "communityUnavailable": [
     "Couldn't load the community. You can still write or edit your own ideas. Try Refresh shortly.",
@@ -1027,20 +1027,20 @@ const copy = {
     "커뮤니티 응답을 확인하지 못했습니다. 확인되지 않은 제안이나 점수는 표시하지 않습니다."
   ],
   "communityPrivateUnavailable": [
-    "Couldn't check your sharing and voting settings. Your idea draft is unchanged. Refresh the community before making changes.",
-    "공개·투표 설정을 확인하지 못했습니다. 작성 중인 초안은 그대로입니다. 변경하려면 커뮤니티를 다시 불러와 주세요."
+    "Couldn't check your votes. Your draft is kept. Refresh the community to try again.",
+    "내 투표를 확인하지 못했습니다. 초안은 보관 중입니다. 커뮤니티를 새로고침해 주세요."
   ],
   "communityAccountChanged": [
-    "Your account changed. Sharing and voting were not repeated. Check your account and try again.",
-    "로그인 계정이 바뀌었습니다. 공개 설정이나 투표를 다시 실행하지 않았어요. 계정을 확인한 뒤 다시 시도해 주세요."
+    "Your account changed. No vote was repeated. Check your account and try again.",
+    "로그인 계정이 바뀌었습니다. 투표를 반복하지 않았어요. 계정을 확인한 뒤 다시 시도해 주세요."
   ],
   "voteQuota": [
     "{remaining} / {limit} votes available this round",
     "이번 회차 남은 투표 {remaining} / {limit}"
   ],
   "voteQuotaNote": [
-    "Up and down votes share this allowance. Changing or removing a vote does not submit a new idea.",
-    "찬성·반대는 같은 투표권을 사용합니다. 표 변경·취소는 새 제안 접수와 별개입니다."
+    "Up and down votes share this limit.",
+    "찬성·반대 합산"
   ],
   "voteLoginNote": [
     "Log in to vote. You will need to choose your vote again after login.",
@@ -1195,8 +1195,8 @@ const copy = {
     "공개 설정을 확인하지 못했습니다. 커뮤니티를 새로고침한 뒤 다시 시도해 주세요. 공개하지 않았습니다."
   ],
   "yourContribution": [
-    "Your contribution: {points} points · {count} verified adoptions",
-    "내 기여도: {points}점 · 검증된 반영 {count}건"
+    "You: {points} points · {count} contributions",
+    "내 기여도 {points}점 · 반영 {count}건"
   ],
   "showLeaderboard": [
     "Join the public board",
@@ -1293,6 +1293,66 @@ const copy = {
   "formulaMultiply": [
     "{term} × {value}",
     "{term} × {value}"
+  ],
+  "ideasPublic": [
+    "Ideas are public.",
+    "제안은 공개됩니다."
+  ],
+  "readIdea": [
+    "Read",
+    "원문"
+  ],
+  "readIdeaAria": [
+    "Read idea by {alias}",
+    "{alias}님의 제안 읽기"
+  ],
+  "ideaTitle": [
+    "Community idea",
+    "제안 원문"
+  ],
+  "closeIdea": [
+    "Close idea",
+    "제안 원문 닫기"
+  ],
+  "feedPrevious": [
+    "Previous ideas",
+    "이전 제안"
+  ],
+  "feedNext": [
+    "Next ideas",
+    "다음 제안"
+  ],
+  "feedPage": [
+    "{page} / {pages}",
+    "{page} / {pages}"
+  ],
+  "myIdeas": [
+    "My ideas",
+    "내 제안"
+  ],
+  "closeMyIdeas": [
+    "Close my ideas",
+    "내 제안 닫기"
+  ],
+  "compactProcessTitle": [
+    "The planned cycle",
+    "예정된 개발 과정"
+  ],
+  "compactStep1": [
+    "Ideas & planning",
+    "제안·요구 정리"
+  ],
+  "compactStep2": [
+    "Codex builds",
+    "Codex 자동 개발"
+  ],
+  "compactStep3": [
+    "Test & release",
+    "검증·공개"
+  ],
+  "compactStep4": [
+    "Play & repeat",
+    "플레이·다시 제안"
   ]
 };
 

@@ -5,6 +5,7 @@ import { join, resolve, dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { INITIAL_CUTOFF, readConfig } from '../server/config.mjs';
 import { openDatabase } from '../server/database.mjs';
+import { activateCommunityPublicDefaults } from '../server/community-schema.mjs';
 import { createStore } from '../server/store.mjs';
 import { createApiHandler } from '../server/app.mjs';
 import { ApiError } from '../server/errors.mjs';
@@ -12,7 +13,7 @@ import { ApiError } from '../server/errors.mjs';
 export const TEST_CLOCK_SQL = '(SELECT now_ms FROM test_clock WHERE id = 1)';
 export const TEST_CLIENT_ID = 'test-client.apps.googleusercontent.com';
 
-export async function backendFixture(t, { time = INITIAL_CUTOFF - 4 * 3600000, secure = false } = {}) {
+export async function backendFixture(t, { time = INITIAL_CUTOFF - 4 * 3600000, secure = false, publicDefaults = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'yourgame-backend-'));
   const config = readConfig({
     APP_ORIGIN: secure ? 'https://yourga.me' : 'http://localhost:3000',
@@ -24,6 +25,7 @@ export async function backendFixture(t, { time = INITIAL_CUTOFF - 4 * 3600000, s
   const client = await openDatabase(config);
   await client.execute('CREATE TABLE test_clock(id INTEGER PRIMARY KEY, now_ms INTEGER NOT NULL)');
   await client.execute({ sql: 'INSERT INTO test_clock(id, now_ms) VALUES (1, ?)', args: [time] });
+  if (publicDefaults) await activateCommunityPublicDefaults(client, { expectedServiceRevision: 1, databaseClockSql: TEST_CLOCK_SQL });
   const clients = [client];
   const store = createStore(client, { now, databaseClockSql: TEST_CLOCK_SQL });
   const logs = [];

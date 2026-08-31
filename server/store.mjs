@@ -12,12 +12,13 @@ import {
 } from './admin-policy.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { checkSafetySchema } from './safety-schema.mjs';
-import { checkCommunitySchema } from './community-schema.mjs';
+import { checkCommunitySchema, assertCommunityPublicDefaults } from './community-schema.mjs';
+import { COMMUNITY_DEFAULT_READY_SQL } from './community-policy.mjs';
 import { createCommunityStore } from './community-store.mjs';
 import { checkContributionSchema } from './contribution-schema.mjs';
 import { createContributionStore } from './contribution-store.mjs';
 import {
-  assertScreenedBody, EDIT_REVIEW_COOLDOWN_MS, PROPOSAL_ATTEMPT_LIMIT, PROPOSAL_ATTEMPT_WINDOW_MS,
+  EDIT_REVIEW_COOLDOWN_MS, PROPOSAL_ATTEMPT_LIMIT, PROPOSAL_ATTEMPT_WINDOW_MS,
 } from './safety-policy.mjs';
 import { SAFETY_COLUMNS, SAFETY_JOINS, pendingSafetyStatements, safetyView } from './safety-store.mjs';
 
@@ -108,6 +109,7 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
       await checkAdminSchema(client);
       await checkSafetySchema(client);
       await checkCommunitySchema(client);
+      await assertCommunityPublicDefaults(client);
       await checkContributionSchema(client);
       return 'ok';
     },
@@ -284,7 +286,6 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
 
     async createProposal(userId, { body, requestId }) {
       validateBody(body);
-      assertScreenedBody(body);
       if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId)) {
         throw new ApiError(422, 'INVALID_REQUEST_ID', '접수 요청 식별자가 올바르지 않습니다. 새로고침 후 다시 시도해 주세요.');
       }
@@ -301,7 +302,7 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
               CASE WHEN clock.now_ms < ? THEN 'initial' ELSE 'pending' END, 1 FROM clock
             WHERE (SELECT COUNT(*) FROM proposals
               WHERE user_id = ? AND created_at > clock.now_ms - ? AND created_at <= clock.now_ms) < ?
-              AND ${PROPOSAL_ACCESS_SQL}
+              AND ${PROPOSAL_ACCESS_SQL} AND ${COMMUNITY_DEFAULT_READY_SQL}
             ON CONFLICT(user_id, request_id) DO NOTHING`,
           args: [proposalId, userId, requestId, bodyHash, body, INITIAL_CUTOFF,
             userId, WINDOW_MS, SUBMISSION_LIMIT, userId, userId],
@@ -311,8 +312,12 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
           WHERE p.user_id = ? AND p.request_id = ?`, args: [userId, requestId] },
         quotaStatement(userId, databaseClockSql),
         proposalAccessStatement(userId),
+        `SELECT ${COMMUNITY_DEFAULT_READY_SQL} AS ready`,
       ]);
       assertProposalAccess(results[5].rows[0]);
+      if (Number(results[6].rows[0]?.ready) !== 1) {
+        throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public participation is temporarily unavailable.');
+      }
       const time = Number(results[4].rows[0].now_ms);
       const quota = quotaView(results[4]);
       const row = results[3].rows[0];
@@ -327,7 +332,6 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
 
     async editProposal(userId, { id, body, revision }) {
       validateBody(body);
-      assertScreenedBody(body);
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(id)) {
         throw new ApiError(422, 'INVALID_PROPOSAL_ID', '수정할 제안을 확인해 주세요.');
       }
@@ -340,7 +344,7 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
             UPDATE proposals SET body = ?, updated_at = MAX(created_at, (SELECT now_ms FROM clock)), revision = revision + 1
             WHERE id = ? AND user_id = ? AND revision = ?
               AND (round_id = 'pending' OR (round_id = 'initial' AND (SELECT now_ms FROM clock) < ?))
-              AND ${PROPOSAL_ACCESS_SQL}
+              AND ${PROPOSAL_ACCESS_SQL} AND ${COMMUNITY_DEFAULT_READY_SQL}
               AND EXISTS (SELECT 1 FROM proposal_body_revisions ph WHERE ph.proposal_id = proposals.id
                 AND ph.body_revision = proposals.revision AND ph.body = proposals.body COLLATE BINARY)
               AND NOT EXISTS (SELECT 1 FROM proposal_edit_cooldowns WHERE user_id = ?
@@ -356,8 +360,12 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
         quotaStatement(userId, databaseClockSql),
         proposalAccessStatement(userId),
         { sql: 'SELECT last_edit_at FROM proposal_edit_cooldowns WHERE user_id = ?', args: [userId] },
+        `SELECT ${COMMUNITY_DEFAULT_READY_SQL} AS ready`,
       ]);
       assertProposalAccess(results[6].rows[0]);
+      if (Number(results[8].rows[0]?.ready) !== 1) {
+        throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public participation is temporarily unavailable.');
+      }
       const time = Number(results[5].rows[0].now_ms);
       const row = results[4].rows[0];
       if (!row) throw new ApiError(404, 'PROPOSAL_NOT_FOUND', '제안을 찾을 수 없습니다.');

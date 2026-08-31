@@ -49,11 +49,9 @@ async function publication(f, member, proposal, visible = true, overrides = {}) 
 
 async function publish(f, member, body) {
   const proposal = await create(f, member, body);
-  await review(f, proposal.id);
-  const shared = await publication(f, member, proposal);
   const item = (await f.community.privateState(member.session)).publications.find(value => value.proposalId === proposal.id);
   return { proposal, id: item.publicId, proposalRevision: item.proposalRevision,
-    publicationRevision: item.publicationRevision, roundId: proposal.roundId === 'initial' ? 'initial' : null, ...shared };
+    publicationRevision: item.publicationRevision, roundId: proposal.roundId === 'initial' ? 'initial' : null };
 }
 
 function voteInput(item, direction = 'up', values = {}) {
@@ -76,25 +74,26 @@ async function count(f, table, userId) {
     args: userId ? [userId] : [] })).rows[0].n);
 }
 
-test('community is private by default and uses independent generated identities with a strict public projection', async t => {
+test('a new proposal is public immediately under an independent generated identity without approval or fabricated consent', async t => {
   const f = await fixture(t);
   const member = await f.login('private-google-subject');
   const proposal = await create(f, member, '  Private original idea\nwith preserved whitespace.  ');
-  await review(f, proposal.id);
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
-  assert.equal(await count(f, 'community_profiles'), 0);
+  assert.equal(proposal.safety.status, 'pending');
+  assert.equal((await f.community.publicFeed()).recent.length, 1);
+  assert.equal(await count(f, 'community_profiles'), 2); // administrator + participant
   const own = await f.community.privateState(member.session);
   assert.equal(own.ownerId, member.session.user.id);
-  assert.equal(own.profile.leaderboardVisible, false);
+  assert.equal(own.profile.leaderboardVisible, true);
+  assert.equal(own.profile.visibilitySource, 'service_default');
   assert.match(own.profile.alias, /^Player-[0-9a-f]{12}$/);
   assert.match(own.profile.id, /^[a-f0-9-]{36}$/);
   assert.notEqual(own.profile.id, member.session.user.id);
-  assert.deepEqual(own.publications, [{ proposalId: proposal.id, proposalRevision: 1, publicationRevision: 0,
-    publicId: null, requested: false, eligible: false }]);
-  const shared = await publication(f, member, proposal);
+  assert.deepEqual(own.publications, [{ proposalId: proposal.id, proposalRevision: 1, publicationRevision: 1,
+    publicId: own.publications[0].publicId, requested: true, eligible: true, visibilitySource: 'service_default' }]);
+  assert.deepEqual(own.publicationPolicy, { version: 'public-default-v1', defaultPublic: true });
   const item = (await f.community.publicFeed()).recent[0];
   assert.notEqual(item.id, proposal.id);
-  assert.equal(item.id, shared.publicId);
+  assert.equal(item.id, own.publications[0].publicId);
   assert.equal(item.body, proposal.body);
   assert.deepEqual(Object.keys(item).sort(), ['author', 'body', 'createdAt', 'downvotes', 'id', 'proposalRevision', 'publicationRevision', 'roundId', 'upvotes', 'votingOpen']);
   assert.deepEqual(Object.keys(item.author).sort(), ['alias', 'id']);
@@ -102,25 +101,31 @@ test('community is private by default and uses independent generated identities 
   assert.doesNotMatch(JSON.stringify(item), /google|Private admin|Synthetic independent|bodyHash|reviewId|userId|email/i);
   assert.equal((await f.community.privateState(member.session)).profile.id, own.profile.id);
   assert.equal((await f.store.listProposals(member.session.user.id)).quota.remaining, 2);
+  assert.equal((await f.client.execute('SELECT requested FROM community_publications')).rows[0].requested, 0);
+  assert.equal(await count(f, 'community_events'), 0);
+  assert.equal(await count(f, 'community_requests'), 0);
+  assert.equal((await f.store.admin.listEligibleProposals({ roundId: 'initial' })).length, 0);
 });
 
-test('pending consent becomes public only after explicit approval of the same source and current safety policy', async t => {
+test('pending, held, blocked and reapproved safety reviews do not gate public participation or invalidate votes', async t => {
   const f = await fixture(t);
   const author = await f.login();
   const viewer = await f.login('viewer-subject');
-  const proposal = await create(f, author);
-  const shared = await publication(f, author, proposal);
+  const item = await publish(f, author);
   assert.equal((await f.community.privateState(author.session)).publications[0].requested, true);
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
-  const input = voteInput({ id: shared.publicId, proposalRevision: 1, publicationRevision: 1, roundId: 'initial' });
-  await assert.rejects(f.community.mutate(viewer.session, input), errorCode('PUBLICATION_UNAVAILABLE'));
-  await review(f, proposal.id);
-  assert.equal((await f.community.publicFeed()).recent[0].body, proposal.body);
+  const input = voteInput(item);
   await f.community.mutate(viewer.session, input);
-  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
+  const vote = (await f.client.execute('SELECT * FROM community_votes')).rows;
+  for (const status of ['held', 'blocked', 'approved']) {
+    await review(f, item.proposal.id, status);
+    assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
+    assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 1);
+  }
+  assert.deepEqual((await f.client.execute('SELECT * FROM community_votes')).rows, vote);
   await f.client.execute("UPDATE safety_meta SET value = 'synthetic-next-policy' WHERE key = 'policy_version'");
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
-  assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
+  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
+  assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 1);
+  assert.equal((await f.store.admin.listEligibleProposals({ roundId: 'initial' })).length, 0);
 });
 
 test('publication changes use compare-and-swap and receipts cannot replay a hide/show transition or different payload', async t => {
@@ -128,20 +133,20 @@ test('publication changes use compare-and-swap and receipts cannot replay a hide
   const author = await f.login();
   const proposal = await create(f, author);
   await review(f, proposal.id);
-  const original = operation('set_publication', { proposalId: proposal.id, proposalRevision: 1, publicationRevision: 0, visible: true });
+  const original = operation('set_publication', { proposalId: proposal.id, proposalRevision: 1, publicationRevision: 1, visible: true });
   const secondStore = createCommunityStore(f.client, { databaseClockSql: TEST_CLOCK_SQL });
   const results = await Promise.all([f.community.mutate(author.session, original), secondStore.mutate(author.session, { ...original })]);
   assert.deepEqual(results[0], results[1]);
   assert.equal(await count(f, 'community_events', author.session.user.id), 1);
   await assert.rejects(f.community.mutate(author.session, { ...original, visible: false }), errorCode('IDEMPOTENCY_CONFLICT'));
   const changed = await Promise.allSettled([
-    publication(f, author, proposal, false, { publicationRevision: 1 }),
-    publication(f, author, proposal, true, { publicationRevision: 1 }),
+    publication(f, author, proposal, false, { publicationRevision: 2 }),
+    publication(f, author, proposal, true, { publicationRevision: 2 }),
   ]);
   assert.equal(changed.filter(value => value.status === 'fulfilled').length, 1);
   assert.equal(changed.find(value => value.status === 'rejected').reason.code, 'COMMUNITY_REVISION_CONFLICT');
   const state = await f.community.privateState(author.session);
-  assert.equal(state.publications[0].publicationRevision, 2);
+  assert.equal(state.publications[0].publicationRevision, 3);
   await f.community.mutate(author.session, original);
   assert.deepEqual((await f.community.privateState(author.session)).publications, state.publications);
   assert.equal(await count(f, 'community_events', author.session.user.id), 2);
@@ -240,7 +245,7 @@ test('self voting, forged ownership and revoked sessions cannot affect another a
   assert.equal(await count(f, 'community_votes'), 0);
 });
 
-test('withdrawing and republishing consent creates a new generation and never resurrects previous votes', async t => {
+test('withdrawing and republishing creates a new generation and never resurrects previous votes', async t => {
   const f = await fixture(t);
   const author = await f.login();
   const viewer = await f.login('generation-voter');
@@ -262,7 +267,7 @@ test('withdrawing and republishing consent creates a new generation and never re
   assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
 });
 
-test('editing requires new exact-content consent and approval without changing the submission quota or inheriting votes', async t => {
+test('editing publishes the new body atomically without changing submission quota or inheriting votes', async t => {
   const f = await fixture(t);
   const author = await f.login();
   const viewer = await f.login('edit-voter');
@@ -270,15 +275,16 @@ test('editing requires new exact-content consent and approval without changing t
   await f.community.mutate(viewer.session, voteInput(item));
   const edit = (await f.store.editProposal(author.session.user.id, { id: item.proposal.id, body: 'A revised colorful puzzle.', revision: 1 })).proposal;
   assert.equal(edit.revision, 2);
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
+  assert.equal((await f.community.publicFeed()).recent[0].body, edit.body);
   const stale = (await f.community.privateState(author.session)).publications[0];
   assert.equal(stale.requested, true);
-  assert.equal(stale.proposalRevision, 1);
-  assert.equal(stale.eligible, false);
+  assert.equal(stale.proposalRevision, 2);
+  assert.equal(stale.publicationRevision, item.publicationRevision + 1);
+  assert.equal(stale.eligible, true);
+  assert.equal(stale.visibilitySource, 'service_default');
+  assert.equal(edit.safety.status, 'pending');
   await review(f, edit.id);
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
   await assert.rejects(publication(f, author, item.proposal), errorCode('COMMUNITY_REVISION_CONFLICT'));
-  await publication(f, author, edit);
   const visible = (await f.community.publicFeed()).recent[0];
   assert.equal(visible.body, edit.body);
   assert.equal(visible.proposalRevision, 2);
@@ -286,19 +292,22 @@ test('editing requires new exact-content consent and approval without changing t
   assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
   assert.equal((await f.store.listProposals(author.session.user.id)).quota.remaining, 2);
   assert.equal(edit.createdAt, item.proposal.createdAt);
+  await assert.rejects(f.community.mutate(viewer.session, voteInput(item)), errorCode('COMMUNITY_REVISION_CONFLICT'));
+  await f.community.mutate(viewer.session, voteInput(visible));
+  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
 });
 
-test('holding/reapproving safety and excluding/restoring moderation invalidate old vote bindings permanently', async t => {
+test('game safety changes preserve votes while explicit operating exclusion invalidates them permanently', async t => {
   const f = await fixture(t);
   const author = await f.login();
   const viewer = await f.login('review-voter');
   const item = await publish(f, author);
   await f.community.mutate(viewer.session, voteInput(item));
   await review(f, item.proposal.id, 'held');
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
+  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
   await review(f, item.proposal.id);
-  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 0);
-  assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
+  assert.equal((await f.community.publicFeed()).recent[0].upvotes, 1);
+  assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 1);
   await f.community.mutate(viewer.session, voteInput(item));
   await f.store.admin.mutate(f.admin.session, adminOperation('moderate_proposal', { proposalId: item.proposal.id, moderation: 'excluded', revision: 1 }));
   assert.deepEqual((await f.community.publicFeed()).recent, []);
@@ -307,7 +316,7 @@ test('holding/reapproving safety and excluding/restoring moderation invalidate o
   assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
 });
 
-test('suspend/restore control revisions never reactivate old author consent or old voter choices', async t => {
+test('suspend/restore hides the author while suspended and never reactivates old votes', async t => {
   const f = await fixture(t);
   let author = await f.login('suspension-author');
   let viewer = await f.login('suspension-voter');
@@ -323,8 +332,7 @@ test('suspend/restore control revisions never reactivate old author consent or o
   assert.deepEqual((await f.community.publicFeed()).recent, []);
   await f.store.admin.mutate(f.admin.session, adminOperation('set_user_status', { userId: author.session.user.id, status: 'active', revision: 2 }));
   author = await f.login('suspension-author');
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
-  await publication(f, author, item.proposal);
+  assert.equal((await f.community.publicFeed()).recent[0].body, item.proposal.body);
   assert.equal((await f.community.publicFeed()).recent[0].upvotes, 0);
   assert.equal((await f.community.privateState(viewer.session)).voteQuota.used, 0);
 });
@@ -372,8 +380,8 @@ test('a vote whose write is delayed until cutoff is rejected using database exec
   assert.equal(await count(f, 'community_events', viewer.session.user.id), 0);
 });
 
-test('last-write safety, privacy, membership and service changes cannot be bypassed by an earlier valid read', async t => {
-  for (const change of ['safety', 'publication', 'voter', 'author', 'service']) {
+test('last-write privacy, body, operating exclusion, membership and service changes are rechecked atomically', async t => {
+  for (const change of ['body', 'moderation', 'publication', 'voter', 'author', 'service']) {
     await t.test(change, async nested => {
       const f = await fixture(nested);
       const author = await f.login();
@@ -383,7 +391,10 @@ test('last-write safety, privacy, membership and service changes cannot be bypas
       const wrapper = { execute: (...args) => f.client.execute(...args), batch: async (statements, mode) => {
         if (!changed && statements.some(statement => String(statement.sql || statement).includes('INSERT INTO community_votes'))) {
           changed = true;
-          if (change === 'safety') await review(f, item.proposal.id, 'held');
+          if (change === 'body') await f.store.editProposal(author.session.user.id, { id: item.proposal.id, revision: 1, body: 'A newly saved body.' });
+          if (change === 'moderation') await f.store.admin.mutate(f.admin.session, adminOperation('moderate_proposal', {
+            proposalId: item.proposal.id, moderation: 'excluded', revision: 1,
+          }));
           if (change === 'publication') await publication(f, author, item.proposal, false);
           if (change === 'service') await setService(f, { mode: 'ended', confirmation: 'END SERVICE' });
           if (change === 'author' || change === 'voter') await f.store.admin.mutate(f.admin.session, adminOperation('set_user_status', {
@@ -393,7 +404,7 @@ test('last-write safety, privacy, membership and service changes cannot be bypas
         return f.client.batch(statements, mode);
       } };
       const store = createCommunityStore(wrapper, { databaseClockSql: TEST_CLOCK_SQL });
-      const expected = { safety: 'PUBLICATION_UNAVAILABLE', publication: 'COMMUNITY_REVISION_CONFLICT',
+      const expected = { body: 'COMMUNITY_REVISION_CONFLICT', moderation: 'PUBLICATION_UNAVAILABLE', publication: 'COMMUNITY_REVISION_CONFLICT',
         voter: 'LOGIN_REQUIRED', author: 'PUBLICATION_UNAVAILABLE', service: 'SERVICE_ENDED' };
       await assert.rejects(store.mutate(viewer.session, voteInput(item)), errorCode(expected[change]));
       assert.equal(changed, true);
@@ -403,7 +414,7 @@ test('last-write safety, privacy, membership and service changes cannot be bypas
   }
 });
 
-test('delayed publication consent cannot transfer across a source edit', async t => {
+test('a delayed explicit visibility choice cannot mutate a later source revision', async t => {
   const f = await fixture(t);
   const author = await f.login();
   const proposal = await create(f, author);
@@ -418,11 +429,12 @@ test('delayed publication consent cannot transfer across a source edit', async t
   } };
   const store = createCommunityStore(wrapper, { databaseClockSql: TEST_CLOCK_SQL });
   await assert.rejects(store.mutate(author.session, operation('set_publication', {
-    proposalId: proposal.id, proposalRevision: 1, publicationRevision: 0, visible: true,
+    proposalId: proposal.id, proposalRevision: 1, publicationRevision: 1, visible: false,
   })), errorCode('COMMUNITY_REVISION_CONFLICT'));
   assert.equal(changed, true);
-  assert.deepEqual((await f.community.publicFeed()).recent, []);
-  assert.equal((await f.community.privateState(author.session)).publications[0].requested, false);
+  assert.equal((await f.community.publicFeed()).recent[0].body, 'A different valid puzzle.');
+  assert.equal((await f.community.privateState(author.session)).publications[0].requested, true);
+  assert.equal((await f.community.privateState(author.session)).publications[0].visibilitySource, 'service_default');
   assert.equal(await count(f, 'community_events', author.session.user.id), 0);
 });
 
@@ -483,7 +495,7 @@ test('rate cleanup is bounded, stores no request content and malformed attempts 
   assert.equal(rows.length, 51);
   assert.deepEqual(Object.keys(rows[0]).sort(), ['expires_at', 'used', 'user_id', 'window_start']);
   assert.equal(await count(f, 'community_events'), 0);
-  assert.equal(await count(f, 'community_profiles'), 0);
+  assert.equal(await count(f, 'community_profiles'), 2);
 });
 
 test('public lists are bounded and net-vote ordering has deterministic upvote, time and identity tie breaks', async t => {

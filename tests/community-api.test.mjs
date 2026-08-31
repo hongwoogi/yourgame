@@ -28,10 +28,6 @@ async function participant(f, subject, name) {
 async function reviewedProposal(f, author, { approve = true, body = 'Add a forest with changing paths.' } = {}) {
   const created = await f.store.createProposal(author.session.user.id, { requestId: randomUUID(), body });
   const proposal = created.proposal;
-  const shared = await post(f, author, change('set_publication', {
-    proposalId: proposal.id, proposalRevision: proposal.revision, publicationRevision: 0, visible: true,
-  }));
-  assert.equal(shared.status, 200);
   if (approve) await approveProposal(f, proposal.id);
   return proposal;
 }
@@ -55,28 +51,31 @@ test('anonymous community reads are bounded public DTOs and never create session
   const author = await participant(f, 'private-google-subject', 'Private Google name');
   await f.store.createProposal(author.session.user.id, { requestId: randomUUID(), body: 'Private unshared idea.' });
   const sessionsBefore = (await f.client.execute('SELECT COUNT(*) AS n FROM sessions')).rows[0].n;
+  const profilesBefore = (await f.client.execute('SELECT COUNT(*) AS n FROM community_profiles')).rows[0].n;
   for (const url of ['/api/community', '/api/community?view=public']) {
     const result = await request(f.handler, url, { origin: null });
     assert.equal(result.status, 200);
-    assert.deepEqual(Object.keys(result.body).sort(), ['leaderboard', 'popular', 'recent', 'round', 'scoring', 'serverTime']);
-    assert.deepEqual(result.body.recent, []);
-    assert.deepEqual(result.body.popular, []);
-    assert.deepEqual(result.body.leaderboard, { items: [] });
+    assert.deepEqual(Object.keys(result.body).sort(), ['leaderboard', 'popular', 'publicationPolicy', 'recent', 'round', 'scoring', 'serverTime']);
+    assert.equal(result.body.recent[0].body, 'Private unshared idea.');
+    assert.deepEqual(result.body.popular, result.body.recent);
+    assert.equal(result.body.leaderboard.items.length, 1);
+    assert.equal(result.body.leaderboard.items[0].points, '0');
+    assert.deepEqual(result.body.publicationPolicy, { version: 'public-default-v1', defaultPublic: true });
     assert.equal(result.body.scoring.issuanceEnabled, false);
     assert.equal(result.headers['set-cookie'], undefined);
     assert.match(result.headers['cache-control'], /no-store/);
     assert.equal(result.headers['x-content-type-options'], 'nosniff');
-    assert.doesNotMatch(result.text, /Private Google name|private-google-subject|Private unshared idea/);
+    assert.doesNotMatch(result.text, /Private Google name|private-google-subject/);
   }
   assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM sessions')).rows[0].n, sessionsBefore);
-  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM community_profiles')).rows[0].n, 0);
+  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM community_profiles')).rows[0].n, profilesBefore);
 });
 
-test('only the consented, currently approved body is public under a separate generated identity', async t => {
+test('the current body is public without consent or safety approval under a separate generated identity', async t => {
   const f = await backendFixture(t);
   const author = await participant(f, 'private-author-subject', 'Google identity stays private');
   const proposal = await reviewedProposal(f, author, { approve: false });
-  assert.deepEqual((await request(f.handler, '/api/community')).body.recent, []);
+  assert.equal((await request(f.handler, '/api/community')).body.recent[0].body, proposal.body);
   await approveProposal(f, proposal.id);
   const result = await request(f.handler, '/api/community');
   assert.equal(result.status, 200);
@@ -94,12 +93,13 @@ test('only the consented, currently approved body is public under a separate gen
     ADMIN_EMAIL, 'Private reviewer name', 'Private review detail', 'developmentBrief', 'bodyHash', 'csrfToken', 'tokenHash']) {
     assert.equal(result.text.includes(secret), false, `public DTO exposed ${secret}`);
   }
-  assert.deepEqual(result.body.leaderboard.items, [], 'proposal publication is not leaderboard consent');
+  assert.equal(result.body.leaderboard.items.find(item => item.author.id === idea.author.id).points, '0');
   await f.store.editProposal(author.session.user.id, { id: proposal.id, revision: 1, body: 'The changed body has not been reviewed or shared.' });
-  assert.deepEqual((await request(f.handler, '/api/community')).body.recent, []);
+  assert.equal((await request(f.handler, '/api/community')).body.recent[0].body, 'The changed body has not been reviewed or shared.');
+  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM community_events')).rows[0].n, 0);
 });
 
-test('private community state requires a live owner session and does not grant public visibility', async t => {
+test('private community state requires a live owner session while generated aliases are public by default', async t => {
   const f = await backendFixture(t);
   const anonymous = await f.store.createAnonymousSession();
   for (const options of [{}, { cookie: `yourgame_session=${anonymous.token}` }]) {
@@ -112,11 +112,12 @@ test('private community state requires a live owner session and does not grant p
   const response = await request(f.handler, '/api/community?view=me', signedHeaders(login));
   assert.equal(response.status, 200);
   assert.equal(response.body.ownerId, login.session.user.id);
-  assert.equal(response.body.profile.leaderboardVisible, false);
+  assert.equal(response.body.profile.leaderboardVisible, true);
+  assert.equal(response.body.profile.visibilitySource, 'service_default');
   assert.deepEqual(response.body.contribution, { points: '0', adoptedCount: 0 });
   assert.equal(response.body.voteQuota.remaining, 3);
   assert.deepEqual(response.body.votes, []);
-  assert.deepEqual((await request(f.handler, '/api/community')).body.leaderboard.items, []);
+  assert.equal((await request(f.handler, '/api/community')).body.leaderboard.items[0].author.id, response.body.profile.id);
   await f.store.logout(login.session);
   const revoked = await request(f.handler, '/api/community?view=me', signedHeaders(login));
   assert.equal(revoked.status, 401);
@@ -206,11 +207,11 @@ test('a confirmed vote is idempotent, separate from submission quota, and cannot
   assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, 0);
 });
 
-test('leaderboard opt-in shows actual zero points under an alias and opt-out immediately hides it', async t => {
+test('leaderboard defaults to actual zero points under an alias and explicit opt-out immediately hides it', async t => {
   const f = await backendFixture(t);
   const login = await participant(f, 'leaderboard-opt-in', 'Private legal name');
   const state = (await request(f.handler, '/api/community?view=me', signedHeaders(login))).body;
-  assert.equal((await post(f, login, change('set_profile_visibility', { visible: true, revision: state.profile.revision }))).status, 200);
+  assert.equal(state.profile.leaderboardVisible, true);
   const board = (await request(f.handler, '/api/community')).body.leaderboard.items;
   assert.deepEqual(board, [{ rank: 1, author: { id: state.profile.id, alias: state.profile.alias }, points: '0', adoptedCount: 0 }]);
   const stateAfter = (await request(f.handler, '/api/community?view=me', signedHeaders(login))).body;

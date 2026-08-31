@@ -42,16 +42,16 @@ export function requestLocale(req, { trustVercelGeoHeader = false } = {}) {
 
 const SAFETY_MESSAGES = {
   en: {
-    pending: 'Awaiting safety review. Not available for publication, voting or development yet.',
+    pending: 'Awaiting safety review for game development. Publication and voting are unaffected.',
     approved: 'Safety review is complete for this text. This does not mean it will be included in the game or has an official rating.',
-    held: 'Safety review is on hold. Not available for publication, voting or development.',
-    blocked: 'Use is restricted under the safety rules. You and the administrator can still view the original text.',
+    held: 'Safety review for game development is on hold. Publication and voting are unaffected.',
+    blocked: 'Excluded from game development inputs under the safety rules. Publication and voting are unaffected.',
   },
   ko: {
-    pending: '안전 검토 대기 중입니다. 아직 공개·투표·개발 대상으로 사용하지 않습니다.',
+    pending: '게임 개발용 안전 검토 대기 중입니다. 제안 공개와 투표에는 영향을 주지 않습니다.',
     approved: '현재 본문의 안전 검토가 완료되었습니다. 실제 게임 반영이나 공식 등급 인증을 뜻하지 않습니다.',
-    held: '안전 검토가 보류되었습니다. 공개·투표·개발 대상으로 사용하지 않습니다.',
-    blocked: '안전 기준에 따라 사용이 제한되었습니다. 원문은 본인과 관리자가 확인할 수 있습니다.',
+    held: '게임 개발용 안전 검토가 보류되었습니다. 제안 공개와 투표에는 영향을 주지 않습니다.',
+    blocked: '게임 개발용 안전 기준에 따라 개발 입력에서 제외되었습니다. 제안 공개와 투표에는 영향을 주지 않습니다.',
   },
 };
 

@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { readConfig } from '../../server/config.mjs';
 import { openDatabase } from '../../server/database.mjs';
 import { createStore } from '../../server/store.mjs';
+import { activateCommunityPublicDefaults } from '../../server/community-schema.mjs';
 
 const client = await openDatabase(readConfig({ TURSO_DATABASE_URL: workerData.databaseUrl }), { initialize: Boolean(workerData.seed) });
 if (workerData.seed) {
@@ -13,6 +14,7 @@ if (workerData.seed) {
       args: [workerData.userId, 'race-user', 'Race participant', workerData.now, workerData.now],
     },
   ], 'write');
+  await activateCommunityPublicDefaults(client, { expectedServiceRevision: 1, databaseClockSql: '(SELECT now_ms FROM test_clock WHERE id = 1)' });
 }
 const store = createStore(client, { databaseClockSql: '(SELECT now_ms FROM test_clock WHERE id = 1)' });
 parentPort.postMessage({ ready: true });

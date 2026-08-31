@@ -38,17 +38,16 @@ import './public-messages.js';
     'login-title', 'login-description', 'service-notice', 'service-title', 'service-message', 'service-detail',
     'google-signin', 'google-button-area', 'login-message', 'login-draft-note', 'retry-google',
     'quota-container', 'quota-status', 'quota-note', 'my-proposals', 'proposal-list',
-    'proposal-count', 'edit-banner', 'cancel-edit', 'reload-edit', 'copy-edit',
+    'proposal-count', 'open-my-proposals', 'my-proposals-dialog', 'close-my-proposals',
+    'edit-banner', 'cancel-edit', 'reload-edit', 'copy-edit',
     'connection-notice', 'connection-message', 'retry-connection', 'collection-dot',
     'collection-label', 'collection-deadline', 'countdown-title', 'countdown', 'release-message',
     'release-note', 'count-days', 'count-hours', 'count-minutes', 'count-seconds',
     'game-preview-canvas', 'community-feed-panel', 'community-feed-status', 'community-feed-list',
     'community-refresh', 'community-vote-note', 'leaderboard-status', 'leaderboard-list',
-    'my-contribution', 'my-contribution-summary', 'leaderboard-privacy', 'community-scoring',
-    'community-feedback', 'community-feedback-message', 'community-retry', 'publication-dialog',
-    'publication-title', 'publication-description', 'publication-alias', 'publication-source-wrap',
-    'publication-source', 'publication-consent-label', 'publication-consent', 'publication-consent-copy',
-    'publication-message', 'publication-retry', 'confirm-publication', 'cancel-publication', 'close-publication',
+    'my-contribution', 'my-contribution-summary', 'community-prev', 'community-next', 'community-page',
+    'community-feedback', 'community-feedback-message', 'community-retry',
+    'idea-dialog', 'idea-title', 'idea-author', 'idea-body', 'close-idea',
   ].map((id) => [id, byId(id)]));
 
   let status = null;
@@ -57,6 +56,7 @@ import './public-messages.js';
   let communityError = '';
   let communityLoading = true;
   let communitySort = 'recent';
+  let communityPage = 0;
   let communitySequence = 0;
   let communityMe = null;
   let communityMeSequence = 0;
@@ -66,8 +66,9 @@ import './public-messages.js';
   let communityAttempt = null;
   let communityMutating = false;
   let communityMutationSequence = 0;
-  let publicationContext = null;
-  let publicationReturnFocus = null;
+  let activeIdea = null;
+  let ideaReturnFocus = null;
+  let proposalsReturnFocus = null;
   let csrfToken = null;
   let googleNonce = null;
   let sessionReady = false;
@@ -408,6 +409,9 @@ import './public-messages.js';
     ui['submit-icon'].hidden = submitting;
     ui['prompt-form'].setAttribute('aria-busy', submitting ? 'true' : 'false');
     ui['my-proposals'].hidden = !loggedIn || !privateReady;
+    ui['open-my-proposals'].hidden = !loggedIn;
+    ui['open-my-proposals'].disabled = !privateReady || submitting || authenticating;
+    if (!loggedIn || !privateReady) closeMyProposals({ restoreFocus: false });
     updateCommunityControls();
   }
 
@@ -480,7 +484,7 @@ import './public-messages.js';
         ? { activeId: stored.activeId || null, items: stored.items } : { activeId: null, items: {} };
       ui.prompt.value = newDraft;
       ui['proposal-list'].replaceChildren();
-      ui['my-proposals'].open = false;
+      closeMyProposals({ restoreFocus: false });
     } else user = nextUser;
     csrfToken = data.csrfToken || csrfToken;
     googleNonce = data.googleNonce || googleNonce;
@@ -518,7 +522,7 @@ import './public-messages.js';
       ui.prompt.value = newDraft;
     }
     ui['proposal-list'].replaceChildren();
-    ui['my-proposals'].open = false;
+    closeMyProposals({ restoreFocus: false });
     renderControls();
   }
 
@@ -556,18 +560,6 @@ import './public-messages.js';
       throw new RequestError(m('quotaUnavailable'));
     }
     quota = { remaining: Math.max(0, value.remaining), limit: value.limit, nextAvailableAt: value.nextAvailableAt || null };
-  }
-
-  function safetyView(proposal) {
-    const states = {
-      pending: [t('safetyPendingLabel'), t('safetyPendingMessage')],
-      approved: [t('safetyApprovedLabel'), t('safetyApprovedMessage')],
-      held: [t('safetyHeldLabel'), t('safetyHeldMessage')],
-      blocked: [t('safetyBlockedLabel'), t('safetyBlockedMessage')],
-    };
-    const status = proposal?.safety?.status;
-    const item = Object.hasOwn(states, status) ? states[status] : [t('safetyUnknownLabel'), t('safetyUnknownMessage')];
-    return { status: Object.hasOwn(states, status) ? status : 'unknown', label: item[0], message: item[1] };
   }
 
   function renderProposals() {
@@ -609,20 +601,8 @@ import './public-messages.js';
       const body = document.createElement('p');
       body.className = 'proposal-body';
       body.textContent = proposal.body;
-      const safety = safetyView(proposal);
-      const safetyNote = document.createElement('div');
-      safetyNote.className = 'proposal-safety';
-      safetyNote.dataset.status = safety.status;
-      const safetyLabel = document.createElement('strong');
-      safetyLabel.textContent = safety.label;
-      const safetyMessage = document.createElement('span');
-      safetyMessage.textContent = safety.message;
-      if (proposal.editable && ['held', 'blocked'].includes(safety.status)) {
-        safetyMessage.textContent += t('editReReview');
-      }
-      safetyNote.append(safetyLabel, safetyMessage);
       meta.append(time, actions);
-      article.append(meta, body, safetyNote, publicationControl(proposal));
+      article.append(meta, body);
       fragment.append(article);
     }
     ui['proposal-list'].append(fragment);
@@ -760,6 +740,7 @@ import './public-messages.js';
 
   function beginEdit(proposal, { focus = true, useLatest = false } = {}) {
     if (!user || !privateReady || submitting || authenticating) return;
+    closeMyProposals({ restoreFocus: false });
     saveCurrentDraft();
     clearPending();
     const saved = !useLatest && editDrafts.items[proposal.id];
@@ -832,16 +813,15 @@ import './public-messages.js';
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
       if (editingAtSend) {
         endEdit({ removeDraft: true });
-        feedback(m('editSaved', { status: () => safetyView(data.proposal).label }));
+        feedback(m('editSaved'));
       } else {
         newDraft = '';
         ui.prompt.value = '';
         writeStorage('localStorage', DRAFT_KEY, null);
         attempt = null;
         writeStorage('sessionStorage', ATTEMPT_KEY, null);
-        feedback(m('submitted', { status: () => safetyView(data.proposal).label }));
+        feedback(m('submitted'));
       }
-      ui['my-proposals'].open = true;
       loadCommunityMe({ force: true }).catch(() => {});
       loadCommunity().catch(() => {});
       renderProposals();
@@ -850,17 +830,14 @@ import './public-messages.js';
       if (error.data?.quota) {
         try { acceptQuota(error.data.quota); } catch { quota = null; }
       }
-      const safetyRejected = error.data?.error?.code === 'PROPOSAL_SAFETY_REJECTED';
       const editRateLimited = error.data?.error?.code === 'EDIT_RATE_LIMITED';
       const attemptRateLimited = error.data?.error?.code === 'PROPOSAL_ATTEMPT_RATE_LIMITED';
       const retryWait = error.retryAfterSeconds ? m('retrySeconds', { seconds: error.retryAfterSeconds }) : m('retrySoon');
-      feedback(safetyRejected
-        ? m('safetyRejected', { result: m(editingAtSend ? 'rejectedEditPrefix' : 'rejectedNewPrefix') })
-        : editRateLimited ? m('editRateLimited', { wait: retryWait })
+      feedback(editRateLimited ? m('editRateLimited', { wait: retryWait })
           : attemptRateLimited ? m('attemptRateLimited', { wait: retryWait })
           : error.status === 0 && !editingAtSend
         ? m('sendUnknown')
-        : errorMessage(error), 'error', { reason: safetyRejected ? 'safety' : error.status === 429 && !editRateLimited && !attemptRateLimited ? 'quota' : '' });
+        : errorMessage(error), 'error', { reason: error.status === 429 && !editRateLimited && !attemptRateLimited ? 'quota' : '' });
       if (isServiceRejection(error)) {
         applyServiceRejection(error);
         await refreshStatus().catch(() => {});
@@ -1272,8 +1249,7 @@ import './public-messages.js';
     ui['community-retry'].hidden = true;
     ui['my-contribution'].hidden = true;
     ui['my-contribution-summary'].textContent = '';
-    ui['leaderboard-privacy'].textContent = '';
-    closePublication({ force: true });
+    closeMyProposals({ restoreFocus: false });
   }
 
   function publicAuthor(value) {
@@ -1358,7 +1334,7 @@ import './public-messages.js';
         if (typeof data?.ownerId !== 'string' || !data.ownerId) throw new RequestError(m('communityPrivateUnavailable'));
         if (data.ownerId !== ownerId) {
           // A shared cookie can change before its cross-tab notification arrives.
-          // Never render another account's profile, consent, score or voting history.
+          // Never render another account's profile, score or voting history.
           invalidatePrivate({ identityChanged: true });
           authEpoch += 1;
           resetCommunityIdentity();
@@ -1376,7 +1352,7 @@ import './public-messages.js';
         communityMe = validateCommunityMe(data);
         renderProposals();
         renderCommunity();
-        renderPublication();
+        refreshIdeaDialog();
       } catch (error) {
         if (epoch !== authEpoch || sequence !== communityMeSequence) return;
         communityMe = null;
@@ -1391,7 +1367,7 @@ import './public-messages.js';
         }
         renderProposals();
         renderCommunity();
-        renderPublication();
+        refreshIdeaDialog();
       }
     })();
     communityMePromise = promise;
@@ -1413,11 +1389,13 @@ import './public-messages.js';
     ui['community-retry'].hidden = !communityAttempt?.unknown;
     ui['community-retry'].disabled = busy || !user || !sessionReady
       || communityAttempt?.actorId !== user?.id;
-    renderPublication();
+    refreshIdeaDialog();
   }
 
   function renderCommunity() {
     const rows = communityData?.[communitySort] || [];
+    const pages = Math.max(1, Math.ceil(rows.length / 3));
+    communityPage = Math.min(communityPage, pages - 1);
     const statusMessage = communityError || (!communityData ? m('communityLoading') : !rows.length ? m('communityEmpty') : '');
     ui['community-feed-status'].hidden = !statusMessage;
     ui['community-feed-status'].textContent = localize(statusMessage);
@@ -1429,8 +1407,11 @@ import './public-messages.js';
       tab.setAttribute('aria-selected', String(selected));
       tab.tabIndex = selected ? 0 : -1;
     }
+    ui['community-prev'].disabled = communityPage === 0;
+    ui['community-next'].disabled = communityPage >= pages - 1;
+    ui['community-page'].textContent = t('feedPage', { page: communityPage + 1, pages });
     ui['community-feed-list'].replaceChildren();
-    for (const idea of rows) {
+    for (const idea of rows.slice(communityPage * 3, communityPage * 3 + 3)) {
       const article = document.createElement('article');
       article.className = 'community-entry';
       article.dataset.publicId = idea.id;
@@ -1482,6 +1463,15 @@ import './public-messages.js';
         note.textContent = t(mine ? 'yourIdea' : 'votingClosed');
         voting.append(note);
       }
+      const read = document.createElement('button');
+      read.type = 'button';
+      read.className = 'text-button community-read';
+      read.textContent = t('readIdea');
+      read.setAttribute('aria-label', t('readIdeaAria', { alias: idea.author.alias }));
+      read.setAttribute('aria-haspopup', 'dialog');
+      read.setAttribute('aria-controls', 'idea-dialog');
+      read.addEventListener('click', () => openIdea(idea, read));
+      voting.append(read);
       article.append(header, body, voting);
       ui['community-feed-list'].append(article);
     }
@@ -1511,153 +1501,52 @@ import './public-messages.js';
     ui['my-contribution'].hidden = !user || !communityMe;
     ui['my-contribution-summary'].textContent = user && communityMe
       ? t('yourContribution', { points: communityMe.contribution.points, count: communityMe.contribution.adoptedCount }) : '';
-    ui['leaderboard-privacy'].textContent = user && communityMe
-      ? t(communityMe.profile.leaderboardVisible ? 'hideLeaderboard' : 'showLeaderboard') : '';
-    ui['leaderboard-privacy'].dataset.communityAction = 'profile';
-    ui['leaderboard-privacy'].dataset.baseDisabled = String(!user || !communityMe || !sessionReady);
-    ui['community-scoring'].hidden = !communityData?.scoring;
-    ui['community-scoring'].textContent = scoringText(communityData?.scoring);
     ui['community-feedback-message'].textContent = localize(communityFeedbackMessage);
     updateCommunityControls();
   }
 
-  function scoringText(scoring) {
-    if (!scoring) return '';
-    if (scoring.status !== 'active') return t('scoringPending');
-    const formula = rule => {
-      if (!rule || !pointString(rule.base)) return null;
-      const terms = ['upvote', 'downvote'].map((key) => {
-        const term = rule[key];
-        if (!term || !['multiply', 'power'].includes(term.operation) || !pointString(term.value)) return null;
-        return t(term.operation === 'power' ? 'formulaPower' : 'formulaMultiply',
-          { term: t(key === 'upvote' ? 'formulaUp' : 'formulaDown'), value: term.value });
-      });
-      return terms.every(Boolean) ? rule.base + ' + ' + terms[0] + ' − ' + terms[1] : null;
-    };
-    const proposer = formula(scoring.proposer);
-    const voter = formula(scoring.voter);
-    if (!proposer || !voter) return t('scoringPending');
-    return t('scoringProposer', { formula: proposer }) + '\n' + t('scoringVoter', { formula: voter }) + '\n' + t('scoringClosed');
-  }
-
-  function publicationControl(proposal) {
-    const row = document.createElement('div');
-    row.className = 'proposal-publication';
-    const publication = communityMe?.publications.find(item => item.proposalId === proposal.id);
-    const requested = publication?.requested === true && publication.proposalRevision === proposal.revision;
-    const state = document.createElement('span');
-    state.textContent = t(!communityMe ? 'sharingLoading' : requested
-      ? publication.eligible ? 'sharingPublic' : 'sharingPending'
-      : publication?.requested ? 'sharingChanged' : 'sharingPrivate');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'text-button publication-button';
-    button.textContent = t(requested ? 'hideIdea' : 'shareIdea');
-    button.dataset.communityAction = 'publication';
-    button.dataset.baseDisabled = String(!communityMe || !privateReady || !sessionReady);
-    button.disabled = button.dataset.baseDisabled === 'true' || communityMutating || submitting || authenticating || Boolean(communityAttempt?.unknown);
-    button.addEventListener('click', () => openPublication(proposal, !requested));
-    row.append(state, button);
-    return row;
-  }
-
-  function openPublication(proposal, visible) {
-    if (!user || !communityMe || !privateReady || !sessionReady || submitting || authenticating || communityMutating) return;
-    if (communityAttempt?.unknown) { communityFeedback(m('communityRetryFirst'), 'error'); return; }
-    const current = proposals.find(item => item.id === proposal.id);
-    if (!current || current.revision !== proposal.revision || current.body !== proposal.body) {
-      communityFeedback(m('publicationStale'), 'error'); return;
-    }
-    const publication = communityMe.publications.find(item => item.proposalId === proposal.id);
-    publicationContext = { type: 'proposal', visible, actorId: user.id, epoch: authEpoch,
-      proposalId: proposal.id, proposalRevision: proposal.revision, body: proposal.body,
-      publicationRevision: publication?.publicationRevision || 0, alias: communityMe.profile.alias, conflict: false, message: '' };
-    showPublication();
-  }
-
-  function openLeaderboardPrivacy() {
-    if (!user || !communityMe || !sessionReady || submitting || authenticating || communityMutating) return;
-    if (communityAttempt?.unknown) { communityFeedback(m('communityRetryFirst'), 'error'); return; }
-    publicationContext = { type: 'profile', visible: !communityMe.profile.leaderboardVisible,
-      actorId: user.id, epoch: authEpoch, revision: communityMe.profile.revision,
-      alias: communityMe.profile.alias, conflict: false, message: '' };
-    showPublication();
-  }
-
-  function showPublication() {
-    clearPending();
+  function openMyProposals() {
+    if (!user || !privateReady || submitting || authenticating || ui['my-proposals-dialog'].open) return;
     saveCurrentDraft();
-    publicationReturnFocus = document.activeElement;
-    ui['publication-consent'].checked = false;
-    renderPublication();
-    if (!ui['publication-dialog'].open) ui['publication-dialog'].showModal();
+    proposalsReturnFocus = document.activeElement;
+    renderProposals();
+    ui['my-proposals-dialog'].showModal();
   }
 
-  function publicationIsCurrent() {
-    const context = publicationContext;
-    if (!context || !user || !communityMe || !sessionReady || context.actorId !== user.id || context.epoch !== authEpoch) return false;
-    if (context.type === 'profile') return context.revision === communityMe.profile.revision;
-    const proposal = proposals.find(item => item.id === context.proposalId);
-    const publication = communityMe.publications.find(item => item.proposalId === context.proposalId);
-    return privateReady && proposal?.revision === context.proposalRevision && proposal.body === context.body
-      && (publication?.publicationRevision || 0) === context.publicationRevision;
+  function closeMyProposals({ restoreFocus = true } = {}) {
+    if (!restoreFocus) proposalsReturnFocus = null;
+    if (ui['my-proposals-dialog'].open) ui['my-proposals-dialog'].close();
   }
 
-  function renderPublication() {
-    const context = publicationContext;
-    if (!context) return;
-    const proposal = context.type === 'proposal';
-    ui['publication-title'].textContent = t(proposal ? context.visible ? 'shareTitle' : 'hideTitle' : context.visible ? 'boardShareTitle' : 'boardHideTitle');
-    ui['publication-description'].textContent = t(proposal ? context.visible ? 'shareDescription' : 'hideDescription' : context.visible ? 'boardShareDescription' : 'boardHideDescription');
-    ui['publication-alias'].textContent = t('aliasPreview', { alias: context.alias });
-    ui['publication-source-wrap'].hidden = !proposal;
-    ui['publication-source'].textContent = proposal ? context.body : '';
-    ui['publication-consent-label'].hidden = !context.visible;
-    ui['publication-consent-copy'].textContent = t(proposal ? 'shareConsent' : 'boardConsent');
-    ui['publication-consent'].disabled = communityMutating || context.conflict || Boolean(communityAttempt?.unknown);
-    ui['confirm-publication'].textContent = t(communityMutating ? 'communitySaving' : proposal
-      ? context.visible ? 'confirmShare' : 'confirmHide' : context.visible ? 'boardConfirmShow' : 'boardConfirmHide');
-    ui['confirm-publication'].disabled = communityMutating || submitting || authenticating || context.conflict
-      || Boolean(communityAttempt?.unknown) || !publicationIsCurrent() || (context.visible && !ui['publication-consent'].checked);
-    ui['cancel-publication'].disabled = communityMutating;
-    ui['close-publication'].disabled = communityMutating;
-    ui['publication-dialog'].setAttribute('aria-busy', String(communityMutating));
-    const message = communityAttempt?.unknown ? communityAttempt.message || m('communityUnknown') : context.message;
-    ui['publication-message'].hidden = !message;
-    ui['publication-message'].textContent = localize(message);
-    ui['publication-message'].dataset.kind = 'error';
-    ui['publication-retry'].hidden = !communityAttempt?.unknown;
-    ui['publication-retry'].disabled = communityMutating || submitting || authenticating || !user || !sessionReady
-      || communityAttempt?.actorId !== user?.id;
+  function openIdea(idea, sourceButton) {
+    activeIdea = { id: idea.id, proposalRevision: idea.proposalRevision,
+      publicationRevision: idea.publicationRevision, body: idea.body };
+    ideaReturnFocus = sourceButton;
+    refreshIdeaDialog();
+    if (activeIdea && !ui['idea-dialog'].open) ui['idea-dialog'].showModal();
   }
 
-  function closePublication({ force = false } = {}) {
-    if (communityMutating && !force) return;
-    publicationContext = null;
-    ui['publication-source'].textContent = '';
-    ui['publication-alias'].textContent = '';
-    ui['publication-message'].textContent = '';
-    ui['publication-retry'].hidden = true;
-    ui['publication-consent'].checked = false;
-    if (ui['publication-dialog'].open) ui['publication-dialog'].close();
-  }
-
-  function confirmPublication() {
-    if (!publicationContext || communityMutating || submitting || authenticating) return;
-    if (!publicationIsCurrent() || publicationContext.conflict) {
-      publicationContext.conflict = true;
-      publicationContext.message = m('publicationStale');
-      ui['publication-consent'].checked = false;
-      renderPublication();
+  function refreshIdeaDialog() {
+    if (!activeIdea) return;
+    const idea = [...(communityData?.recent || []), ...(communityData?.popular || [])]
+      .find(item => item.id === activeIdea.id);
+    // A replaced or withdrawn revision must not linger in an open reader.
+    if (!idea || idea.proposalRevision !== activeIdea.proposalRevision
+      || idea.publicationRevision !== activeIdea.publicationRevision || idea.body !== activeIdea.body) {
+      closeIdea();
       return;
     }
-    if (publicationContext.visible && !ui['publication-consent'].checked) return;
-    const context = publicationContext;
-    const action = context.type === 'proposal'
-      ? { action: 'set_publication', proposalId: context.proposalId, proposalRevision: context.proposalRevision,
-        publicationRevision: context.publicationRevision, visible: context.visible }
-      : { action: 'set_profile_visibility', visible: context.visible, revision: context.revision };
-    performCommunityAction(action, context.type === 'profile' ? 'boardVisibleSaved' : context.visible ? 'shareSaved' : 'hideSaved');
+    ui['idea-title'].textContent = t('ideaTitle');
+    ui['idea-author'].textContent = idea.author.alias + ' · ' + proposalDate(idea.createdAt);
+    ui['idea-body'].textContent = idea.body;
+  }
+
+  function closeIdea() {
+    activeIdea = null;
+    ui['idea-body'].textContent = '';
+    ui['idea-author'].textContent = '';
+    if (ui['idea-dialog'].open) ui['idea-dialog'].close();
+    else ideaReturnFocus = null;
   }
 
   function castVote(idea, direction) {
@@ -1708,7 +1597,7 @@ import './public-messages.js';
       if (result?.ok !== true) throw new RequestError(m('communityResultInvalid'));
       communityAttempt = null;
       communityData = null;
-      closePublication({ force: true });
+      closeIdea();
       communityFeedback(m(attempt.successKey));
       await Promise.allSettled([loadCommunity(), loadCommunityMe({ force: true })]);
     } catch (error) {
@@ -1733,10 +1622,6 @@ import './public-messages.js';
       } else {
         communityAttempt = null;
         communityFeedback(errorMessage(error), 'error');
-        if (publicationContext) {
-          publicationContext.message = errorMessage(error);
-          if (error.status === 409) { publicationContext.conflict = true; ui['publication-consent'].checked = false; }
-        }
         if (error.status === 401) {
           clearPending();
           applySession({ user: null, csrfToken, googleNonce });
@@ -1758,11 +1643,12 @@ import './public-messages.js';
   }
 
   for (const tab of document.querySelectorAll('[data-feed-sort]')) {
-    tab.addEventListener('click', () => { communitySort = tab.dataset.feedSort; renderCommunity(); });
+    tab.addEventListener('click', () => { communitySort = tab.dataset.feedSort; communityPage = 0; renderCommunity(); });
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       communitySort = event.key === 'Home' ? 'recent' : event.key === 'End' ? 'popular' : communitySort === 'recent' ? 'popular' : 'recent';
+      communityPage = 0;
       renderCommunity();
       byId(communitySort === 'recent' ? 'feed-recent-tab' : 'feed-popular-tab').focus();
     });
@@ -1772,24 +1658,36 @@ import './public-messages.js';
     loadCommunityMe({ force: true }).catch(() => {});
   });
   ui['community-retry'].addEventListener('click', () => performCommunityAction(null, null, { retry: true }));
-  ui['publication-retry'].addEventListener('click', () => performCommunityAction(null, null, { retry: true }));
-  ui['leaderboard-privacy'].addEventListener('click', openLeaderboardPrivacy);
-  ui['confirm-publication'].addEventListener('click', confirmPublication);
-  ui['publication-consent'].addEventListener('change', renderPublication);
-  ui['cancel-publication'].addEventListener('click', () => closePublication());
-  ui['close-publication'].addEventListener('click', () => closePublication());
-  ui['publication-dialog'].addEventListener('cancel', event => {
-    if (communityMutating) event.preventDefault();
-    else closePublication();
+  ui['community-prev'].addEventListener('click', () => {
+    communityPage = Math.max(0, communityPage - 1);
+    renderCommunity();
   });
-  ui['publication-dialog'].addEventListener('close', () => {
-    // Escape and programmatic close must both remove private source text.
-    publicationContext = null;
-    ui['publication-source'].textContent = '';
-    ui['publication-alias'].textContent = '';
-    ui['publication-message'].textContent = '';
-    ui['publication-consent'].checked = false;
-    if (publicationReturnFocus?.isConnected && !publicationReturnFocus.hidden) publicationReturnFocus.focus();
+  ui['community-next'].addEventListener('click', () => {
+    communityPage += 1;
+    renderCommunity();
+  });
+  ui['open-my-proposals'].addEventListener('click', openMyProposals);
+  ui['close-my-proposals'].addEventListener('click', () => closeMyProposals());
+  ui['my-proposals-dialog'].addEventListener('close', () => {
+    if (ui['my-proposals-dialog'].open) return;
+    const target = proposalsReturnFocus;
+    proposalsReturnFocus = null;
+    if (target?.isConnected && !target.hidden && !target.disabled) target.focus();
+  });
+  ui['close-idea'].addEventListener('click', closeIdea);
+  ui['idea-dialog'].addEventListener('cancel', event => {
+    event.preventDefault();
+    closeIdea();
+  });
+  ui['idea-dialog'].addEventListener('close', () => {
+    if (ui['idea-dialog'].open) return;
+    activeIdea = null;
+    ui['idea-body'].textContent = '';
+    ui['idea-author'].textContent = '';
+    const target = ideaReturnFocus;
+    ideaReturnFocus = null;
+    if (target?.isConnected && !target.hidden && !target.disabled) target.focus();
+    else if (target) byId(communitySort === 'recent' ? 'feed-recent-tab' : 'feed-popular-tab').focus();
   });
   try {
     const context = ui['game-preview-canvas'].getContext('2d');
@@ -1821,7 +1719,7 @@ import './public-messages.js';
     document.querySelector('meta[property="og:locale"]')?.setAttribute('content', i18n.locale === 'ko' ? 'ko_KR' : 'en_US');
     renderGoogleButton();
     renderCommunity();
-    renderPublication();
+    refreshIdeaDialog();
   }
 
   i18n.bindLanguageControls();

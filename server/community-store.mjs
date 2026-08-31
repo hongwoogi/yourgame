@@ -2,10 +2,13 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ApiError } from './errors.mjs';
 import { writeBatch } from './database.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
-import { SAFETY_POLICY_VERSION } from './safety-policy.mjs';
-import { approvedSafetySql, bodyDigest } from './safety-store.mjs';
+import { bodyDigest } from './safety-store.mjs';
+import {
+  PUBLICATION_POLICY_VERSION, PUBLICATION_POLICY_DTO, COMMUNITY_DEFAULT_READY_SQL,
+  PUBLIC_PUBLICATIONS_SQL as PUBLICATIONS, PUBLIC_VOTES_SQL as VOTES, COMMUNITY_VOTE_LIMIT,
+} from './community-policy.mjs';
 
-export const COMMUNITY_VOTE_LIMIT = 3;
+export { COMMUNITY_VOTE_LIMIT } from './community-policy.mjs';
 export const COMMUNITY_RATE_LIMIT = 30;
 export const COMMUNITY_RATE_WINDOW_MS = 60000;
 const ID = /^[A-Za-z0-9_-]{8,128}$/;
@@ -28,38 +31,6 @@ function conflict() { return new ApiError(409, 'COMMUNITY_REVISION_CONFLICT', 'T
 function unavailable() { return new ApiError(409, 'PUBLICATION_UNAVAILABLE', 'This publication is not available for voting.'); }
 function closed() { return new ApiError(409, 'VOTING_CLOSED', 'Voting is unavailable for this collection round.'); }
 
-// Consent is bound to content and policy, not a pending review's revision. An
-// explicitly shared pending body becomes visible only when that same body is
-// approved. Votes separately bind the exact approval, so reapproval cannot
-// resurrect votes that were invalidated while that body was on hold.
-const PUBLICATIONS = `eligible_publications AS (
-  SELECT cp.*, p.user_id AS author_user_id, p.body, p.created_at AS proposal_created_at, p.round_id AS proposal_round_id,
-    pr.public_id AS author_public_id, pr.alias, sr.id AS safety_review_id, sr.revision AS safety_revision,
-    COALESCE(ma.revision, 1) AS current_author_revision, COALESCE(pm.revision, 1) AS moderation_revision
-  FROM community_publications cp JOIN proposals p ON p.id = cp.proposal_id
-  JOIN community_profiles pr ON pr.user_id = p.user_id
-  LEFT JOIN member_access ma ON ma.user_id = p.user_id
-  LEFT JOIN proposal_moderation pm ON pm.proposal_id = p.id
-  JOIN proposal_body_revisions h ON h.proposal_id = p.id AND h.body_revision = p.revision AND h.body = p.body COLLATE BINARY
-  JOIN proposal_safety_reviews sr ON sr.proposal_id = p.id AND sr.body_revision = p.revision
-    AND sr.body_hash = h.body_hash AND sr.policy_version = '${SAFETY_POLICY_VERSION}'
-  WHERE cp.requested = 1 AND cp.proposal_revision = p.revision AND cp.body_hash = h.body_hash
-    AND cp.policy_version = '${SAFETY_POLICY_VERSION}' AND cp.author_control_revision = COALESCE(ma.revision, 1)
-    AND COALESCE(ma.status, 'active') = 'active' AND COALESCE(pm.moderation, 'pending') != 'excluded'
-    AND ${approvedSafetySql('p')}
-)`;
-const VOTES = `valid_votes AS (
-  SELECT v.* FROM community_votes v JOIN eligible_publications ep ON ep.public_id = v.public_id
-  JOIN community_rounds r ON r.id = v.round_id AND r.proposal_round_id = ep.proposal_round_id
-  LEFT JOIN member_access va ON va.user_id = v.user_id
-  WHERE v.direction IN ('up', 'down') AND v.user_id != ep.author_user_id
-    AND v.proposal_revision = ep.proposal_revision AND v.publication_revision = ep.revision
-    AND v.body_hash = ep.body_hash AND v.policy_version = ep.policy_version
-    AND v.safety_review_id = ep.safety_review_id AND v.safety_revision = ep.safety_revision
-    AND v.author_control_revision = ep.current_author_revision AND v.moderation_revision = ep.moderation_revision
-    AND v.voter_control_revision = COALESCE(va.revision, 1) AND COALESCE(va.status, 'active') = 'active'
-    AND v.updated_at >= r.opens_at AND v.updated_at < r.closes_at
-)`;
 const CTE = `WITH ${PUBLICATIONS}, ${VOTES}`;
 const PARTICIPATION = `EXISTS (SELECT 1 FROM service_control WHERE id = 1 AND mode = 'active' AND proposals_enabled = 1)`;
 
@@ -71,6 +42,9 @@ function assertService(row) {
 }
 
 export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_SQL } = {}) {
+  function assertReady(row) {
+    if (Number(row?.ready) !== 1) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public participation is temporarily unavailable.');
+  }
   const actorSql = `SELECT s.user_id, COALESCE(m.status, 'active') AS status, COALESCE(m.revision, 1) AS control_revision,
     ${databaseClockSql} AS now_ms FROM sessions s LEFT JOIN member_access m ON m.user_id = s.user_id
     WHERE s.token_hash = ? AND s.user_id = ? AND s.expires_at > ${databaseClockSql}`;
@@ -86,15 +60,18 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const guard = live(session);
     const result = await writeBatch(client, [actor(session), {
       sql: `INSERT INTO community_profiles(user_id, public_id, alias, created_at, updated_at)
-        SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} WHERE ${guard.sql}
+        SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} WHERE ${guard.sql} AND ${COMMUNITY_DEFAULT_READY_SQL}
         ON CONFLICT(user_id) DO NOTHING`,
       args: [session?.user?.id || '', randomUUID(), `Player-${randomBytes(6).toString('hex')}`, ...guard.args],
-    }, { sql: 'SELECT * FROM community_profiles WHERE user_id = ?', args: [session?.user?.id || ''] }]);
+    }, { sql: 'SELECT * FROM community_profiles WHERE user_id = ?', args: [session?.user?.id || ''] },
+    `SELECT ${COMMUNITY_DEFAULT_READY_SQL} AS ready`]);
     assertActor(result[0].rows[0]);
+    assertReady(result[3].rows[0]);
     return result[2].rows[0];
   }
 
-  const roundStatement = () => ({ sql: `SELECT r.*, s.mode, s.proposals_enabled, ${databaseClockSql} AS now_ms
+  const roundStatement = () => ({ sql: `SELECT r.*, s.mode, s.proposals_enabled, ${databaseClockSql} AS now_ms,
+      ${COMMUNITY_DEFAULT_READY_SQL} AS ready
     FROM service_control s LEFT JOIN community_rounds r ON r.id = 'initial' WHERE s.id = 1`, args: [] });
   function roundView(row) {
     if (!row?.id) return null;
@@ -128,8 +105,9 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
         COALESCE(c.upvotes, 0) DESC, ep.proposal_created_at DESC, ep.public_id DESC LIMIT 6`,
     ], 'read');
     if (!result[0].rows[0]) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
+    assertReady(result[0].rows[0]);
     return { recent: result[1].rows.map(idea), popular: result[2].rows.map(idea), round: roundView(result[0].rows[0]),
-      serverTime: iso(result[0].rows[0].now_ms) };
+      publicationPolicy: PUBLICATION_POLICY_DTO, serverTime: iso(result[0].rows[0].now_ms) };
   }
 
   async function privateState(session) {
@@ -137,28 +115,34 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const userId = session?.user?.id || '';
     const result = await client.batch([
       actor(session),
-      { sql: 'SELECT * FROM community_profiles WHERE user_id = ?', args: [userId] },
+      { sql: `SELECT pr.*, CASE WHEN c.event_id IS NULL THEN 'service_default' ELSE 'author_choice' END AS visibility_source
+        FROM community_profiles pr LEFT JOIN community_visibility_choices c ON c.kind = 'profile' AND c.target_id = pr.user_id
+        WHERE pr.user_id = ?`, args: [userId] },
       roundStatement(),
       { sql: `${CTE} SELECT * FROM valid_votes WHERE user_id = ? ORDER BY updated_at DESC, public_id DESC`, args: [userId] },
       { sql: `WITH ${PUBLICATIONS} SELECT p.id AS proposal_id,
           COALESCE(cp.proposal_revision, p.revision) AS proposal_revision, COALESCE(cp.revision, 0) AS publication_revision,
-          cp.public_id, COALESCE(cp.requested, 0) AS requested, ep.public_id IS NOT NULL AS eligible
+          cp.public_id, COALESCE(c.visible, 1) AS requested, ep.public_id IS NOT NULL AS eligible,
+          CASE WHEN c.event_id IS NULL THEN 'service_default' ELSE 'author_choice' END AS visibility_source
         FROM proposals p LEFT JOIN community_publications cp ON cp.proposal_id = p.id
+        LEFT JOIN community_visibility_choices c ON c.kind = 'publication' AND c.target_id = p.id
         LEFT JOIN eligible_publications ep ON ep.proposal_id = p.id
         WHERE p.user_id = ? ORDER BY p.created_at DESC, p.id DESC`, args: [userId] },
     ], 'read');
     assertActor(result[0].rows[0]);
+    assertReady(result[2].rows[0]);
     const profile = result[1].rows[0];
     if (!profile || !result[2].rows[0]) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Community state is unavailable.');
     const votes = result[3].rows.map(row => ({ publicId: row.public_id, direction: row.direction,
       proposalRevision: Number(row.proposal_revision), publicationRevision: Number(row.publication_revision), roundId: row.round_id }));
     const used = votes.filter(vote => vote.roundId === result[2].rows[0].id).length;
     return { ownerId: userId, profile: { id: profile.public_id, alias: profile.alias,
-      leaderboardVisible: Number(profile.leaderboard_visible) === 1, revision: Number(profile.revision) },
+      leaderboardVisible: Number(profile.leaderboard_visible) === 1, revision: Number(profile.revision), visibilitySource: profile.visibility_source },
+      publicationPolicy: PUBLICATION_POLICY_DTO,
       voteQuota: voteQuota(result[2].rows[0], used), votes,
       publications: result[4].rows.map(row => ({ proposalId: row.proposal_id, proposalRevision: Number(row.proposal_revision),
         publicationRevision: Number(row.publication_revision), publicId: row.public_id ?? null,
-        requested: Number(row.requested) === 1, eligible: Number(row.eligible) === 1 })) };
+        requested: Number(row.requested) === 1, eligible: Number(row.eligible) === 1, visibilitySource: row.visibility_source })) };
   }
 
   async function recordAttempt(session) {
@@ -192,7 +176,8 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const payloadHash = hash(canonical(input));
     const eventId = randomUUID();
     const guard = live(session);
-    const common = `${guard.sql} AND NOT EXISTS(SELECT 1 FROM community_requests WHERE user_id = ? AND request_id = ?)`;
+    const common = `${guard.sql} AND ${COMMUNITY_DEFAULT_READY_SQL}
+      AND NOT EXISTS(SELECT 1 FROM community_requests WHERE user_id = ? AND request_id = ?)`;
     const commonArgs = [...guard.args, userId, requestId];
     const lookup = { sql: 'SELECT * FROM community_requests WHERE user_id = ? AND request_id = ?', args: [userId, requestId] };
     let primary;
@@ -225,12 +210,11 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
         SELECT p.id, ?, p.revision, ?, ?, ?, COALESCE(m.revision, 1), COALESCE(cp.revision, 0) + 1, ${databaseClockSql}, ${databaseClockSql}
         FROM proposals p LEFT JOIN community_publications cp ON cp.proposal_id = p.id LEFT JOIN member_access m ON m.user_id = p.user_id
         WHERE p.id = ? AND p.user_id = ? AND p.revision = ? AND p.body = ? AND COALESCE(cp.revision, 0) = ?
-          AND ${common} ${input.visible ? `AND ${PARTICIPATION}
-            AND EXISTS(SELECT 1 FROM safety_meta WHERE key = 'policy_version' AND value = '${SAFETY_POLICY_VERSION}')` : ''}
+          AND ${common} ${input.visible ? `AND ${PARTICIPATION}` : ''}
         ON CONFLICT(proposal_id) DO UPDATE SET proposal_revision = excluded.proposal_revision, body_hash = excluded.body_hash,
           policy_version = excluded.policy_version, requested = excluded.requested, author_control_revision = excluded.author_control_revision,
           revision = excluded.revision, updated_at = excluded.updated_at`,
-        args: [randomUUID(), bodyHash, SAFETY_POLICY_VERSION, Number(input.visible), input.proposalId, userId,
+        args: [randomUUID(), bodyHash, PUBLICATION_POLICY_VERSION, Number(input.visible), input.proposalId, userId,
           input.proposalRevision, body, expectedRevision, ...commonArgs] };
       event = { sql: `SELECT public_id AS target_id, json_object('proposalId', proposal_id, 'proposalRevision', proposal_revision,
           'publicationRevision', revision, 'bodyHash', body_hash, 'policyVersion', policy_version,
@@ -264,6 +248,7 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
           LEFT JOIN member_access va ON va.user_id = ?
           LEFT JOIN community_votes old ON old.user_id = ? AND old.round_id = cr.id AND old.public_id = ep.public_id
           WHERE ep.public_id = ? AND ep.proposal_revision = ? AND ep.revision = ? AND ep.author_user_id != ? AND cr.id = ?
+            AND ep.safety_review_id IS NOT NULL
             AND ${databaseClockSql} >= cr.opens_at AND ${databaseClockSql} < cr.closes_at AND ${PARTICIPATION} AND ${common}
             AND ((SELECT COUNT(*) FROM valid_votes WHERE user_id = ? AND round_id = cr.id) < ${COMMUNITY_VOTE_LIMIT}
               OR EXISTS(SELECT 1 FROM valid_votes WHERE user_id = ? AND round_id = cr.id AND public_id = ep.public_id))
