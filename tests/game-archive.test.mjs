@@ -153,3 +153,19 @@ test('history absence is explicit for fresh source archives, without disabling b
   assert.deepEqual(await checkArchiveRetention({ repositoryRoot: s.base }), { historyAvailable: false, protectedFiles: 0 });
   assert.equal((await checkGameArchive(s)).archivedVersions, 1);
 });
+
+test('source-only deployment metadata is explicit, while unusable local Git still fails closed', async t => {
+  const s = await setup(t); await s.publishFixture(s.make());
+  await writeFile(path.join(s.base, '.git'), 'gitdir: missing-deployment-metadata\n');
+  await assert.rejects(checkArchiveRetention({ repositoryRoot: s.base, allowUnavailableHistory: false }), /ARCHIVE_HISTORY_UNAVAILABLE/);
+  assert.deepEqual(await checkArchiveRetention({ repositoryRoot: s.base, allowUnavailableHistory: true }),
+    { historyAvailable: false, protectedFiles: 0, reason: 'source_only_deployment' });
+  await writeFile(path.join(s.archiveRoot, 'v-test-1/runtime/public/app.js'), 'changed');
+  await assert.rejects(checkGameArchive(s), /ARCHIVE_BYTES_CHANGED/);
+});
+
+test('deployment mode does not bypass retention when Git history is available', async t => {
+  const s = await setup(t); s.git('init'); await s.publishFixture(s.make()); s.commit();
+  await unlink(path.join(s.archiveRoot, 'v-test-1/manifest.json'));
+  await assert.rejects(checkArchiveRetention({ repositoryRoot: s.base, allowUnavailableHistory: true }), /ARCHIVE_HISTORY_REMOVED/);
+});

@@ -125,7 +125,8 @@ export async function checkGameArchive({ archiveRoot = path.join(root, 'game-arc
 
 // In a checkout, protect snapshots from both the current commit and its parent.
 // A fresh git archive has no history: its manifests still receive all byte checks.
-export async function checkArchiveRetention({ repositoryRoot = root } = {}) {
+export async function checkArchiveRetention({ repositoryRoot = root,
+  allowUnavailableHistory = process.env.VERCEL === '1' && ['production', 'preview'].includes(process.env.VERCEL_ENV) } = {}) {
   try { await lstat(path.join(repositoryRoot, '.git')); }
   catch (error) { if (error.code === 'ENOENT') return { historyAvailable: false, protectedFiles: 0 }; throw error; }
   const git = args => execFileSync('git', args, { cwd: repositoryRoot, windowsHide: true, maxBuffer: 32 * 1024 * 1024,
@@ -133,7 +134,14 @@ export async function checkArchiveRetention({ repositoryRoot = root } = {}) {
   const protectedFiles = new Map();
   for (const ref of ['HEAD', 'HEAD^']) {
     try { git(['rev-parse', '--verify', ref]); }
-    catch { if (ref === 'HEAD^') continue; fail('ARCHIVE_HISTORY_UNAVAILABLE'); }
+    catch {
+      if (ref === 'HEAD^') continue;
+      // Vercel can provide a .git marker without a usable Git executable/HEAD.
+      // Only that source-only build environment may omit history comparison;
+      // checkGameArchive still validates every archived and public artifact.
+      if (allowUnavailableHistory) return { historyAvailable: false, protectedFiles: 0, reason: 'source_only_deployment' };
+      fail('ARCHIVE_HISTORY_UNAVAILABLE');
+    }
     const tree = git(['ls-tree', '-r', '-z', ref, '--', 'game-archive', 'public/games']).toString('utf8');
     for (const line of tree.split('\0').filter(Boolean)) {
       const [metadata, name] = line.split('\t');
