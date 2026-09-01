@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 2,
+  "kind": "game-source-snapshot",
+  "version": "v20260902-r1",
+  "files": [
+    {
+      "path": "assets/cards/crown-bastion.png",
+      "bytes": 459591,
+      "sha256": "538d290c1993694bd5569fee2a6adbdec2a8798a5ab36e53bb99fd22ff114131"
+    },
+    {
+      "path": "assets/cards/fair-levy.png",
+      "bytes": 414708,
+      "sha256": "b4973c54cf0d6bf613d4016f51b290c24f4fb3a246ad74fee687f6eca14e467d"
+    },
+    {
+      "path": "assets/cards/granary-charter.png",
+      "bytes": 462642,
+      "sha256": "5605cd590cbdaf13045aea369ef2315a549929bd0cfb42d39366b125bc4ece74"
+    },
+    {
+      "path": "assets/cards/guild-forge.png",
+      "bytes": 454323,
+      "sha256": "ed3e212b082a426aac3dfbc566880a034231112556bc8efd26e6d7f9aa821126"
+    },
+    {
+      "path": "assets/cards/relief-caravan.png",
+      "bytes": 458949,
+      "sha256": "10266303fd5435a042f911e081366bdb27bbaf2e7b1881d2699594831d869dfd"
+    },
+    {
+      "path": "assets/cards/stone-rampart.png",
+      "bytes": 492931,
+      "sha256": "ccd9060d9cc6af842559072f796be4f1d7ab70e85b7d31a1026059cf719b1d78"
+    },
+    {
+      "path": "assets/cards/village-council.png",
+      "bytes": 430072,
+      "sha256": "029d30d8ee0e6da0661fc98c2cd659e9e305504f19578814ab720211aeab005d"
+    },
+    {
+      "path": "assets/cards/watch-beacon.png",
+      "bytes": 379761,
+      "sha256": "f3d29742f73404e74f8d30647726b9d1b184c1bfdd103c84c578e378adeaf795"
+    },
+    {
+      "path": "game.json",
+      "bytes": 22216,
+      "sha256": "61b4c3b25d003a6925d73c2425d40aa8114626515a79c9e69062649684b90786"
+    },
+    {
+      "path": "runtime/public/app.js",
+      "bytes": 114797,
+      "sha256": "667bf54d4c7661ff1f3832136d33b7145fd803946c49cc1eee7361002e34a0d1"
+    },
+    {
+      "path": "runtime/public/game-bundle.js",
+      "bytes": 5088,
+      "sha256": "f3e7b964a78f72589b1eab3f67f36a4951aa08d507e772c8409470b3d436b936"
+    },
+    {
+      "path": "runtime/public/game-frame.html",
+      "bytes": 742,
+      "sha256": "283c3f1083c1eef5fd09a981111a17aa9fcadabf0b2d7a512311eed9217a873c"
+    },
+    {
+      "path": "runtime/public/game-host.js",
+      "bytes": 8333,
+      "sha256": "5f9da78735ff9e250186cad3ef3b8f0c5c99ddf0834037423719f9fe21e9c228"
+    },
+    {
+      "path": "runtime/public/game-runtime-engine.js",
+      "bytes": 13586,
+      "sha256": "eed8c1f10b7a098a84805560419aaabced6b9bf50bc6a1f107f335a1ea9fdd43"
+    },
+    {
+      "path": "runtime/public/game-runtime-frame.js",
+      "bytes": 21711,
+      "sha256": "f327b77ad2fc9113758a9515fe0fb7ae1c4042b7aaaddc5072ba64db96492557"
+    },
+    {
+      "path": "runtime/public/game-runtime.css",
+      "bytes": 6127,
+      "sha256": "574e80cbf48c773013fbaa6d3731fca885abf5312b1741fd5c7caf45066aeae6"
+    },
+    {
+      "path": "runtime/public/game-save-bridge.js",
+      "bytes": 3470,
+      "sha256": "346a6e445a6a4e40536b36dd538c4d9833a23746308ffc1f607eba401c0b2bed"
+    },
+    {
+      "path": "runtime/public/game-save-store.js",
+      "bytes": 8063,
+      "sha256": "37e0c88773c7c8f69dae4be1dd62adc54878961a66a1f3dc9f05bffcc5bc4ed1"
+    },
+    {
+      "path": "runtime/public/index.html",
+      "bytes": 27979,
+      "sha256": "ea6130a78b8c437437cb301fe2152f8f67698112879d2e9246fc3ada1119046d"
+    },
+    {
+      "path": "runtime/public/styles.css",
+      "bytes": 71307,
+      "sha256": "c4106bac8dfbf3037991a8c88bc8c0bc095ddf0818c5f25d09fdf04899542b82"
+    },
+    {
+      "path": "runtime/vercel.json",
+      "bytes": 3872,
+      "sha256": "a744c4001836d4f2579549d2b5fcae62776c9c54a004840fe0120a52975ad00c"
+    }
+  ]
+}

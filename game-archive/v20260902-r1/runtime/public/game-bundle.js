@@ -2,7 +2,7 @@ import { validateGameConfig } from './game-runtime-engine.js';
 
 const ICONS = ['crown', 'leaf', 'spark', 'anvil', 'star', 'book'];
 const ASSET_ID = /^[a-z][a-z0-9-]{0,63}$/;
-const ASSET_PATH = /^assets\/(?:[a-z0-9][a-z0-9-]{0,31}\/)*[a-z0-9][a-z0-9-]{0,63}\.png$/;
+const ASSET_PATH = /^assets\/[a-z0-9][a-z0-9/-]{0,95}\.png$/;
 const HASH = /^[a-f0-9]{64}$/;
 const fail = () => { throw new Error('GAME_BUNDLE_INVALID'); };
 function exact(value, keys) {
@@ -65,7 +65,7 @@ export function validateGameBundle(input) {
     for (const asset of bundle.assets) {
       exact(asset, ['id', 'path', 'mediaType', 'bytes', 'sha256', 'width', 'height']);
       const folded = typeof asset.path === 'string' ? asset.path.toLowerCase() : '';
-      if (!ASSET_ID.test(asset.id || '') || !ASSET_PATH.test(asset.path || '') || asset.path !== folded || asset.path.length > 128
+      if (!ASSET_ID.test(asset.id || '') || !ASSET_PATH.test(asset.path || '') || asset.path !== folded
         || asset.mediaType !== 'image/png' || !Number.isSafeInteger(asset.bytes) || asset.bytes < 1 || asset.bytes > 2 * 1024 * 1024
         || !HASH.test(asset.sha256 || '') || !Number.isSafeInteger(asset.width) || !Number.isSafeInteger(asset.height)
         || asset.width < 64 || asset.height < 64 || asset.width > 1024 || asset.height > 1024

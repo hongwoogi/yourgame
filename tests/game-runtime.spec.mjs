@@ -108,6 +108,8 @@ test('the main-page isolated frame plays a synthetic defend, reward, victory and
   await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
   await expect(frame.locator('.reward')).toHaveCount(2);
   await frame.locator('.reward[data-card="guard"]').click();
+  await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
+  await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
   await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
   await expect(frame.locator('.wave-title')).toHaveText('Fixture wave two');
   expect((await saved(page)).data.state.acquired).toEqual(['guard']);
@@ -133,6 +135,8 @@ test('skipping defense loses and a full reload preserves the finished save until
   await endWave(frame);
   await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
   await frame.locator('.reward[data-card="harvest"]').click();
+  await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
+  await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
   await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
   await endWave(frame);
   await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'defeat');
@@ -269,7 +273,17 @@ for (const width of [390, 1440]) {
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const runtime = page.frames().find(item => new URL(item.url()).pathname === '/game-frame.html');
-      expect(await runtime.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const fits = () => runtime.evaluate(() => { const game = document.getElementById('game'); return document.documentElement.scrollWidth <= innerWidth
+        && document.documentElement.scrollHeight <= innerHeight && game.scrollWidth <= game.clientWidth && game.scrollHeight <= game.clientHeight; });
+      expect(await fits()).toBe(true);
+      await frame.getByRole('button', { name: 'How to play', exact: true }).click();
+      await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'help');
+      expect(await fits()).toBe(true);
+      await frame.getByRole('button', { name: 'Next', exact: true }).click();
+      expect(await fits()).toBe(true);
+      await frame.getByRole('button', { name: 'Next', exact: true }).click();
+      await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
+      await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
       await expect(page.locator('main #prompt-form')).toBeVisible();
       expect(new URL(page.url()).pathname).toBe('/');
     });

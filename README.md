@@ -29,7 +29,8 @@ Collective creation does not mean every proposal is automatically implemented. C
 
 The repository contains the website, server APIs, game runtime and versioned game data, tests, project decisions, and operational runbooks.
 
-- A **9:16 mobile roguelike**, with desktop keyboard and mobile touch controls.
+- A **scroll-free 9:16 mobile roguelike**, with desktop keyboard and mobile touch controls. Rules and other overflow content use explicit pages instead of an internal scrollbar.
+- Reviewed versions can include original ImageGen card art as hash-bound local assets; the game frame cannot load external image URLs.
 - **English by default, with Korean support.** The website can initially select Korean for visitors in Korea; a manual language choice takes precedence.
 - Google sign-in for participation, public ideas, voting, editable public names, and contribution leaderboards.
 - Up to three new proposals per rolling 60 minutes, limited to 2,000 UTF-8 bytes each. Editing an eligible proposal does not use another submission.
@@ -37,7 +38,7 @@ The repository contains the website, server APIs, game runtime and versioned gam
 - A daily target of **23:00 KST for collecting that day's ideas and the next midnight for release**, subject to review and validation. This is a target, not a guarantee of an on-time release.
 - A Teen content ceiling as a design constraint, **not an official ESRB rating**.
 
-The first game implementation, `v1-20260901`, is included in the repository. Files in Git, a successful build, or a countdown reaching zero do not prove that a game has been released. The live selection and operator verification determine release status. Contribution points likewise require verified implementation and release evidence; the leaderboard alone is not evidence of awarded points.
+Reviewed game versions, beginning with `v1-20260901`, are included in the repository. Files in Git, a successful build, or a countdown reaching zero do not prove that a game has been released. The live selection and operator verification determine release status. Contribution points likewise require verified implementation and release evidence; the leaderboard alone is not evidence of awarded points.
 
 ## Run locally
 
@@ -73,7 +74,7 @@ npm run test:ui
 | `.codex/agents/` | Definitions for the five game-development roles |
 | `docs/` | Design decisions, feature contracts, and operational procedures |
 | `CHANGELOG.md` | Public English/Korean development record |
-| `game-archive/` | Cumulative version snapshots: game data, original runtime source, and integrity manifests |
+| `game-archive/` | Cumulative version snapshots: game data, original runtime source, local assets, and integrity manifests |
 | `.local/` | Ignored local databases, raw logs, and private verification records |
 
 The existing stack uses JavaScript modules, Vercel hosting, Turso data storage, a Cloudflare-managed domain, and the operator's local Codex workflow. Publishing this repository does not grant access to those accounts or production data.

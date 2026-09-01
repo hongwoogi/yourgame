@@ -172,9 +172,49 @@ export async function ensureDailyRun({ client, date, workerId, databaseClockSql 
   return { cycleId: cycle.cycleId, runReady: false, created: false, run: null, releaseAllowed: false, blockedReason };
 }
 
+export async function ensureDailyCorrectionRun({ client, date, workerId, snapshot, databaseClockSql = DATABASE_NOW_SQL } = {}) {
+  const cycle = dailyCycleForDate(date), parentId = runIdFor(date);
+  if (typeof workerId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(workerId)) fail('INVALID_WORKER_ID');
+  if (!snapshot || !matchesCycle(snapshot, cycle)) fail('INVALID_SNAPSHOT');
+  const store = createAdminStore(client, { databaseClockSql });
+  const checked = await checkSnapshot(store, snapshot);
+  if (checked.allowed !== true || digest(await cycleProposals(client, store, cycle)) !== snapshot.proposalDigest) fail('DAILY_INPUT_CHANGED');
+  const id = `daily-correction-${date.replaceAll('-', '')}-${randomUUID()}`;
+  const results = await writeBatch(client, [
+    `SELECT *, ${databaseClockSql} AS now_ms FROM service_control WHERE id = 1`,
+    { sql: `INSERT INTO development_runs(id,label,summary,status,created_at,updated_at,parent_id,created_by)
+        SELECT ?, '일일 게임 교정 개발', '마감 뒤 안전 재심사로 확인된 누락 요구를 새 불변 버전으로 교정합니다. 공개 완료를 뜻하지 않습니다.',
+          'queued', ${databaseClockSql}, ${databaseClockSql}, ?, NULL
+        WHERE ${databaseClockSql} >= ?
+          AND EXISTS (SELECT 1 FROM service_control WHERE id=1 AND mode='active' AND development_enabled=1)
+          AND EXISTS (SELECT 1 FROM development_runs WHERE id=? AND status='completed' AND cancel_requested=0)
+          AND EXISTS (SELECT 1 FROM game_release_reviews WHERE run_id=? AND snapshot_digest<>?)
+          AND NOT EXISTS (SELECT 1 FROM game_release_reviews WHERE snapshot_digest=?)
+          AND NOT EXISTS (SELECT 1 FROM development_runs WHERE status IN ('queued','running'))`,
+      args: [id, parentId, Date.parse(cycle.releaseAt), parentId, parentId, snapshot.snapshotDigest, snapshot.snapshotDigest] },
+    { sql: `INSERT INTO admin_audit(id,created_at,action,target_id,reason,actor_name)
+        SELECT ?, ${databaseClockSql}, 'worker_enqueue_daily_correction', ?,
+          '마감 후 안전 재심사로 확인된 누락 입력의 교정 개발을 등록했습니다.', '작업자' WHERE changes()=1`,
+      args: [randomUUID(), id] },
+    { sql: 'SELECT id,status,revision,cancel_requested FROM development_runs WHERE id=?', args: [id] },
+    { sql: 'SELECT status,cancel_requested FROM development_runs WHERE id=?', args: [parentId] },
+    `SELECT COUNT(*) AS active FROM development_runs WHERE status IN ('queued','running')`,
+  ]);
+  const service = results[0].rows[0], run = safeRun(results[3].rows[0]), parent = results[4].rows[0];
+  const blockedReason = !service ? 'state_unavailable' : service.mode !== 'active' ? 'service_' + service.mode
+    : Number(service.development_enabled) !== 1 ? 'development_paused'
+      : Number(service.now_ms) < Date.parse(cycle.releaseAt) ? 'daily_release_not_due'
+        : !parent || parent.status !== 'completed' || Number(parent.cancel_requested) !== 0 ? 'daily_parent_not_completed'
+          : Number(results[5].rows[0].active) > (run ? 1 : 0) ? 'another_run_active'
+            : run ? null : 'daily_correction_unavailable';
+  return { cycleId: cycle.cycleId, runReady: Boolean(run) && !blockedReason, created: results[1].rowsAffected === 1,
+    run, releaseAllowed: false, ...(blockedReason ? { blockedReason } : {}) };
+}
+
 export function parseDailyArguments(argv) {
   const [command, ...values] = argv;
-  const allowed = { status: ['date'], date: ['date'], snapshot: ['date', 'output'], ensure: ['date', 'worker-id'] };
+  const allowed = { status: ['date'], date: ['date'], snapshot: ['date', 'output'], ensure: ['date', 'worker-id'],
+    'ensure-correction': ['date', 'worker-id', 'snapshot'] };
   if (!Object.hasOwn(allowed, command) || values.length % 2) fail('INVALID_ARGUMENTS');
   const args = { command };
   for (let index = 0; index < values.length; index += 2) {
@@ -183,8 +223,9 @@ export function parseDailyArguments(argv) {
     args[key] = value;
   }
   if (args.date) dailyCycleForDate(args.date);
-  if (['snapshot', 'ensure'].includes(command) && !args.date) fail('INVALID_ARGUMENTS');
-  if (command === 'ensure' && !args['worker-id']) fail('INVALID_ARGUMENTS');
+  if (['snapshot', 'ensure', 'ensure-correction'].includes(command) && !args.date) fail('INVALID_ARGUMENTS');
+  if (['ensure', 'ensure-correction'].includes(command) && !args['worker-id']) fail('INVALID_ARGUMENTS');
+  if (command === 'ensure-correction' && !args.snapshot) fail('INVALID_ARGUMENTS');
   return args;
 }
 async function main() {
@@ -199,6 +240,8 @@ async function main() {
     let report;
     if (args.command === 'snapshot') report = await exportDailyRound({ client, date: args.date, output: args.output && path.resolve(root, args.output) });
     else if (args.command === 'ensure') report = await ensureDailyRun({ client, date: args.date, workerId: args['worker-id'] });
+    else if (args.command === 'ensure-correction') report = await ensureDailyCorrectionRun({ client, date: args.date,
+      workerId: args['worker-id'], snapshot: await readSnapshot(path.resolve(root, args.snapshot)) });
     else {
       const now = await databaseNow(client, DATABASE_NOW_SQL), checkpoint = dailyCheckpoint(now);
       const cycle = args.date ? dailyCycleForDate(args.date) : checkpoint.latestClosedCycle;

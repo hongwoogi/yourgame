@@ -112,7 +112,7 @@ function browserSeed(config) {
   throw new Error('BROWSER_NO_DEFENSE_SEED');
 }
 
-export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:3000', screenshots, privateRoot = PRIVATE } = {}) {
+export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:3000', screenshots, assets, privateRoot = PRIVATE } = {}) {
   check(['http://localhost:3000', 'http://127.0.0.1:3000'].includes(baseURL), 'INVALID_QA_ORIGIN');
   const bundle = validateGameBundle(JSON.parse(raw)), version = bundle.config.gameVersion;
   // Fix only the trusted frame's run seed, chosen from the documented1..32 set.
@@ -125,6 +125,15 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
   const { chromium, expect } = await import('@playwright/test');
   const runtime = await collectRuntimeEvidence();
   const expectedFiles = new Map(runtime.runtimeFiles.map(file => [file.path, file.sha256]));
+  const assetBytes = new Map();
+  if ((bundle.assets || []).length) {
+    const assetRoot = await resolveQaPath(assets, { privateRoot, kind: 'directory' });
+    for (const asset of bundle.assets) {
+      const file = await resolveQaPath(path.join(assetRoot, asset.path.replace(/^assets\//, '')), { privateRoot });
+      const bytes = await readFile(file); check(bytes.length === asset.bytes && sha(bytes) === asset.sha256, 'BROWSER_ASSET_BYTES_CHANGED');
+      assetBytes.set(asset.path, bytes);
+    }
+  } else check(!assets, 'INVALID_QA_ARGUMENTS');
   const browser = await chromium.launch({ headless: true });
   const results = [];
   try {
@@ -157,6 +166,10 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         if (url.hostname === 'accounts.google.com') return route.abort();
         if (url.origin !== baseURL) { blocked.push('EXTERNAL_REQUEST'); return route.abort(); }
         if (url.pathname === `/games/${version}/game.json`) return route.fulfill({ contentType: 'application/json', body: raw });
+        const assetPath = url.pathname.slice(`/games/${version}/`.length);
+        if (url.pathname.startsWith(`/games/${version}/`) && assetBytes.has(assetPath)) {
+          return route.fulfill({ contentType: 'image/png', body: assetBytes.get(assetPath) });
+        }
         if (!url.pathname.startsWith('/api/')) return route.continue();
         if (request.method() !== 'GET' || url.search.includes('isolationProbe')) { unexpected.push('API_REQUEST'); return route.abort(); }
         if (url.pathname === '/api/session') return reply({ user: null, csrfToken: 'qa-fixture-csrf', googleNonce: 'qa-fixture-nonce' });
@@ -175,9 +188,24 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         await page.goto('/?lang=en');
         phase = 'start';
         const frame = page.frameLocator('#live-game-frame');
+        const noOverflow = () => page.frames().find(candidate => candidate.url().endsWith('/game-frame.html')).evaluate(() => {
+          const game = document.getElementById('game');
+          return game.scrollWidth <= game.clientWidth && game.scrollHeight <= game.clientHeight
+            && document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight;
+        });
         await expect(frame.getByRole('button', { name: 'Begin expedition', exact: true })).toBeEnabled();
+        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: 'How to play', exact: true }).click();
+        await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'help');
+        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: 'Return to game', exact: true }).click({ trial: true }).catch(() => {});
+        await frame.getByRole('button', { name: 'Next', exact: true }).click();
+        await frame.getByRole('button', { name: 'Next', exact: true }).click();
+        await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
         await frame.getByRole('button', { name: 'Begin expedition', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
+        await expect(frame.locator('.card-art')).toHaveCount(4);
+        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
         const saved = () => page.evaluate(async version => {
           const { createGameSaveStore } = await import('/game-save-store.js'); const store = createGameSaveStore(version);
           try { return await store.load(); } finally { store.close(); }
@@ -201,8 +229,12 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         phase = 'reward';
         await frame.locator('[data-action="endTurn"]').click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
+        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
         const reward = chooseStrategyAction(bundle.config, (await saved()).data.state);
         await frame.locator(`.reward[data-card="${reward.cardId}"]`).click();
+        await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
+        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
         phase = 'pause_resume';
         const snapshot = await saved();
@@ -236,7 +268,8 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         const bounds = await page.locator('#live-game-frame').boundingBox();
         check(Math.abs(bounds.width / bounds.height - 9 / 16) < 0.01
           && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
-          && await child.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'BROWSER_LAYOUT_FAILED');
+          && await child.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
+          && await noOverflow(), 'BROWSER_LAYOUT_FAILED');
         const visibleGame = page.locator('#live-game-frame');
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
         await expect(frame.locator('#game')).toBeVisible();
@@ -264,13 +297,13 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
   return { passed: results.every(result => result.passed), results };
 }
 
-export async function validateCandidateRun({ bundle: input, evidence, screenshots }, { privateRoot = PRIVATE } = {}) {
+export async function validateCandidateRun({ bundle: input, evidence, screenshots, assets }, { privateRoot = PRIVATE } = {}) {
   const bundlePath = await resolveQaPath(input, { privateRoot });
   const evidencePath = await resolveQaPath(evidence, { privateRoot, mustExist: false });
   const bytes = await readFile(bundlePath); check(bytes.length <= 98304, 'GAME_BUNDLE_TOO_LARGE');
   const raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   const bundle = validateGameBundle(JSON.parse(raw)), before = await collectRuntimeEvidence();
-  const balance = evaluateGameBalance(bundle), browser = await runCandidateBrowser(raw, { screenshots, privateRoot });
+  const balance = evaluateGameBalance(bundle), browser = await runCandidateBrowser(raw, { screenshots, assets, privateRoot });
   const after = await collectRuntimeEvidence();
   const result = { schemaVersion: 1, contentSha256: sha(bytes), ...before, balance, browser,
     runtimeUnchanged: before.runtimeDigest === after.runtimeDigest,
@@ -284,10 +317,10 @@ export async function validateCandidateRun({ bundle: input, evidence, screenshot
 export function parseQaArguments(argv) {
   const args = {};
   for (const arg of argv) {
-    const match = /^--(bundle|evidence|screenshots)=(.+)$/.exec(arg);
+    const match = /^--(bundle|evidence|screenshots|assets)=(.+)$/.exec(arg);
     check(match && !Object.hasOwn(args, match[1]), 'INVALID_QA_ARGUMENTS'); args[match[1]] = match[2];
   }
-  check(Object.keys(args).length === 3, 'INVALID_QA_ARGUMENTS'); return args;
+  check(['bundle', 'evidence', 'screenshots'].every(key => args[key]), 'INVALID_QA_ARGUMENTS'); return args;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {

@@ -159,6 +159,8 @@ blocker 코드는 `ISOLATION_UNAVAILABLE`, `INPUT_GATE_BLOCKED`, `SNAPSHOT_CHANG
 
 candidate.json의 형식은 기존 `scripts/check-game-release.mjs`가 유일한 기준이다. `schemaVersion`, `kind`, `candidateId`, `runId`, `policyVersion`, `snapshotDigest`, `sourceDigest`, `assetsDigest`, `files`만 사용하고 파일마다 `kind`, `path`, `bytes`, `sha256`를 둔다. source는 `source/`, asset은 `assets/` 아래다. 제한은 총 1,024파일, 64 MiB, 방문 4,096entry, 깊이16이다. inventory 밖 파일·경로 이탈·링크·junction·hardlink·case alias를 허용하지 않는다.
 
+게임 UI는 9:16 플레이 화면에서 내부 스크롤을 사용하지 않는다. 메뉴·플레이·도움말·보상·성장·일시정지·결과를 독립 페이지로 두고, 넘치는 규칙·상세·기록·선택지는 명시적 이전/다음 페이지로 분리한다. 생성된 래스터는 승인된 아트 브리프를 받은 신뢰 운영자가 만들고, asset_manager가 PNG 경로·MIME·바이트·SHA-256·dimensions·provenance를 확인한다. 외부 URL을 런타임에 남기지 않으며 정확한 로컬 버전 에셋만 후보·공개·archive에 함께 묶는다.
+
 `output/step05_candidate/`는 legacy 전달 패키지 경로다. 현재 `scripts/prepare-game-candidate.mjs`는 검증한 JSON bundle과 신뢰된 런타임의 정확한 바이트를 `.local/game-candidates/<candidateId>/candidate.json` 및 `source/` 아래로 반입한다. 모델 출력의 임의 JS·HTML·CSS·URL·능동 에셋을 실행하거나 반입하지 않는다. `scripts/validate-game-candidate.mjs`의 실제 동작·브라우저 증거와 의미 검토는 별도로 보존한다. handoff·라이선스·검토 노트는 후보 바이트 목록 밖에 두며, 임의 파일을 후보 루트에 추가하지 않는다.
 
 신뢰된 위임 운영자는 실제 의미 검토와 실행 증거를 확인한 뒤 `createGameReleaseStore(client).issueReview(...)`로 불변 `game_release_reviews`와 별도 감사를 발급한다. 영수증은 run·candidate·policy·snapshot/source/assets digest·gameVersion·contentSha256·runtimeDigest·evidenceDigest, 현재 worker/run/service revision·round와 정확한 입력 binding에 결합된다. JSON 위임 문구나 역할의 자가 검사값은 권한이 아니다. 서버 완료 경로도 영수증과 현재 입력·운영 제어를 같은 쓰기 트랜잭션에서 다시 확인한다.

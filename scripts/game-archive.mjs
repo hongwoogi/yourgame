@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = code => { throw new Error(code); };
 const validVersion = version => typeof version === 'string' && /^v[A-Za-z0-9_-]{1,63}$/.test(version);
-const expectedPaths = ['game.json', ...GAME_RUNTIME_FILES.map(file => 'runtime/' + file)].sort();
+const expectedSourcePaths = ['game.json', ...GAME_RUNTIME_FILES.map(file => 'runtime/' + file)].sort();
 const record = (name, bytes) => ({ path: name, bytes: bytes.length, sha256: hash(bytes) });
 
 async function directory(target) {
@@ -33,7 +33,7 @@ async function writeImmutable(target, bytes) {
 
 // This records source bytes only. It never approves, deploys, or selects a game.
 // Production callers must already have passed the trusted release gate.
-export async function archiveGameVersion({ content, runtimeFiles, archiveRoot = path.join(root, 'game-archive') }) {
+export async function archiveGameVersion({ content, runtimeFiles, assets = [], archiveRoot = path.join(root, 'game-archive') }) {
   content = Buffer.from(content);
   const bundle = validateGameBundle(JSON.parse(content));
   const version = bundle.config.gameVersion;
@@ -41,18 +41,24 @@ export async function archiveGameVersion({ content, runtimeFiles, archiveRoot = 
   if (!Array.isArray(runtimeFiles) || runtimeFiles.length !== GAME_RUNTIME_FILES.length
       || new Set(runtimeFiles.map(file => file.path)).size !== GAME_RUNTIME_FILES.length
       || runtimeFiles.some(file => !GAME_RUNTIME_FILES.includes(file.path))) fail('ARCHIVE_RUNTIME_INCOMPLETE');
+  const expectedAssets = (bundle.assets || []).map(asset => asset.path).sort();
+  if (!Array.isArray(assets) || assets.length !== expectedAssets.length
+      || new Set(assets.map(file => file.path)).size !== expectedAssets.length
+      || assets.map(file => file.path).sort().join('\n') !== expectedAssets.join('\n')) fail('ARCHIVE_ASSETS_INCOMPLETE');
   const files = [{ path: 'game.json', content }, ...runtimeFiles.map(file => ({
     path: 'runtime/' + file.path, content: Buffer.from(file.content),
-  }))].sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  })), ...assets.map(file => ({ path: file.path, content: Buffer.from(file.content) }))].sort((a, b) => a.path.localeCompare(b.path, 'en'));
   if (files.some(file => !file.content.length || file.content.length > 4 * 1024 * 1024)) fail('ARCHIVE_INVALID_FILE');
-  const manifest = { schemaVersion: 1, kind: 'game-source-snapshot', version,
+  const manifest = { schemaVersion: assets.length ? 2 : 1, kind: 'game-source-snapshot', version,
     files: files.map(file => record(file.path, file.content)) };
   const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2) + '\n');
   await directory(archiveRoot);
   const versionRoot = path.join(archiveRoot, version);
   await directory(versionRoot);
   // Validate parent directories before opening any files; never follow a link.
-  for (const relative of ['runtime', 'runtime/public']) await directory(path.join(versionRoot, relative));
+  for (const relative of ['runtime', 'runtime/public', ...assets.map(file => path.posix.dirname(file.path))]) {
+    if (relative !== '.') await directory(path.join(versionRoot, relative));
+  }
   // Detect conflicting retries before writing any remaining files.
   for (const file of [...files, { path: 'manifest.json', content: manifestBytes }]) {
     try {
@@ -72,7 +78,7 @@ async function inventory(directoryPath, relative = '') {
   if (relative.split('/').length > 4) fail('ARCHIVE_FILE_SET_CHANGED');
   const result = [];
   const entries = await readdir(directoryPath, { withFileTypes: true });
-  if (entries.length > expectedPaths.length + 1) fail('ARCHIVE_FILE_SET_CHANGED');
+  if (entries.length > 1025) fail('ARCHIVE_FILE_SET_CHANGED');
   for (const entry of entries) {
     const name = relative + entry.name;
     if (entry.isSymbolicLink()) fail('ARCHIVE_UNSAFE_PATH');
@@ -92,10 +98,15 @@ export async function checkGameArchive({ archiveRoot = path.join(root, 'game-arc
     if (!entry.isDirectory() || !validVersion(entry.name)) fail('ARCHIVE_INVALID_ENTRY');
     const versionRoot = path.join(archiveRoot, entry.name);
     const manifest = JSON.parse(await readRegular(path.join(versionRoot, 'manifest.json')));
-    if (manifest.schemaVersion !== 1 || manifest.kind !== 'game-source-snapshot' || manifest.version !== entry.name
+    if (![1, 2].includes(manifest.schemaVersion) || manifest.kind !== 'game-source-snapshot' || manifest.version !== entry.name
         || Object.keys(manifest).sort().join(',') !== 'files,kind,schemaVersion,version'
-        || !Array.isArray(manifest.files) || manifest.files.length !== expectedPaths.length
-        || manifest.files.map(file => file.path).sort().join('\n') !== expectedPaths.join('\n')) fail('ARCHIVE_INVALID_MANIFEST');
+        || !Array.isArray(manifest.files)) fail('ARCHIVE_INVALID_MANIFEST');
+    const content = await readRegular(path.join(versionRoot, 'game.json'));
+    const parsed = JSON.parse(content);
+    const expectedPaths = manifest.schemaVersion === 1 ? expectedSourcePaths
+      : [...expectedSourcePaths, ...(validateGameBundle(parsed).assets || []).map(asset => asset.path)].sort();
+    if (manifest.files.length !== expectedPaths.length
+      || manifest.files.map(file => file.path).sort().join('\n') !== expectedPaths.join('\n')) fail('ARCHIVE_INVALID_MANIFEST');
     const actualPaths = await inventory(versionRoot);
     if (actualPaths.join('\n') !== [...expectedPaths, 'manifest.json'].sort().join('\n')) fail('ARCHIVE_FILE_SET_CHANGED');
     for (const file of manifest.files) {
@@ -103,7 +114,6 @@ export async function checkGameArchive({ archiveRoot = path.join(root, 'game-arc
       const bytes = await readRegular(path.join(versionRoot, file.path));
       if (file.bytes !== bytes.length || file.sha256 !== hash(bytes)) fail('ARCHIVE_BYTES_CHANGED');
     }
-    const content = await readRegular(path.join(versionRoot, 'game.json'));
     // Historical snapshots retain their own validator/runtime. Do not reinterpret
     // an old bundle with a future game's schema during archive verification.
     if (JSON.parse(content).config?.gameVersion !== entry.name) fail('ARCHIVE_VERSION_MISMATCH');
@@ -114,6 +124,11 @@ export async function checkGameArchive({ archiveRoot = path.join(root, 'game-arc
     const bytes = await readRegular(path.join(publicGamesRoot, entry.name, 'game.json'));
     if (!versions.has(entry.name)) fail('GAME_ARCHIVE_MISSING');
     if (versions.get(entry.name) !== hash(bytes)) fail('ARCHIVE_PUBLIC_BYTES_CHANGED');
+    const manifest = JSON.parse(await readRegular(path.join(archiveRoot, entry.name, 'manifest.json')));
+    for (const file of manifest.files.filter(file => file.path.startsWith('assets/'))) {
+      const publicBytes = await readRegular(path.join(publicGamesRoot, entry.name, file.path));
+      if (file.bytes !== publicBytes.length || file.sha256 !== hash(publicBytes)) fail('ARCHIVE_PUBLIC_BYTES_CHANGED');
+    }
   }
   for (const game of registeredGames) {
     if (versions.get(game.version) !== game.sha256) fail('ARCHIVE_REGISTRY_MISMATCH');

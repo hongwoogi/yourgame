@@ -10,7 +10,7 @@ import { createStore } from '../server/store.mjs';
 import { activateCommunityPublicDefaults } from '../server/community-schema.mjs';
 import { INITIAL_CUTOFF } from '../server/config.mjs';
 import { TEST_CLOCK_SQL } from './backend-helpers.mjs';
-import { exportReviewIntake, applyOperatorReview } from '../scripts/operator-safety-review.mjs';
+import { exportReviewIntake, applyOperatorReview, applyOperatorHeldReReview } from '../scripts/operator-safety-review.mjs';
 
 async function fixture(t, body = '유혈 없는 판타지 몬스터 전투') {
   // Interactive libSQL transactions hand off the connection. A bare :memory:
@@ -99,4 +99,24 @@ test('a later item failure or failed audit rolls back the complete operation', a
   await f.client.execute("CREATE TRIGGER fail_operator_audit BEFORE INSERT ON admin_audit BEGIN SELECT RAISE(ABORT, 'test'); END");
   await assert.rejects(apply(f));
   assert.equal((await f.client.execute('SELECT status FROM proposal_safety_reviews')).rows[0].status, 'pending');
+});
+
+test('a delegated second review may resolve held input but cannot override pending or blocked input', async t => {
+  const f = await fixture(t);
+  const item = f.plan.items[0];
+  await f.client.execute({ sql: `UPDATE proposal_safety_reviews SET status='held', revision=revision+1
+    WHERE id=? AND revision=?`, args: [item.safetyReviewId, item.safetyRevision] });
+  item.safetyRevision++;
+  assert.deepEqual(await applyOperatorHeldReReview(f.client, f.plan, { databaseClockSql: TEST_CLOCK_SQL }),
+    { ok: true, applied: 1, replayed: 0, inputReviewOnly: true, gamePublished: false });
+  assert.equal((await f.store.admin.listEligibleProposals({ roundId: 'initial' })).length, 1);
+
+  const pending = await fixture(t);
+  await assert.rejects(applyOperatorHeldReReview(pending.client, pending.plan, { databaseClockSql: TEST_CLOCK_SQL }),
+    codes('OPERATOR_REVIEW_CONFLICT'));
+  await pending.client.execute({ sql: "UPDATE proposal_safety_reviews SET status='blocked',revision=revision+1 WHERE id=?",
+    args: [pending.plan.items[0].safetyReviewId] });
+  pending.plan.items[0].safetyRevision++;
+  await assert.rejects(applyOperatorHeldReReview(pending.client, pending.plan, { databaseClockSql: TEST_CLOCK_SQL }),
+    codes('OPERATOR_REVIEW_CONFLICT'));
 });

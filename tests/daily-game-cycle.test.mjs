@@ -9,8 +9,9 @@ import { createAdminStore } from '../server/admin-store.mjs';
 import { initializeAdminDatabase } from '../server/admin-schema.mjs';
 import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
 import { SAFETY_POLICY_VERSION } from '../server/safety-policy.mjs';
+import { GAME_RELEASE_SCHEMA } from '../server/game-release-schema.mjs';
 import { readSnapshot } from '../scripts/export-initial-round.mjs';
-import { dailyCheckpoint, exportDailyRound, ensureDailyRun, parseDailyArguments } from '../scripts/daily-game-cycle.mjs';
+import { dailyCheckpoint, exportDailyRound, ensureDailyRun, ensureDailyCorrectionRun, parseDailyArguments } from '../scripts/daily-game-cycle.mjs';
 import { backendFixture, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
 async function fixture(t) {
@@ -243,6 +244,38 @@ test('concurrent duplicate requests enqueue once and a different active cycle bl
   assert.equal((await f.client.execute('SELECT COUNT(*) AS total FROM development_runs')).rows[0].total, 1);
 });
 
+test('a completed daily release can enqueue one correction bound to a newly approved immutable snapshot', async t => {
+  const f = await fixture(t);
+  for (const statement of GAME_RELEASE_SCHEMA) await f.client.execute(statement);
+  await f.proposal();
+  const late = await f.proposal({ approved: false });
+  await f.setTime(FIRST_DAILY_CUTOFF);
+  await f.export();
+  const original = await readSnapshot(f.output);
+  await f.ensure();
+  await f.client.execute("UPDATE development_runs SET status='completed' WHERE id='daily-game-2026-09-01'");
+  await f.client.execute("INSERT INTO admin_audit(id,created_at,action,target_id,reason,actor_name) VALUES ('release-audit',1,'test','daily-game-2026-09-01','test','test')");
+  const h = '1'.repeat(64);
+  await f.client.execute({ sql: `INSERT INTO game_release_reviews(id,request_id,operator_id,authorization_ref,run_id,candidate_id,
+    policy_version,snapshot_digest,source_digest,assets_digest,game_version,content_sha256,runtime_digest,evidence_digest,
+    worker_id,run_revision,service_revision,round_id,bindings_digest,release_digest,payload_digest,audit_id,created_at)
+    VALUES ('release-review','release-request','operator','authorization','daily-game-2026-09-01','candidate',?,?,?,?,?,?,?,?,
+      'worker',1,1,'pending',?,?,?,'release-audit',1)`,
+    args: [SAFETY_POLICY_VERSION, original.snapshotDigest, h, h, 'v1', h, h, h, h, h, h] });
+  await f.review(late.id);
+  const correctionFile = join(f.directory, 'correction.json');
+  await f.export({ output: correctionFile });
+  const correction = await readSnapshot(correctionFile);
+  await f.setTime(FIRST_DAILY_CUTOFF + 3600000);
+  const report = await ensureDailyCorrectionRun({ client: f.client, date: '2026-09-01', workerId: 'daily-test-worker',
+    snapshot: correction, databaseClockSql: TEST_CLOCK_SQL });
+  assert.equal(report.created, true);
+  assert.equal(report.runReady, true);
+  assert.equal(report.run.status, 'queued');
+  assert.match(report.run.id, /^daily-correction-20260901-/);
+  assert.equal((await f.client.execute("SELECT COUNT(*) AS total FROM admin_audit WHERE action='worker_enqueue_daily_correction'")).rows[0].total, 1);
+});
+
 for (const status of ['completed', 'failed', 'cancelled']) {
   test(`daily run ${status} remains terminal across retries`, async t => {
     const f = await fixture(t);
@@ -282,6 +315,7 @@ test('CLI accepts explicit date/status/snapshot/ensure options and rejects impli
   assert.deepEqual(parseDailyArguments(['status', '--date', '2026-09-01']), { command: 'status', date: '2026-09-01' });
   assert.equal(parseDailyArguments(['snapshot', '--date', '2026-09-01', '--output', '.local/daily/snapshot.json']).output, '.local/daily/snapshot.json');
   assert.equal(parseDailyArguments(['ensure', '--date', '2026-09-01', '--worker-id', 'test-worker'])['worker-id'], 'test-worker');
+  assert.equal(parseDailyArguments(['ensure-correction', '--date', '2026-09-01', '--worker-id', 'test-worker', '--snapshot', '.local/correction.json']).snapshot, '.local/correction.json');
   for (const argv of [[], ['snapshot'], ['ensure', '--date', '2026-09-01'], ['status', '--output', 'x'], ['status', '--date', '2026-09-01', '--date', '2026-09-02'], ['delete'], ['snapshot', '--date=2026-09-01']]) {
     assert.throws(() => parseDailyArguments(argv), error => error.workerCode === 'INVALID_ARGUMENTS');
   }

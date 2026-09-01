@@ -77,8 +77,9 @@ function validateDecision(plan) {
 
 // No schema changes, fabricated user/session, public endpoint, or release gate
 // changes. Each immutable audit row is also an exact-payload retry receipt.
-export async function applyOperatorReview(client, plan, { databaseClockSql = DATABASE_NOW_SQL } = {}) {
+async function applyBoundOperatorReview(client, plan, { databaseClockSql = DATABASE_NOW_SQL, expectedStatus }) {
   validateDecision(plan);
+  if (!['pending', 'held'].includes(expectedStatus)) fail('OPERATOR_INVALID_INPUT');
   const tx = await client.transaction('write');
   try {
     checkService((await tx.execute('SELECT * FROM service_control WHERE id = 1')).rows[0], plan.serviceRevision);
@@ -104,14 +105,15 @@ export async function applyOperatorReview(client, plan, { databaseClockSql = DAT
       if (!row || Number(row.revision) !== item.proposalRevision || row.round_id !== plan.roundId
         || bodyDigest(row.body) !== item.bodyHash || row.safe_body_hash !== item.bodyHash
         || row.safe_id !== item.safetyReviewId || Number(row.safe_revision) !== item.safetyRevision
-        || row.safe_status !== 'pending') fail('OPERATOR_REVIEW_CONFLICT');
+        || row.safe_status !== expectedStatus) fail('OPERATOR_REVIEW_CONFLICT');
       if (item.status === 'approved' && (row.moderation === 'excluded' || row.member_status === 'suspended')) fail('OPERATOR_PROPOSAL_EXCLUDED');
       const brief = item.status === 'approved' ? validateDevelopmentBrief(item.developmentBrief) : '';
       if (item.status === 'approved') assertScreenedBody(row.body);
       const changed = await tx.execute({ sql: `UPDATE proposal_safety_reviews SET status = ?, revision = revision + 1,
         reason = ?, development_brief = ?, development_brief_hash = ?, checklist_confirmed = ?, reviewer_id = NULL,
-        reviewed_at = ${databaseClockSql} WHERE id = ? AND revision = ? AND status = 'pending'`,
-        args: [item.status, item.reason, brief, brief ? bodyDigest(brief) : '', Number(item.status === 'approved'), item.safetyReviewId, item.safetyRevision] });
+        reviewed_at = ${databaseClockSql} WHERE id = ? AND revision = ? AND status = ?`,
+        args: [item.status, item.reason, brief, brief ? bodyDigest(brief) : '', Number(item.status === 'approved'),
+          item.safetyReviewId, item.safetyRevision, expectedStatus] });
       if (changed.rowsAffected !== 1) fail('OPERATOR_REVIEW_CONFLICT');
       await tx.execute({ sql: `INSERT INTO admin_audit(id, created_at, action, target_id, reason, actor_user_id, actor_name)
         VALUES (?, ${databaseClockSql}, 'operator_review_proposal_safety', ?, ?, NULL, ?)`,
@@ -126,11 +128,23 @@ export async function applyOperatorReview(client, plan, { databaseClockSql = DAT
   } finally { tx.close(); }
 }
 
+export function applyOperatorReview(client, plan, options = {}) {
+  return applyBoundOperatorReview(client, plan, { ...options, expectedStatus: 'pending' });
+}
+
+// A held decision is not immutable: the delegated operator may resolve genuine
+// ambiguity after a second semantic review. This path remains bound to the same
+// body, policy and safety revision and cannot override a blocked decision.
+export function applyOperatorHeldReReview(client, plan, options = {}) {
+  return applyBoundOperatorReview(client, plan, { ...options, expectedStatus: 'held' });
+}
+
 async function main() {
   let client;
   try {
     const [command, file, roundId, ...extra] = process.argv.slice(2);
-    if (extra.length || !['export', 'apply'].includes(command) || !file || (command === 'apply' && roundId)) fail('OPERATOR_INVALID_INPUT');
+    if (extra.length || !['export', 'apply', 'reapply-held'].includes(command) || !file
+      || (['apply', 'reapply-held'].includes(command) && roundId)) fail('OPERATOR_INVALID_INPUT');
     client = await openDatabase(readConfig(), { initialize: false });
     const absolute = path.resolve(root, file);
     if (command === 'export') {
@@ -140,7 +154,8 @@ async function main() {
       console.log(JSON.stringify({ ok: true, exported: intake.items.length, privateRecord: path.relative(root, absolute) }));
     } else {
       const decision = JSON.parse(await readFile(await resolvePrivateFile(absolute), 'utf8'));
-      console.log(JSON.stringify(await applyOperatorReview(client, decision)));
+      console.log(JSON.stringify(await (command === 'apply'
+        ? applyOperatorReview(client, decision) : applyOperatorHeldReReview(client, decision))));
     }
   } catch (error) {
     console.error(JSON.stringify({ ok: false, error: error.operatorCode || (['PROPOSAL_SAFETY_REJECTED', 'INVALID_SAFETY_BRIEF'].includes(error.code) ? error.code : 'OPERATOR_REVIEW_UNAVAILABLE') }));
