@@ -11,6 +11,7 @@ import { createGamePublicationStore } from './game-publication-store.mjs';
 import { releaseBindingDigest, releaseInputDigest, verifyReleaseReview } from './game-release-store.mjs';
 import { approvedSafetySql, safetyBindingsSql } from './safety-store.mjs';
 import { MAX_CONTRIBUTION_INPUTS, readContributionVotes } from './contribution-votes.mjs';
+import { proposalVotingRoundIdSql } from './community-policy.mjs';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -26,6 +27,23 @@ const validId = value => typeof value === 'string' && ID.test(value);
 const validHash = value => typeof value === 'string' && HASH.test(value);
 const fail = (code, status = 409) => { throw new ApiError(status, code, '기여도 정산 근거와 현재 상태를 확인해 주세요.'); };
 const policyVersion = formula => `contribution-${formula}-v1`;
+
+export async function resolveContributionVoteRound(client, { intakeRoundId, bindings } = {}) {
+  if (!validId(intakeRoundId) || !Array.isArray(bindings) || !bindings.length
+    || bindings.length > MAX_CONTRIBUTION_INPUTS || bindings.some(binding => !validId(binding?.id))
+    || new Set(bindings.map(binding => binding.id)).size !== bindings.length) fail('CONTRIBUTION_INPUT_BINDING_MISMATCH');
+  const voteRoundSql = proposalVotingRoundIdSql('p.round_id', 'p.created_at');
+  const rows = (await client.execute({ sql: `SELECT p.round_id AS intake_round_id,
+      ${voteRoundSql} AS vote_round_id,COUNT(*) AS proposal_count
+    FROM proposals p JOIN json_each(?) binding ON p.id=json_extract(binding.value,'$.id')
+    GROUP BY p.round_id,${voteRoundSql} LIMIT 3`,
+  args: [JSON.stringify(bindings.map(({ id }) => ({ id })))] })).rows;
+  if (rows.length !== 1 || rows[0].intake_round_id !== intakeRoundId || !validId(rows[0].vote_round_id)
+    || Number(rows[0].proposal_count) !== bindings.length) {
+    fail('CONTRIBUTION_INPUT_BINDING_MISMATCH');
+  }
+  return rows[0].vote_round_id;
+}
 
 function configuredPolicy() {
   const policy = publicContributionPolicy();
@@ -168,7 +186,8 @@ export function createContributionSettlementStore(client, { databaseClockSql = D
       AND NOT EXISTS(SELECT 1 FROM member_access m WHERE m.user_id=p.user_id AND m.status='suspended')`,
       args: [JSON.stringify(plan.bindings), receipt.roundId] })).rows[0];
     if (Number(matching.n) !== plan.bindings.length) fail('CONTRIBUTION_INPUT_BINDING_MISMATCH');
-    const votes = await readContributionVotes(tx, { roundId: receipt.roundId, bindings: plan.bindings, databaseClockSql });
+    const voteRoundId = await resolveContributionVoteRound(tx, { intakeRoundId: receipt.roundId, bindings: plan.bindings });
+    const votes = await readContributionVotes(tx, { roundId: voteRoundId, bindings: plan.bindings, databaseClockSql });
     const now = Number((await tx.execute(`SELECT ${databaseClockSql} AS now_ms`)).rows[0].now_ms);
     const publishedAt = Number(confirmed.created_at);
     if (!Number.isSafeInteger(now) || !Number.isSafeInteger(publishedAt) || publishedAt < votes.cutoff || now < publishedAt) {

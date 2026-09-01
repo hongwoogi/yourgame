@@ -16,7 +16,8 @@ import { activateCommunityPublicDefaults } from '../server/community-schema.mjs'
 import { prepareGameReleaseSchema } from '../server/game-release-schema.mjs';
 import { createGameReleaseStore, RELEASE_BINDING_KEYS } from '../server/game-release-store.mjs';
 import { createGamePublicationStore, preparePublicationSchema } from '../server/game-publication-store.mjs';
-import { createContributionSettlementStore, prepareContributionSettlementSchema } from '../server/contribution-settlement.mjs';
+import { createContributionSettlementStore, prepareContributionSettlementSchema,
+  resolveContributionVoteRound } from '../server/contribution-settlement.mjs';
 import { errorCode, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
 const BEFORE = INITIAL_CUTOFF - 3600000;
@@ -156,6 +157,24 @@ async function businessData(client) {
 
 const userId = (f, label) => f.members.get(label).session.user.id;
 const awarded = preview => Object.fromEntries(preview.awards.map(row => [row.userId, row]));
+
+test('settlement derives one exact daily vote round from pending intake without trusting a plan field', async () => {
+  const bindings = [{ id: 'a' }, { id: 'b' }];
+  const client = { async execute(statement) {
+    assert.match(statement.sql, /proposalVotingRoundIdSql|daily-|strftime/);
+    assert.deepEqual(JSON.parse(statement.args[0]), bindings);
+    return { rows: [{ intake_round_id: 'pending', vote_round_id: 'daily-2026-09-01', proposal_count: 2 }] };
+  } };
+  assert.equal(await resolveContributionVoteRound(client, { intakeRoundId: 'pending', bindings }), 'daily-2026-09-01');
+  for (const rows of [[],
+    [{ intake_round_id: 'pending', vote_round_id: 'daily-2026-09-01', proposal_count: 1 }],
+    [{ intake_round_id: 'initial', vote_round_id: 'daily-2026-09-01', proposal_count: 2 }],
+    [{ intake_round_id: 'pending', vote_round_id: 'daily-2026-09-01', proposal_count: 1 },
+      { intake_round_id: 'pending', vote_round_id: 'daily-2026-09-02', proposal_count: 1 }]]) {
+    await assert.rejects(resolveContributionVoteRound({ execute: async () => ({ rows }) },
+      { intakeRoundId: 'pending', bindings }), errorCode('CONTRIBUTION_INPUT_BINDING_MISMATCH'));
+  }
+});
 
 test('preview verifies a genuine closed-round release without preparing or writing any settlement data', async t => {
   const f = await fixture(t, { prepare: false });

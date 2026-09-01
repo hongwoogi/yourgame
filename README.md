@@ -38,7 +38,7 @@ The repository contains the website, server APIs, game runtime and versioned gam
 - A daily target of **23:00 KST for collecting that day's ideas and the next midnight for release**, subject to review and validation. This is a target, not a guarantee of an on-time release.
 - A Teen content ceiling as a design constraint, **not an official ESRB rating**.
 
-Reviewed game versions, beginning with `v1-20260901`, are included in the repository. Files in Git, a successful build, or a countdown reaching zero do not prove that a game has been released. The live selection and operator verification determine release status. Contribution points likewise require verified implementation and release evidence; the leaderboard alone is not evidence of awarded points.
+Reviewed game versions, beginning with `v1-20260901`, are included in the repository. Files in Git, a successful build, or a countdown reaching zero do not prove that a game has been released. The live selection and operator verification determine release status. After a verified daily release, the trusted workflow automatically settles only concretely fulfilled requirements against their exact cutoff vote receipts; immutable fulfillment keys prevent repeat payouts. A leaderboard alone is not evidence of awarded points.
 
 ## Run locally
 

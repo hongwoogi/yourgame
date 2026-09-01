@@ -168,6 +168,27 @@ test('real closed round with zero votes and a transaction exposing only execute 
   } finally { await tx.rollback(); }
 });
 
+test('pending development input resolves to its exact dated daily voting round', async t => {
+  const f = await backendFixture(t, { time: INITIAL_CUTOFF + 1 });
+  const author = await f.login('daily-contribution-author');
+  const voter = await f.login('daily-contribution-voter');
+  const { proposal } = await f.store.createProposal(author.session.user.id,
+    { body: 'Synthetic daily contribution fixture.', requestId: randomUUID() });
+  const entry = (await f.store.community.privateState(author.session)).publications
+    .find(item => item.proposalId === proposal.id);
+  await f.store.community.mutate(voter.session, { action: 'vote', requestId: randomUUID(),
+    publicId: entry.publicId, proposalRevision: entry.proposalRevision,
+    publicationRevision: entry.publicationRevision, roundId: 'daily-2026-09-01', direction: 'up' });
+  const binding = (await f.client.execute({ sql: `SELECT proposal_id AS id,body_revision AS revision,body_hash AS bodyHash
+    FROM proposal_body_revisions WHERE proposal_id=? AND body_revision=?`, args: [proposal.id, proposal.revision] })).rows[0];
+  await f.setTime(INITIAL_CUTOFF + 24 * 60 * 60 * 1000 + 1);
+  const result = await readContributionVotes(f.client, { roundId: 'daily-2026-09-01',
+    bindings: [{ ...binding, participantId: author.session.user.id }], databaseClockSql: TEST_CLOCK_SQL });
+  assert.equal(result.roundId, 'daily-2026-09-01');
+  assert.deepEqual(result.proposals, [{ proposalId: proposal.id, authorId: author.session.user.id,
+    upvoterIds: [voter.session.user.id], downvoterIds: [] }]);
+});
+
 test('cancelled choices retain their exact history and release the active budget before cutoff', async t => {
   const f = await fixture(t);
   const items = [];

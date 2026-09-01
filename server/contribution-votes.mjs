@@ -3,7 +3,7 @@ import { ApiError } from './errors.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { COMMUNITY_SCHEMA } from './community-schema.mjs';
 import { ADMIN_SCHEMA } from './admin-schema.mjs';
-import { PUBLICATION_POLICY_VERSION, COMMUNITY_VOTE_LIMIT } from './community-policy.mjs';
+import { PUBLICATION_POLICY_VERSION, COMMUNITY_VOTE_LIMIT, proposalVotingRoundIdSql } from './community-policy.mjs';
 
 export const MAX_CONTRIBUTION_VOTE_ROWS = 50000;
 export const MAX_CONTRIBUTION_INPUTS = 1000;
@@ -77,7 +77,8 @@ function statement(bindings, roundId, clock) {
       UNION ALL ${record('trigger', { name: 'name', sql: 'sql' },
       `sqlite_master WHERE type = 'trigger' AND name IN (${immutableNames.map(name => `'${name}'`).join(',')})`)}
       UNION ALL ${record('proposal', {
-      id: 'p.id', authorId: 'p.user_id', roundId: 'p.round_id', revision: 'p.revision',
+      id: 'p.id', authorId: 'p.user_id', roundId: 'p.round_id',
+      votingRoundId: proposalVotingRoundIdSql('p.round_id', 'p.created_at'), revision: 'p.revision',
       createdAt: 'p.created_at', updatedAt: 'p.updated_at', bodyRevision: 'h.body_revision', bodyHash: 'h.body_hash',
       bodyCreatedAt: 'h.created_at', latestBodyAt: '(SELECT MAX(created_at) FROM proposal_body_revisions WHERE proposal_id = p.id)',
       publicId: 'cp.public_id', publicationRevision: 'cp.revision', publicationProposalRevision: 'cp.proposal_revision',
@@ -202,7 +203,7 @@ export async function readContributionVotes(client, { roundId, bindings, databas
       rows[row.kind].push(decode(row.value));
     }
     const round = rows.round[0];
-    if (rows.round.length !== 1 || round?.id !== roundId || !identifier(round.proposalRoundId)
+    if (rows.round.length !== 1 || round?.id !== roundId || round.proposalRoundId !== round.id
       || !integer(round.opensAt) || !integer(round.cutoff) || round.cutoff <= round.opensAt
       || !integer(round.now) || round.now < round.cutoff) fail('round');
     const cutoff = round.cutoff;
@@ -227,6 +228,7 @@ export async function readContributionVotes(client, { roundId, bindings, databas
     const moderationProofs = [];
     for (const proposal of rows.proposal) {
       if (!identifier(proposal.id) || proposals.has(proposal.id) || !people.has(proposal.authorId)
+        || !identifier(proposal.votingRoundId) || proposal.votingRoundId !== roundId
         || !revision(proposal.revision) || proposal.bodyRevision !== proposal.revision || !HASH.test(proposal.bodyHash || '')) fail('history');
       for (const name of ['createdAt', 'updatedAt', 'bodyCreatedAt', 'latestBodyAt']) unchangedAtCutoff(proposal[name], cutoff);
       for (const name of ['visibilityAt', 'latestDefaultAt']) unchangedAtCutoff(proposal[name], cutoff, true);
@@ -247,7 +249,7 @@ export async function readContributionVotes(client, { roundId, bindings, databas
     }
     for (const binding of bindings) {
       const proposal = proposals.get(binding.id);
-      if (!proposal || proposal.roundId !== round.proposalRoundId || proposal.revision !== binding.revision || proposal.bodyHash !== binding.bodyHash
+      if (!proposal || proposal.votingRoundId !== roundId || proposal.revision !== binding.revision || proposal.bodyHash !== binding.bodyHash
         || ['participantId', 'userId', 'authorId'].some(field => Object.hasOwn(binding, field) && binding[field] !== proposal.authorId)) fail('binding');
     }
     const receiptGroups = new Map();
@@ -331,7 +333,7 @@ export async function readContributionVotes(client, { roundId, bindings, databas
       // Known-invalid pre-cutoff choices remain in the evidence, but never in
       // recipients or the active-vote budget. No current safety fields are used.
       if (vote.direction === 'none' || vote.userId === proposal.authorId || vote.updatedAt < round.opensAt
-        || proposal.roundId !== round.proposalRoundId || author.status !== 'active' || voter.status !== 'active'
+        || proposal.votingRoundId !== roundId || author.status !== 'active' || voter.status !== 'active'
         || proposal.cutoffModeration === 'excluded' || proposal.visible === 0 || proposal.profileCreatedAt === null
         || proposal.defaultPolicy !== PUBLICATION_POLICY_VERSION || proposal.defaultRevision !== proposal.revision
         || proposal.publicationProposalRevision !== proposal.revision || proposal.publicationBodyHash !== proposal.bodyHash

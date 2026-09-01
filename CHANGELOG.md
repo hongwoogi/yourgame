@@ -6,6 +6,12 @@ Dates use Asia/Seoul (KST). This is a sanitized project development log, not a d
 
 날짜는 한국시간(KST) 기준입니다. 운영 원본 출력이나 참여자 데이터를 담지 않는 공개 개발 기록입니다. 코드 변경 기록은 운영 배포·게임 공개의 증거가 아닙니다. 과거 항목은 기존 커밋을 요약하며, 기록 작성 시점에 해당 버전을 다시 검증했다는 뜻은 아닙니다.
 
+## 2026-09-02 — Automatic daily contribution settlement / 일일 기여도 자동 정산
+
+- **Why / 이유:** Daily game inputs are stored under `pending`, while their votes belong to immutable `daily-YYYY-MM-DD` rounds. The settlement gate previously required those identifiers to be identical, so a verified daily release intentionally issued no points. / 일일 게임 입력은 `pending`에 저장되지만 투표는 불변 `daily-YYYY-MM-DD` 회차에 속합니다. 기존 정산 gate가 두 식별자의 일치를 요구해 검증된 일일 공개도 의도적으로 점수를 지급하지 않았습니다.
+- **Changed / 변경:** Derive the voting round from each proposal's immutable creation time using the same server policy as voting, require every bound input to resolve to one exact closed round, and run trusted preview/apply settlement after verified daily publication and completion. Existing fulfillment/user uniqueness still makes retries nonpaying. / 투표와 동일한 서버 정책으로 각 제안의 불변 생성시각에서 투표 회차를 계산하고, 모든 결합 입력이 하나의 정확한 종료 회차로 연결될 때만 검증된 일일 공개·완료 뒤 신뢰 preview/apply 정산을 수행합니다. 기존 성과·사용자 고유 제약으로 재실행 추가 지급은 계속 차단합니다.
+- **Validation / 검증:** Daily pending-to-dated-round capture, mixed/missing input rejection, full immutable vote evidence, and existing settlement replay/conflict/capacity tests pass. Production payout still requires the committed build, deployment verification, fulfillment review, preview, apply receipt, and leaderboard reconciliation. / 일일 pending→날짜 회차 포착, 혼합·누락 입력 차단, 전체 불변 투표 증거와 기존 정산 재실행·충돌·용량 검사를 통과했습니다. 운영 지급은 커밋 build·배포 검증·반영 검토·preview·apply 영수증·리더보드 대조가 추가로 필요합니다.
+
 ## 2026-09-02 — Daily correction with generated card art / 생성 카드 아트를 포함한 일일 교정
 
 - **Why / 이유:** The first daily review incorrectly mixed safety with current implementation feasibility. Four safe requests were held, including generated card art, while the one approved request largely repeated an existing resume capability. / 첫 일일 심사에서 안전성과 현재 구현 가능성을 잘못 섞어 생성 카드 아트를 포함한 안전 요구 4건이 보류됐고, 유일하게 승인된 요구는 기존 이어하기 기능과 대부분 겹쳤습니다.
