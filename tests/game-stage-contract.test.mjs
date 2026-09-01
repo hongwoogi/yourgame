@@ -25,7 +25,7 @@ test('immutable version changes and bounded retry arguments fail before I/O', as
   for (const gameVersion of ['v1-20260901','../outside','']) {
     assert.throws(() => stageContractFor({ stage:'gameplay', gameVersion, baselineVersion:'v1-20260901' }), /INVALID_STAGE/);
   }
-  await assert.rejects(runStage({ stage:'plan',runId:'daily-synthetic',workerId:'worker-synthetic',attempt:3 }), /INVALID_STAGE/);
+  await assert.rejects(runStage({ stage:'plan',runId:'daily-synthetic',workerId:'worker-synthetic',attempt:4 }), /INVALID_STAGE/);
 });
 
 test('daily production binds snapshot timing and immutable source dates to the actual run ancestry', () => {

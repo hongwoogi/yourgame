@@ -170,8 +170,10 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null }, serverTime: now });
         unexpected.push('API_REQUEST'); return route.abort();
       });
+      let phase = 'load';
       try {
         await page.goto('/?lang=en');
+        phase = 'start';
         const frame = page.frameLocator('#live-game-frame');
         await expect(frame.getByRole('button', { name: 'Begin expedition', exact: true })).toBeEnabled();
         await frame.getByRole('button', { name: 'Begin expedition', exact: true }).click();
@@ -181,6 +183,7 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           try { return await store.load(); } finally { store.close(); }
         }, version);
         let record = await saved(), played = false, fortified = false;
+        phase = 'action';
         for (let count = 0; count < 80 && record.data.state.phase === 'playing'; count++) {
           const action = chooseStrategyAction(bundle.config, record.data.state);
           if (action.type === 'endTurn') break;
@@ -195,19 +198,23 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           record = await saved(); played = true;
         }
         check(played && fortified, 'BROWSER_NO_CARD_DEFENSE');
+        phase = 'reward';
         await frame.locator('[data-action="endTurn"]').click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
         const reward = chooseStrategyAction(bundle.config, (await saved()).data.state);
         await frame.locator(`.reward[data-card="${reward.cardId}"]`).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
+        phase = 'pause_resume';
         const snapshot = await saved();
         await page.locator('#prompt').fill('Synthetic QA draft; not submitted.');
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'paused');
         await frame.getByRole('button', { name: 'Resume', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
+        phase = 'save_locale';
         await page.locator('#language-select').selectOption('ko');
         await expect(frame.locator('html')).toHaveAttribute('lang', 'ko');
         check(JSON.stringify(await saved()) === JSON.stringify(snapshot), 'BROWSER_SAVE_CHANGED');
+        phase = 'isolation';
         await page.locator('#language-select').selectOption('en'); await page.reload();
         await expect(frame.getByRole('button', { name: 'Continue expedition', exact: true })).toBeVisible();
         await frame.getByRole('button', { name: 'Continue expedition', exact: true }).click();
@@ -225,6 +232,7 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           return result;
         });
         check(Object.values(denials).every(Boolean), 'BROWSER_ISOLATION_FAILED');
+        phase = 'layout';
         const bounds = await page.locator('#live-game-frame').boundingBox();
         check(Math.abs(bounds.width / bounds.height - 9 / 16) < 0.01
           && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
@@ -248,7 +256,8 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           screenshot: path.relative(privateRoot, output).split(path.sep).join('/'), screenshotSha256: sha(capture),
           gameScreenshot: path.relative(privateRoot, gameOutput).split(path.sep).join('/'), gameScreenshotSha256: sha(gameCapture), servedFiles: [...served].sort() });
       } catch (error) {
-        results.push({ width, passed: false, error: /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : 'BROWSER_CHECK_FAILED' });
+        results.push({ width, passed: false, phase,
+          error: /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : 'BROWSER_CHECK_FAILED' });
       } finally { await context.close(); }
     }
   } finally { await browser.close(); }
