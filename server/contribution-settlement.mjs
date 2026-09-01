@@ -223,7 +223,7 @@ export function createContributionSettlementStore(client, { databaseClockSql = D
       return {
         id: `contribution-${awardKey}`, award_key: awardKey, user_id: item.userId,
         requirement_group_id: item.requirementGroupId, fulfillment_id: item.fulfillmentId,
-        release_id: plan.releaseBinding.gameVersion, round_id: receipt.roundId, contribution_kind: item.role,
+        release_id: plan.releaseBinding.gameVersion, round_id: voteRoundId, contribution_kind: item.role,
         adopted: Number(item.adopted), points_units: item.halfPointUnits, upvotes: item.upvotes, downvotes: item.downvotes,
         scoring_policy_version: policyVersion(plan.formula), safety_policy_version: plan.releaseBinding.policyVersion,
         source_digest: plan.releaseBinding.sourceDigest, assets_digest: plan.releaseBinding.assetsDigest,

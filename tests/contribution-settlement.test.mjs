@@ -12,6 +12,7 @@ import { DATABASE_NOW_SQL } from '../server/database-clock.mjs';
 import { createStore } from '../server/store.mjs';
 import { ADMIN_EMAIL } from '../server/admin-policy.mjs';
 import { INITIAL_CUTOFF } from '../server/config.mjs';
+import { DAY_MS, DAILY_RELEASE_DELAY_MS } from '../server/daily-schedule.mjs';
 import { activateCommunityPublicDefaults } from '../server/community-schema.mjs';
 import { prepareGameReleaseSchema } from '../server/game-release-schema.mjs';
 import { createGameReleaseStore, RELEASE_BINDING_KEYS } from '../server/game-release-store.mjs';
@@ -29,6 +30,7 @@ const bindingOf = row => Object.fromEntries(['id', 'revision', 'bodyHash', 'poli
   'safetyRevision', 'developmentBriefHash'].map(key => [key, row[key]]));
 
 async function fixture(t, { prepare = true, activate = true, confirm = true, complete = true, formula = 'weighted',
+  daily = false,
   authors = ['author-a'], votes = [{ voter: 'supporter-a', proposal: 0, direction: 'up' },
     { voter: 'detractor-a', proposal: 0, direction: 'down' }] } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'yourgame-contribution-settlement-'));
@@ -78,6 +80,9 @@ async function fixture(t, { prepare = true, activate = true, confirm = true, com
     }));
     return members.get(label);
   }
+  if (daily) await setTime(INITIAL_CUTOFF + 1);
+  const intakeRoundId = daily ? 'pending' : 'initial';
+  const voteRoundId = daily ? 'daily-2026-09-01' : 'initial';
   const proposals = [];
   for (const [index, label] of authors.entries()) {
     const author = await member(label);
@@ -98,35 +103,40 @@ async function fixture(t, { prepare = true, activate = true, confirm = true, com
     const proposal = proposals[vote.proposal];
     await store.community.mutate(voter.session, { action: 'vote', requestId: randomUUID(), publicId: proposal.publicId,
       proposalRevision: proposal.revision, publicationRevision: proposal.publicationRevision,
-      roundId: 'initial', direction: vote.direction });
+      roundId: voteRoundId, direction: vote.direction });
   }
-  const bindings = (await store.admin.listEligibleProposals({ roundId: 'initial', proposalIds: proposals.map(item => item.id) })).map(bindingOf);
+  const bindings = (await store.admin.listEligibleProposals({ roundId: intakeRoundId,
+    proposalIds: proposals.map(item => item.id) })).map(bindingOf);
   const created = await store.admin.mutate(admin.session, operation('create_version', {
     label: 'Synthetic contribution release', summary: 'Verified local fixture only',
   }));
+  const targetRunId = daily ? 'daily-game-2026-09-01' : created.targetId;
+  if (daily) await client.execute({ sql: `INSERT INTO development_runs(id,label,summary,status,created_at,updated_at)
+    VALUES(?,'Daily settlement fixture','Synthetic daily contribution release','queued',?,?)`,
+  args: [targetRunId, time, time] });
   const workerId = 'settlement-fixture-worker';
-  const running = await store.admin.claimRun({ id: created.targetId, revision: 1, workerId });
-  await setTime(AFTER);
+  const running = await store.admin.claimRun({ id: targetRunId, revision: 1, workerId });
+  await setTime(daily ? INITIAL_CUTOFF + DAY_MS + DAILY_RELEASE_DELAY_MS + 1 : AFTER);
   await prepareGameReleaseSchema(client, { expectedServiceRevision: 1 });
   await preparePublicationSchema(client, { expectedServiceRevision: 1 });
   const review = { id: randomUUID(), requestId: randomUUID(), operatorId: 'fixture-operator', authorizationRef: 'fixture:authorization',
     runId: running.id, candidateId: 'settlement-candidate', policyVersion: 'teen-v1', snapshotDigest: hash('a'),
     sourceDigest: hash('b'), assetsDigest: hash('c'), gameVersion: 'settlement-fixture-v1', contentSha256: hash('d'),
     runtimeDigest: hash('e'), evidenceDigest: hash('f'), workerId, runRevision: running.revision,
-    serviceRevision: 1, roundId: 'initial', bindings };
+    serviceRevision: 1, roundId: intakeRoundId, bindings };
   const releases = createGameReleaseStore(client, { databaseClockSql: TEST_CLOCK_SQL });
   await releases.issueReview(review);
   const releaseBinding = Object.fromEntries(RELEASE_BINDING_KEYS.map(key => [key, review[key]]));
   const publications = createGamePublicationStore(client, { databaseClockSql: TEST_CLOCK_SQL });
   if (activate) {
     await publications.activate({ operationId: randomUUID(), reviewId: review.id, runId: running.id, workerId,
-      runRevision: running.revision, serviceRevision: 1, bindings, roundId: 'initial', releaseBinding,
+      runRevision: running.revision, serviceRevision: 1, bindings, roundId: intakeRoundId, releaseBinding,
       commitSha: hash('1'), deploymentId: 'synthetic-deployment', expectedRevision: 0 });
     if (confirm) await publications.confirm({ operationId: randomUUID(), expectedRevision: 1, observationDigest: hash('2') });
   }
   let run = running;
   if (complete) run = await store.admin.updateRun({ id: running.id, revision: running.revision, workerId,
-    status: 'completed', releaseReviewId: review.id, releaseBinding, bindings, roundId: 'initial', serviceRevision: 1 });
+    status: 'completed', releaseReviewId: review.id, releaseBinding, bindings, roundId: intakeRoundId, serviceRevision: 1 });
   if (prepare) await prepareContributionSettlementSchema(client, { expectedServiceRevision: 1, databaseClockSql: TEST_CLOCK_SQL });
   const plan = { schemaVersion: 1, requestId: randomUUID(), operatorId: 'fixture-operator', authorizationRef: 'fixture:contribution',
     serviceRevision: 1, publicationRevision: 2, reviewId: review.id, runId: run.id, runRevision: run.revision,
@@ -174,6 +184,23 @@ test('settlement derives one exact daily vote round from pending intake without 
     await assert.rejects(resolveContributionVoteRound({ execute: async () => ({ rows }) },
       { intakeRoundId: 'pending', bindings }), errorCode('CONTRIBUTION_INPUT_BINDING_MISMATCH'));
   }
+});
+
+test('daily settlement writes the dated vote round into the ledger and exact replay cannot pay twice', async t => {
+  const f = await fixture(t, { daily: true });
+  const preview = await f.settlements.preview(f.plan);
+  assert.equal(preview.voteSnapshotAt, INITIAL_CUTOFF + DAY_MS);
+  assert.ok(preview.records.every(row => row.round_id === 'daily-2026-09-01'));
+  const issued = await f.settlements.settle(f.plan);
+  assert.equal(issued.replayed, false);
+  assert.equal(issued.issuedCount, issued.awardCount);
+  const rows = (await f.client.execute('SELECT round_id FROM contribution_ledger ORDER BY id')).rows;
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every(row => row.round_id === 'daily-2026-09-01'));
+  const replay = await f.settlements.settle(f.plan);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.issuedCount, 0);
+  assert.equal((await f.client.execute('SELECT COUNT(*) AS n FROM contribution_ledger')).rows[0].n, rows.length);
 });
 
 test('preview verifies a genuine closed-round release without preparing or writing any settlement data', async t => {
