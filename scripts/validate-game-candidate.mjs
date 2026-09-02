@@ -193,8 +193,11 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           return game.scrollWidth <= game.clientWidth && game.scrollHeight <= game.clientHeight
             && document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight;
         });
+        phase = 'start_button';
         await expect(frame.getByRole('button', { name: 'Begin expedition', exact: true })).toBeEnabled();
+        phase = 'start_layout';
         check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        phase = 'start_help';
         await frame.getByRole('button', { name: 'How to play', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'help');
         check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
@@ -202,9 +205,21 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         await frame.getByRole('button', { name: 'Next', exact: true }).click();
         await frame.getByRole('button', { name: 'Next', exact: true }).click();
         await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
+        phase = 'start_fixed';
+        if (bundle.experience?.choiceMode === 'single-fixed') {
+          await expect(frame.locator('.hero')).toHaveCount(1);
+          await expect(frame.locator('.founder-portrait')).toHaveCount(1);
+        }
+        phase = 'start_commit';
         await frame.getByRole('button', { name: 'Begin expedition', exact: true }).click();
+        await page.waitForTimeout(250);
+        phase = 'start_commit_' + (await frame.locator('#game').getAttribute('data-phase') || 'missing');
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
+        phase = 'playing_cards';
         await expect(frame.locator('.card-art')).toHaveCount(4);
+        phase = 'playing_board_art';
+        if (bundle.art.boardImage) await expect(frame.locator('.hex').first()).toHaveCSS('background-image', /blob:/);
+        phase = 'playing_layout';
         check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
         const saved = () => page.evaluate(async version => {
           const { createGameSaveStore } = await import('/game-save-store.js'); const store = createGameSaveStore(version);
@@ -216,12 +231,17 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           const action = chooseStrategyAction(bundle.config, record.data.state);
           if (action.type === 'endTurn') break;
           const card = frame.locator(`.card[data-card="${action.cardId}"]`).first();
-          if (width === 390) await card.tap(); else await card.click();
           if (action.tileId !== undefined) {
             const hex = frame.locator(`.hex[data-tile="${action.tileId}"]`);
-            if (width === 390) await hex.tap(); else await hex.click();
+            const from = await card.evaluate(node => { const box = node.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; });
+            const to = await hex.evaluate(node => { const box = node.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; });
+            check(from && to, 'BROWSER_DRAG_TARGET_MISSING');
+            await card.dispatchEvent('pointerdown', { pointerId: 7, pointerType: width === 390 ? 'touch' : 'mouse',
+              isPrimary: true, button: 0, buttons: 1, clientX: from.x, clientY: from.y });
+            await card.dispatchEvent('pointerup', { pointerId: 7, pointerType: width === 390 ? 'touch' : 'mouse',
+              isPrimary: true, button: 0, buttons: 0, clientX: to.x, clientY: to.y });
             fortified = true;
-          }
+          } else if (width === 390) await card.tap(); else await card.click();
           await expect.poll(async () => (await saved()).revision).toBe(record.revision + 1);
           record = await saved(); played = true;
         }
@@ -230,7 +250,10 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         await frame.locator('[data-action="endTurn"]').click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
         check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
-        const reward = chooseStrategyAction(bundle.config, (await saved()).data.state);
+        const rewardState = (await saved()).data.state;
+        const reward = bundle.experience?.rewardRule === 'first-seeded'
+          ? { cardId: rewardState.rewardChoices[0] } : chooseStrategyAction(bundle.config, rewardState);
+        if (bundle.experience?.rewardRule === 'first-seeded') await expect(frame.locator('.reward')).toHaveCount(1);
         await frame.locator(`.reward[data-card="${reward.cardId}"]`).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
         check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');

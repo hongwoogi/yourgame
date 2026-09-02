@@ -2,6 +2,7 @@ import { ApiError } from './errors.mjs';
 import { DATABASE_NOW_SQL } from './database-clock.mjs';
 import { formatHalfPoints, publicContributionPolicy, CONTRIBUTION_ISSUANCE_BLOCK } from './contribution-policy.mjs';
 import { profileDisplayAlias } from './community-policy.mjs';
+import { ANONYMOUS_USER_ID } from './anonymous-policy.mjs';
 
 // Use exact BigInt aggregation instead of SQLite SUM/REAL or Number arithmetic.
 // The trusted issuer checks this bound before adding awards. Crossing it fails
@@ -65,7 +66,8 @@ export function createContributionStore(client, { databaseClockSql = DATABASE_NO
       FROM community_profiles p LEFT JOIN member_access m ON m.user_id = p.user_id
       LEFT JOIN community_profile_names pn ON pn.user_id = p.user_id
       LEFT JOIN contribution_ledger l ON l.user_id = p.user_id
-      WHERE p.leaderboard_visible = 1 AND COALESCE(m.status, 'active') = 'active' ${session ? `AND ${live}` : ''}
+      WHERE p.leaderboard_visible = 1 AND p.user_id != '${ANONYMOUS_USER_ID}'
+        AND COALESCE(m.status, 'active') = 'active' ${session ? `AND ${live}` : ''}
       ORDER BY p.public_id, l.created_at, l.id LIMIT ${MAX_CONTRIBUTION_READ_ROWS + 1}`,
     args: session ? [session.tokenHash, session.user.id] : [],
   });

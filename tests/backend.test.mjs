@@ -6,6 +6,7 @@ import { readConfig, INITIAL_CUTOFF, FIRST_RELEASE, WINDOW_MS, GOOGLE_NONCE_MS, 
 import { createStore, hashValue, validateBody } from '../server/store.mjs';
 import { initializeDatabase } from '../server/database.mjs';
 import { backendFixture, errorCode, request, signedHeaders, TEST_CLOCK_SQL } from './backend-helpers.mjs';
+import { ANONYMOUS_USER_ID } from '../server/anonymous-policy.mjs';
 
 test('three database clients racing in separate workers cannot exceed the rolling quota', async t => {
   const f = await backendFixture(t);
@@ -261,6 +262,43 @@ test('API rejects missing login, CSRF, cross-origin requests and unsupported del
   const deletion = await request(f.handler, '/api/proposals', { ...auth, method: 'DELETE', body: {} });
   assert.equal(deletion.status, 405);
   assert.equal((await f.store.listProposals(login.session.user.id)).proposals.length, 0);
+});
+
+test('anonymous sessions can submit three ideas per rolling hour without earning an account identity', async t => {
+  const f = await backendFixture(t);
+  const first = await request(f.handler, '/api/session');
+  const anonymous = { cookie: first.cookie, csrf: first.body.csrfToken };
+  for (let index = 0; index < 3; index += 1) {
+    const response = await request(f.handler, '/api/proposals', { method: 'POST', ...anonymous,
+      body: { body: `anonymous idea ${index}`, requestId: `anonymous-request-${index}` } });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.anonymous, true);
+    assert.equal(response.body.quota.remaining, 2 - index);
+  }
+  const limited = await request(f.handler, '/api/proposals', { method: 'POST', ...anonymous,
+    body: { body: 'fourth anonymous idea', requestId: 'anonymous-request-four' } });
+  assert.equal(limited.status, 429);
+  assert.equal(limited.body.error.code, 'QUOTA_EXCEEDED');
+  const retry = await request(f.handler, '/api/proposals', { method: 'POST', ...anonymous,
+    body: { body: 'anonymous idea 0', requestId: 'anonymous-request-0' } });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.anonymous, true);
+  const conflict = await request(f.handler, '/api/proposals', { method: 'POST', ...anonymous,
+    body: { body: 'changed replay', requestId: 'anonymous-request-0' } });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  assert.equal((await request(f.handler, '/api/proposals', anonymous)).status, 401);
+
+  const second = await request(f.handler, '/api/session');
+  const isolated = await request(f.handler, '/api/proposals', { method: 'POST', cookie: second.cookie,
+    csrf: second.body.csrfToken, body: { body: 'separate browser session', requestId: 'anonymous-session-two' } });
+  assert.equal(isolated.status, 201);
+  const stored = await f.client.execute({ sql: `SELECT COUNT(*) AS n FROM proposals WHERE user_id=?`, args: [ANONYMOUS_USER_ID] });
+  assert.equal(Number(stored.rows[0].n), 4);
+  assert.equal(Number((await f.client.execute('SELECT COUNT(*) AS n FROM anonymous_proposals')).rows[0].n), 4);
+  await f.setTime(INITIAL_CUTOFF);
+  const community = await request(f.handler, '/api/community?includeClosed=1');
+  assert.ok(community.body.recent.some(idea => idea.author.alias === 'anonymous' && idea.author.anonymous === true));
 });
 
 test('raw Node and Vercel-parsed JSON requests share validation and quota behavior', async t => {

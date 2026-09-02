@@ -18,7 +18,8 @@ import { prepareGameReleaseSchema } from '../server/game-release-schema.mjs';
 import { createGameReleaseStore, RELEASE_BINDING_KEYS } from '../server/game-release-store.mjs';
 import { createGamePublicationStore, preparePublicationSchema } from '../server/game-publication-store.mjs';
 import { createContributionSettlementStore, prepareContributionSettlementSchema,
-  resolveContributionVoteRound } from '../server/contribution-settlement.mjs';
+  resolveContributionVoteRound, contributionAuthorIds } from '../server/contribution-settlement.mjs';
+import { ANONYMOUS_USER_ID } from '../server/anonymous-policy.mjs';
 import { errorCode, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
 const BEFORE = INITIAL_CUTOFF - 3600000;
@@ -26,6 +27,14 @@ const AFTER = INITIAL_CUTOFF + 3600000;
 const hash = digit => digit.repeat(64);
 const scoringPolicy = formula => ({ formula, policyVersion: `contribution-${formula}-v1` });
 const operation = (action, input) => ({ action, requestId: randomUUID(), reason: 'Synthetic settlement fixture', ...input });
+
+test('anonymous proposal authors are never contribution award participants', () => {
+  assert.deepEqual(contributionAuthorIds([
+    { authorId: 'signed-member-a' }, { authorId: ANONYMOUS_USER_ID },
+    { authorId: 'signed-member-a' }, { authorId: 'signed-member-b' },
+  ]), ['signed-member-a', 'signed-member-b']);
+  assert.deepEqual(contributionAuthorIds([{ authorId: ANONYMOUS_USER_ID }]), []);
+});
 const bindingOf = row => Object.fromEntries(['id', 'revision', 'bodyHash', 'policyVersion', 'safetyReviewId',
   'safetyRevision', 'developmentBriefHash'].map(key => [key, row[key]]));
 

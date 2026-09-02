@@ -11,6 +11,7 @@ import {
 } from './community-policy.mjs';
 
 export const COMMUNITY_SCHEMA_VERSION = 1;
+export const ANONYMOUS_PROPOSALS_SCHEMA_VERSION = 1;
 export const COMMUNITY_SCHEMA = [
   'CREATE TABLE IF NOT EXISTS community_meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL)',
   `CREATE TABLE IF NOT EXISTS community_profiles (
@@ -77,7 +78,23 @@ export const COMMUNITY_SCHEMA = [
     expires_at INTEGER NOT NULL, PRIMARY KEY(user_id, window_start)
   )`,
   'CREATE INDEX IF NOT EXISTS community_rate_expiry_idx ON community_rate_windows(expires_at)',
+  `CREATE TABLE IF NOT EXISTS anonymous_proposals (
+    proposal_id TEXT PRIMARY KEY REFERENCES proposals(id),
+    session_key TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(session_key, request_id)
+  )`,
+  'CREATE INDEX IF NOT EXISTS anonymous_proposals_session_time_idx ON anonymous_proposals(session_key, created_at)',
+  `CREATE TRIGGER IF NOT EXISTS anonymous_proposals_no_update BEFORE UPDATE ON anonymous_proposals
+    BEGIN SELECT RAISE(ABORT, 'anonymous proposal identity is immutable'); END`,
+  `CREATE TRIGGER IF NOT EXISTS anonymous_proposals_no_delete BEFORE DELETE ON anonymous_proposals
+    BEGIN SELECT RAISE(ABORT, 'anonymous proposal history is immutable'); END`,
+  `CREATE TRIGGER IF NOT EXISTS anonymous_proposals_no_replace BEFORE INSERT ON anonymous_proposals
+    WHEN EXISTS (SELECT 1 FROM anonymous_proposals WHERE proposal_id = NEW.proposal_id)
+    BEGIN SELECT RAISE(ABORT, 'anonymous proposal history cannot be replaced'); END`,
   { sql: 'INSERT INTO community_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING', args: ['schema_version', COMMUNITY_SCHEMA_VERSION] },
+  { sql: 'INSERT INTO community_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING', args: ['anonymous_proposals_schema_version', ANONYMOUS_PROPOSALS_SCHEMA_VERSION] },
 ];
 
 export async function initializeCommunityDatabase(client) {
@@ -96,6 +113,7 @@ export async function initializeCommunityDatabase(client) {
 export async function checkCommunitySchema(client) {
   try {
     const result = await client.execute({ sql: `SELECT (SELECT value FROM community_meta WHERE key = 'schema_version') AS version,
+      (SELECT value FROM community_meta WHERE key = 'anonymous_proposals_schema_version') AS anonymous_version,
       (SELECT revision FROM community_profiles LIMIT 1) AS profile_check,
       (SELECT closes_at FROM community_rounds LIMIT 1) AS round_check,
       (SELECT revision FROM community_publications LIMIT 1) AS publication_check,
@@ -103,6 +121,7 @@ export async function checkCommunitySchema(client) {
       (SELECT id FROM community_events LIMIT 1) AS event_check,
       (SELECT payload_hash FROM community_requests LIMIT 1) AS request_check,
       (SELECT used FROM community_rate_windows LIMIT 1) AS rate_check,
+      (SELECT session_key FROM anonymous_proposals LIMIT 1) AS anonymous_check,
       (SELECT value FROM community_meta WHERE key = 'public_defaults_schema_version') AS defaults_version,
       (SELECT state FROM community_public_policy WHERE id = 1) AS defaults_state,
       (SELECT event_id FROM community_visibility_choices LIMIT 1) AS choice_check,
@@ -119,9 +138,12 @@ export async function checkCommunitySchema(client) {
       (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
         'community_profile_identity_immutable', 'community_publication_identity_immutable',
         'community_events_no_update', 'community_events_no_delete', 'community_events_no_replace',
-        'community_requests_no_update', 'community_requests_no_delete', 'community_requests_no_replace')) AS immutable_triggers`,
+        'community_requests_no_update', 'community_requests_no_delete', 'community_requests_no_replace',
+        'anonymous_proposals_no_update', 'anonymous_proposals_no_delete', 'anonymous_proposals_no_replace')) AS immutable_triggers`,
       args: [...profileDefinitionArgs, ...dailyDefinitionArgs] });
-    if (Number(result.rows[0]?.version) !== COMMUNITY_SCHEMA_VERSION || Number(result.rows[0]?.immutable_triggers) !== 8
+    if (Number(result.rows[0]?.version) !== COMMUNITY_SCHEMA_VERSION
+        || Number(result.rows[0]?.anonymous_version) !== ANONYMOUS_PROPOSALS_SCHEMA_VERSION
+        || Number(result.rows[0]?.immutable_triggers) !== 11
         || Number(result.rows[0]?.defaults_version) !== 1 || !['inactive', 'active'].includes(result.rows[0]?.defaults_state)
         || Number(result.rows[0]?.display_names_ready) !== 1 || Number(result.rows[0]?.display_names_compatible) !== 1
         || Number(result.rows[0]?.daily_rounds_ready) !== 1 || Number(result.rows[0]?.daily_rounds_compatible) !== 1) {

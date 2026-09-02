@@ -123,8 +123,16 @@ const copy = {
     "다음 변화의 아이디어"
   ],
   "quotaAnonymous": [
-    "Log in to share an idea",
-    "로그인 후 제안할 수 있어요"
+    "{name} · {remaining} / {limit} submissions left",
+    "{name} · 남은 제안 {remaining} / {limit}"
+  ],
+  "anonymousName": [
+    "anonymous",
+    "ㅇㅇ"
+  ],
+  "anonymousContributionNote": [
+    "3 per rolling hour in this browser · no contribution points",
+    "이 브라우저에서 최근 60분 3회 · 기여도 포인트 미지급"
   ],
   "quotaLimit": [
     "3 ideas per rolling 60 minutes",
@@ -331,8 +339,8 @@ const copy = {
     "당신의 아이디어를\n이어갈 차례."
   ],
   "loginDescription": [
-    "Log in with Google to share an idea.\nYou can submit up to 3 ideas in any 60-minute period.",
-    "Google 계정으로 로그인하고 제안을 남겨주세요.\n최근 60분 동안 최대 3개의 제안을 보낼 수 있어요."
+    "Anonymous ideas need no login. Log in with Google to manage submissions, vote, and receive eligible contribution points.",
+    "익명 제안은 로그인 없이 보낼 수 있어요. 제안 관리·투표·기여도 포인트 지급을 이용하려면 Google로 로그인하세요."
   ],
   "loginPreparing": [
     "Preparing Google login.",
@@ -769,6 +777,14 @@ const copy = {
   "submitted": [
     "Idea submitted. One slot used. You can edit it in My ideas until the round closes.",
     "제안이 접수됐어요. 제출 횟수 1회를 사용했습니다. 마감 전까지 내 제안에서 수정할 수 있어요."
+  ],
+  "anonymousSubmitted": [
+    "Idea submitted as anonymous. One local slot used; no contribution points are awarded.",
+    "ㅇㅇ 이름으로 제안을 접수했습니다. 로컬 횟수 1회를 사용하며 기여도 포인트는 지급되지 않습니다."
+  ],
+  "anonymousNoQuota": [
+    "This browser has used all 3 anonymous submissions in the last 60 minutes.",
+    "이 브라우저에서 최근 60분 익명 제안 3회를 모두 사용했습니다."
   ],
   "retrySeconds": [
     "in {seconds} seconds",

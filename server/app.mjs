@@ -333,7 +333,12 @@ export function createApiHandler({
           setSessionCookie(res, anonymous.token, config, false);
           return respond(res, 200, sessionPayload(anonymous.session));
         }
-        if (!session.user) throw new ApiError(401, 'LOGIN_REQUIRED', '로그인한 뒤 제안을 제출해 주세요.');
+        if (!session.user && route === '/api/proposals' && method === 'POST') {
+          const result = await db.createAnonymousProposal(session, await readJson(req));
+          return respond(res, result.created ? 201 : 200,
+            localizeProposalPayload({ proposal: result.proposal, quota: result.quota, anonymous: true }, locale));
+        }
+        if (!session.user) throw new ApiError(401, 'LOGIN_REQUIRED', '로그인한 뒤 계속해 주세요.');
         if (route === '/api/community') {
           if (method === 'GET') {
             communityView(req);

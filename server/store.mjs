@@ -23,6 +23,9 @@ import {
   EDIT_REVIEW_COOLDOWN_MS, PROPOSAL_ATTEMPT_LIMIT, PROPOSAL_ATTEMPT_WINDOW_MS,
 } from './safety-policy.mjs';
 import { SAFETY_COLUMNS, SAFETY_JOINS, pendingSafetyStatements, safetyView } from './safety-store.mjs';
+import {
+  ANONYMOUS_GOOGLE_SUB, ANONYMOUS_NAME, ANONYMOUS_PROFILE_ALIAS, ANONYMOUS_PROFILE_ID, ANONYMOUS_USER_ID,
+} from './anonymous-policy.mjs';
 
 export { DATABASE_NOW_SQL } from './database-clock.mjs';
 
@@ -68,6 +71,17 @@ function quotaStatement(userId, databaseClockSql) {
         AND p.created_at > clock.now_ms - ? AND p.created_at <= clock.now_ms
       GROUP BY clock.now_ms`,
     args: [userId, WINDOW_MS],
+  };
+}
+
+function anonymousQuotaStatement(sessionKey, databaseClockSql) {
+  return {
+    sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
+      SELECT COUNT(a.proposal_id) AS used, MIN(a.created_at) AS oldest, clock.now_ms
+      FROM clock LEFT JOIN anonymous_proposals a ON a.session_key = ?
+        AND a.created_at > clock.now_ms - ? AND a.created_at <= clock.now_ms
+      GROUP BY clock.now_ms`,
+    args: [sessionKey, WINDOW_MS],
   };
 }
 
@@ -334,6 +348,71 @@ export function createStore(client, { now = Date.now, databaseClockSql = DATABAS
         throw new ApiError(429, 'QUOTA_EXCEEDED', '최근 60분 동안 제안 3개를 모두 제출했습니다. 다음 제출 가능 시각을 확인해 주세요.', { quota });
       }
       return { proposal: proposalView(row, time), quota, created: results[0].rowsAffected === 1 };
+    },
+
+    async createAnonymousProposal(session, { body, requestId }) {
+      validateBody(body);
+      if (session?.user || typeof session?.tokenHash !== 'string') {
+        throw new ApiError(401, 'LOGIN_REQUIRED', '익명 세션을 확인해 주세요.');
+      }
+      if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId)) {
+        throw new ApiError(422, 'INVALID_REQUEST_ID', '접수 요청 식별자가 올바르지 않습니다. 새로고침 후 다시 시도해 주세요.');
+      }
+      const sessionKey = hashValue(`anonymous-proposal:${session.tokenHash}`);
+      const storedRequestId = hashValue(JSON.stringify(['anonymous-proposal-v1', sessionKey, requestId]));
+      const bodyHash = hashValue(body);
+      const proposalId = randomUUID();
+      const results = await writeBatch(client, [
+        { sql: `INSERT INTO users(id, google_sub, name, created_at, updated_at)
+            SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql}
+            WHERE EXISTS (SELECT 1 FROM sessions WHERE token_hash=? AND user_id IS NULL AND expires_at>${databaseClockSql})
+            ON CONFLICT(id) DO NOTHING`,
+          args: [ANONYMOUS_USER_ID, ANONYMOUS_GOOGLE_SUB, ANONYMOUS_NAME, session.tokenHash] },
+        { sql: `INSERT INTO member_access(user_id, status, revision, updated_at)
+            SELECT ?, 'active', 1, ${databaseClockSql} FROM users WHERE id=?
+            ON CONFLICT(user_id) DO NOTHING`, args: [ANONYMOUS_USER_ID, ANONYMOUS_USER_ID] },
+        { sql: `INSERT INTO community_profiles(user_id, public_id, alias, created_at, updated_at)
+            SELECT ?, ?, ?, ${databaseClockSql}, ${databaseClockSql} FROM users WHERE id=?
+            ON CONFLICT(user_id) DO NOTHING`,
+          args: [ANONYMOUS_USER_ID, ANONYMOUS_PROFILE_ID, ANONYMOUS_PROFILE_ALIAS, ANONYMOUS_USER_ID] },
+        {
+          sql: `WITH clock AS (SELECT ${databaseClockSql} AS now_ms)
+            INSERT INTO proposals(id, user_id, request_id, request_body_hash, body,
+              created_at, updated_at, round_id, revision)
+            SELECT ?, ?, ?, ?, ?, clock.now_ms, clock.now_ms,
+              CASE WHEN clock.now_ms < ? THEN 'initial' ELSE 'pending' END, 1 FROM clock
+            WHERE EXISTS (SELECT 1 FROM sessions WHERE token_hash=? AND user_id IS NULL AND expires_at>clock.now_ms)
+              AND (SELECT COUNT(*) FROM anonymous_proposals
+                WHERE session_key=? AND created_at>clock.now_ms-? AND created_at<=clock.now_ms) < ?
+              AND ${PROPOSAL_ACCESS_SQL} AND ${COMMUNITY_DEFAULT_READY_SQL}
+            ON CONFLICT(user_id, request_id) DO NOTHING`,
+          args: [proposalId, ANONYMOUS_USER_ID, storedRequestId, bodyHash, body, INITIAL_CUTOFF,
+            session.tokenHash, sessionKey, WINDOW_MS, SUBMISSION_LIMIT, ANONYMOUS_USER_ID, ANONYMOUS_USER_ID],
+        },
+        ...pendingSafetyStatements({ proposalId, body, databaseClockSql }),
+        { sql: `INSERT INTO anonymous_proposals(proposal_id,session_key,request_id,created_at)
+            SELECT id, ?, ?, created_at FROM proposals WHERE id=?`,
+          args: [sessionKey, requestId, proposalId] },
+        { sql: `SELECT p.*, ${SAFETY_COLUMNS} FROM anonymous_proposals a JOIN proposals p ON p.id=a.proposal_id ${SAFETY_JOINS}
+            WHERE a.session_key=? AND a.request_id=?`, args: [sessionKey, requestId] },
+        anonymousQuotaStatement(sessionKey, databaseClockSql),
+        proposalAccessStatement(ANONYMOUS_USER_ID),
+        `SELECT ${COMMUNITY_DEFAULT_READY_SQL} AS ready`,
+      ]);
+      assertProposalAccess(results[9].rows[0]);
+      if (Number(results[10].rows[0]?.ready) !== 1) {
+        throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public participation is temporarily unavailable.');
+      }
+      const time = Number(results[8].rows[0].now_ms);
+      const quota = quotaView(results[8]);
+      const row = results[7].rows[0];
+      if (row && row.request_body_hash !== bodyHash) {
+        throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '같은 접수 요청으로 다른 내용을 전송할 수 없습니다. 다시 작성해 주세요.', { quota });
+      }
+      if (!row) {
+        throw new ApiError(429, 'QUOTA_EXCEEDED', '최근 60분 동안 익명 제안 3개를 모두 제출했습니다.', { quota });
+      }
+      return { proposal: proposalView(row, time), quota, created: results[3].rowsAffected === 1, anonymous: true };
     },
 
     async editProposal(userId, { id, body, revision }) {

@@ -11,6 +11,7 @@ import {
   COMMUNITY_DAILY_ROUNDS_READY_SQL, currentVotingRoundIdSql, proposalVotingRoundIdSql,
 } from './community-policy.mjs';
 import { normalizeProfileAlias } from '../public/profile-policy.js';
+import { ANONYMOUS_USER_ID } from './anonymous-policy.mjs';
 
 export { COMMUNITY_VOTE_LIMIT } from './community-policy.mjs';
 export const COMMUNITY_RATE_LIMIT = 30;
@@ -109,7 +110,9 @@ export function createCommunityStore(client, { databaseClockSql = DATABASE_NOW_S
     const alias = profileDisplayAlias(row.alias, row.custom_alias);
     if (alias === null) throw new ApiError(503, 'COMMUNITY_SCHEMA_UNAVAILABLE', 'Public profile information is unavailable.');
     return { id: row.public_id, body: row.body, proposalRevision: Number(row.proposal_revision), publicationRevision: Number(row.revision),
-      author: { id: row.author_public_id, alias }, createdAt: iso(row.proposal_created_at),
+      author: row.author_user_id === ANONYMOUS_USER_ID
+        ? { id: row.author_public_id, alias: 'anonymous', anonymous: true }
+        : { id: row.author_public_id, alias }, createdAt: iso(row.proposal_created_at),
       upvotes: Number(row.upvotes), downvotes: Number(row.downvotes), votingOpen: Number(row.voting_open) === 1, roundId: row.voting_round_id ?? null };
   }
 

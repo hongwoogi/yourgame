@@ -12,6 +12,7 @@ import { releaseBindingDigest, releaseInputDigest, verifyReleaseReview } from '.
 import { approvedSafetySql, safetyBindingsSql } from './safety-store.mjs';
 import { MAX_CONTRIBUTION_INPUTS, readContributionVotes } from './contribution-votes.mjs';
 import { proposalVotingRoundIdSql } from './community-policy.mjs';
+import { ANONYMOUS_USER_ID } from './anonymous-policy.mjs';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -27,6 +28,10 @@ const validId = value => typeof value === 'string' && ID.test(value);
 const validHash = value => typeof value === 'string' && HASH.test(value);
 const fail = (code, status = 409) => { throw new ApiError(status, code, '기여도 정산 근거와 현재 상태를 확인해 주세요.'); };
 const policyVersion = formula => `contribution-${formula}-v1`;
+
+export const contributionAuthorIds = proposals => [...new Set(
+  proposals.map(item => item.authorId).filter(id => id !== ANONYMOUS_USER_ID),
+)].sort();
 
 export async function resolveContributionVoteRound(client, { intakeRoundId, bindings } = {}) {
   if (!validId(intakeRoundId) || !Array.isArray(bindings) || !bindings.length
@@ -198,7 +203,7 @@ export function createContributionSettlementStore(client, { databaseClockSql = D
     for (const group of plan.groups) {
       const proposals = group.proposalIds.map(id => byProposal.get(id));
       if (proposals.some(item => !item)) fail('CONTRIBUTION_INPUT_BINDING_MISMATCH');
-      const authors = [...new Set(proposals.map(item => item.authorId))].sort();
+      const authors = contributionAuthorIds(proposals);
       const upvoters = [...new Set(proposals.flatMap(item => item.upvoterIds))].sort();
       const downvoters = [...new Set(proposals.flatMap(item => item.downvoterIds))].sort();
       if (upvoters.some(id => downvoters.includes(id))) fail('CONTRIBUTION_VOTE_CONFLICT');

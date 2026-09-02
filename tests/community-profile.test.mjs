@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createCommunityStore } from '../server/community-store.mjs';
-import { activateCommunityPublicDefaults, prepareCommunityProfiles } from '../server/community-schema.mjs';
+import { activateCommunityPublicDefaults, prepareCommunityProfiles, COMMUNITY_SCHEMA_VERSION } from '../server/community-schema.mjs';
 import { normalizeProfileAlias, isValidProfileAlias, PROFILE_ALIAS_LIMITS } from '../public/profile-policy.js';
 import { backendFixture, request, signedHeaders, errorCode, TEST_CLOCK_SQL } from './backend-helpers.mjs';
 
@@ -296,7 +296,7 @@ test('dedicated preparation preserves existing rows, is repeatable, and restores
   assert.deepEqual(await Promise.all(protectedTables.map(table => rows(f.client, table))), before);
   assert.equal((await request(f.handler, '/api/health')).status, 200);
   assert.equal((await f.client.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'")).rows[0].value, 1);
-  assert.equal((await f.client.execute("SELECT value FROM community_meta WHERE key = 'schema_version'")).rows[0].value, 1);
+  assert.equal((await f.client.execute("SELECT value FROM community_meta WHERE key = 'schema_version'")).rows[0].value, COMMUNITY_SCHEMA_VERSION);
   await rename(f, person, 'Name after preparation');
   const names = await rows(f.client, 'community_profile_names');
   await prepareCommunityProfiles(f.client, { expectedServiceRevision: 1 });

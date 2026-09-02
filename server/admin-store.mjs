@@ -7,6 +7,7 @@ import { INITIAL_CUTOFF } from './config.mjs';
 import { SAFETY_POLICY_VERSION, SAFETY_STATUSES, assertScreenedBody, validateDevelopmentBrief } from './safety-policy.mjs';
 import { SAFETY_COLUMNS, SAFETY_JOINS, approvedSafetySql, bodyDigest, safetyBindingsSql, safetyView } from './safety-store.mjs';
 import { RELEASE_RECEIPT_SQL, releaseBindingDigest, releaseInputDigest, verifyReleaseReview } from './game-release-store.mjs';
+import { ANONYMOUS_USER_ID } from './anonymous-policy.mjs';
 
 export const INITIAL_RUN_ID = 'initial-round-2026-09-01';
 
@@ -204,6 +205,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
         EXISTS(SELECT 1 FROM admin_identity i WHERE i.user_id = u.id AND i.google_sub = u.google_sub) AS is_admin,
         (SELECT COUNT(*) FROM proposals p WHERE p.user_id = u.id) AS proposal_count
         FROM users u LEFT JOIN member_access m ON m.user_id = u.id`;
+      filters.push('u.id != ?'); args.push(ANONYMOUS_USER_ID);
       search("(u.name || ' ' || COALESCE(m.email, '') || ' ' || u.id)");
       if (page.status) { filters.push("COALESCE(m.status, 'active') = ?"); args.push(page.status); }
       view = row => ({ id: row.id, name: row.name, email: row.email ?? null,
@@ -258,7 +260,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
     if (section !== 'overview') return list(section, input);
     const results = await client.batch([
       'SELECT * FROM service_control WHERE id = 1',
-      `SELECT (SELECT COUNT(*) FROM users) AS users,
+      `SELECT (SELECT COUNT(*) FROM users WHERE id != '${ANONYMOUS_USER_ID}') AS users,
         (SELECT COUNT(*) FROM member_access WHERE status = 'suspended') AS suspended_users,
         (SELECT COUNT(*) FROM proposals) AS proposals,
         (SELECT COUNT(*) FROM proposal_moderation WHERE moderation = 'excluded') AS excluded_proposals,
@@ -296,6 +298,7 @@ export function createAdminStore(client, { now = Date.now, databaseClockSql = DA
 
     if (action === 'set_user_status') {
       targetId = identifier(input.userId);
+      if (targetId === ANONYMOUS_USER_ID) throw invalid('익명 제안 시스템 주체는 계정 관리 대상이 아닙니다.');
       const status = oneOf(input.status, ['active', 'suspended']);
       targetStatement = { sql: `SELECT u.id, COALESCE(m.revision, 1) AS revision,
         EXISTS(SELECT 1 FROM admin_identity WHERE user_id = u.id) AS is_admin

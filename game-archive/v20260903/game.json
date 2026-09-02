@@ -1,0 +1,829 @@
+{
+  "schemaVersion": 3,
+  "config": {
+    "schemaVersion": 1,
+    "gameVersion": "v20260903",
+    "handSize": 4,
+    "heroes": [
+      {
+        "id": "yann-lecun",
+        "stats": {
+          "health": 38,
+          "food": 8,
+          "gold": 6,
+          "morale": 9
+        },
+        "deck": [
+          "watch-beacon",
+          "granary-charter",
+          "stone-rampart",
+          "village-council",
+          "watch-beacon",
+          "relief-caravan",
+          "granary-charter",
+          "guild-forge",
+          "stone-rampart",
+          "fair-levy",
+          "watch-beacon",
+          "crown-bastion"
+        ]
+      },
+      {
+        "id": "elon-musk",
+        "stats": {
+          "health": 36,
+          "food": 7,
+          "gold": 8,
+          "morale": 7
+        },
+        "deck": [
+          "stone-rampart",
+          "guild-forge",
+          "watch-beacon",
+          "fair-levy",
+          "stone-rampart",
+          "granary-charter",
+          "guild-forge",
+          "crown-bastion",
+          "watch-beacon",
+          "relief-caravan",
+          "fair-levy",
+          "stone-rampart"
+        ]
+      },
+      {
+        "id": "demis-hassabis",
+        "stats": {
+          "health": 35,
+          "food": 8,
+          "gold": 6,
+          "morale": 8
+        },
+        "deck": [
+          "watch-beacon",
+          "stone-rampart",
+          "granary-charter",
+          "village-council",
+          "watch-beacon",
+          "guild-forge",
+          "relief-caravan",
+          "stone-rampart",
+          "granary-charter",
+          "crown-bastion",
+          "watch-beacon",
+          "fair-levy"
+        ]
+      },
+      {
+        "id": "jensen-huang",
+        "stats": {
+          "health": 38,
+          "food": 7,
+          "gold": 7,
+          "morale": 7
+        },
+        "deck": [
+          "guild-forge",
+          "stone-rampart",
+          "watch-beacon",
+          "granary-charter",
+          "guild-forge",
+          "fair-levy",
+          "stone-rampart",
+          "relief-caravan",
+          "watch-beacon",
+          "crown-bastion",
+          "guild-forge",
+          "village-council"
+        ]
+      },
+      {
+        "id": "dario-amodei",
+        "stats": {
+          "health": 40,
+          "food": 8,
+          "gold": 5,
+          "morale": 10
+        },
+        "deck": [
+          "village-council",
+          "watch-beacon",
+          "granary-charter",
+          "stone-rampart",
+          "village-council",
+          "relief-caravan",
+          "watch-beacon",
+          "fair-levy",
+          "granary-charter",
+          "guild-forge",
+          "stone-rampart",
+          "crown-bastion"
+        ]
+      },
+      {
+        "id": "sam-altman",
+        "stats": {
+          "health": 38,
+          "food": 10,
+          "gold": 7,
+          "morale": 8
+        },
+        "deck": [
+          "fair-levy",
+          "granary-charter",
+          "watch-beacon",
+          "village-council",
+          "guild-forge",
+          "relief-caravan",
+          "stone-rampart",
+          "fair-levy",
+          "watch-beacon",
+          "granary-charter",
+          "crown-bastion",
+          "guild-forge"
+        ]
+      }
+    ],
+    "cards": [
+      {
+        "id": "stone-rampart",
+        "cost": {
+          "food": 0,
+          "gold": 2,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 9
+        }
+      },
+      {
+        "id": "watch-beacon",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 4
+        }
+      },
+      {
+        "id": "granary-charter",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 5,
+          "gold": 0,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "fair-levy",
+        "cost": {
+          "food": 0,
+          "gold": 0,
+          "morale": 1
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 4,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "guild-forge",
+        "cost": {
+          "food": 1,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 2,
+          "morale": 0,
+          "defense": 5
+        }
+      },
+      {
+        "id": "village-council",
+        "cost": {
+          "food": 0,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 3,
+          "defense": 0
+        }
+      },
+      {
+        "id": "relief-caravan",
+        "cost": {
+          "food": 0,
+          "gold": 1,
+          "morale": 0
+        },
+        "effect": {
+          "health": 6,
+          "food": 3,
+          "gold": 0,
+          "morale": 0,
+          "defense": 0
+        }
+      },
+      {
+        "id": "crown-bastion",
+        "cost": {
+          "food": 1,
+          "gold": 3,
+          "morale": 1
+        },
+        "effect": {
+          "health": 0,
+          "food": 0,
+          "gold": 0,
+          "morale": 0,
+          "defense": 14
+        }
+      }
+    ],
+    "enemies": [
+      {
+        "id": "mist-raider",
+        "strength": 4
+      },
+      {
+        "id": "thorn-brute",
+        "strength": 7
+      },
+      {
+        "id": "ember-wyvern",
+        "strength": 10
+      }
+    ],
+    "waves": [
+      {
+        "enemies": [
+          "mist-raider"
+        ],
+        "foodCost": 1,
+        "reward": {
+          "food": 2,
+          "gold": 1,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 2,
+        "reward": {
+          "food": 2,
+          "gold": 2,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 3,
+        "reward": {
+          "food": 3,
+          "gold": 2,
+          "morale": 1
+        }
+      },
+      {
+        "enemies": [
+          "thorn-brute",
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 4,
+        "reward": {
+          "food": 3,
+          "gold": 3,
+          "morale": 2
+        }
+      },
+      {
+        "enemies": [
+          "ember-wyvern",
+          "ember-wyvern",
+          "thorn-brute",
+          "thorn-brute"
+        ],
+        "foodCost": 5,
+        "reward": {
+          "food": 4,
+          "gold": 3,
+          "morale": 2
+        }
+      },
+      {
+        "enemies": [
+          "ember-wyvern",
+          "ember-wyvern",
+          "thorn-brute",
+          "thorn-brute",
+          "mist-raider",
+          "mist-raider"
+        ],
+        "foodCost": 4,
+        "reward": {
+          "food": 0,
+          "gold": 0,
+          "morale": 0
+        }
+      }
+    ]
+  },
+  "copy": {
+    "title": {
+      "en": "Founder's Hex: First Realm",
+      "ko": "창립자의 헥스: 최초의 왕국"
+    },
+    "subtitle": {
+      "en": "Defend a lone keep from fiercely adoring monsters across seven tiles and six waves.",
+      "ko": "일곱 타일과 여섯 공세에 걸쳐 열렬한 애정으로 다가오는 괴물들로부터 외로운 성채를 지키세요."
+    },
+    "story": {
+      "en": "Choose a fictional founder, then defend seven tiles through six waves. Health measures survival; food pays each wave; gold and morale pay card costs; morale reaching zero causes defeat. Defense absorbs enemy strength on its tile, and excess strength reduces health. Play cards, end the wave, then choose one of three reward cards after each of the first five waves. Clear wave six to win.",
+      "ko": "허구의 창립자를 고른 뒤 일곱 타일에서 여섯 공세를 막으세요. 체력은 생존력이며, 식량은 공세 종료 비용입니다. 금화와 민심은 카드 비용으로 쓰이고 민심이 0이면 패배합니다. 타일 방어는 적의 힘을 흡수하며 초과한 힘만큼 체력이 감소합니다. 카드를 사용하고 공세를 끝낸 뒤, 첫 다섯 공세마다 보상 카드 세 장 중 하나를 고르세요. 여섯째 공세를 돌파하면 승리합니다."
+    },
+    "victory": {
+      "en": "All six waves are cleared. The lone keep stands secure across its seven tiles.",
+      "ko": "여섯 공세를 모두 돌파했습니다. 외로운 성채가 일곱 타일 위에 굳건히 서 있습니다."
+    },
+    "defeat": {
+      "en": "Health or morale has fallen to zero. Retry with the same founder and a new seed.",
+      "ko": "체력이나 민심이 0이 되었습니다. 같은 창립자와 새로운 시드로 다시 도전하세요."
+    },
+    "disclaimer": {
+      "en": "These founders are fictional characters named after public figures. The game is not affiliated with or endorsed by them, and does not portray their real lives, statements, or conduct.",
+      "ko": "이 창립자들은 공인의 이름을 딴 허구의 등장인물입니다. 본 게임은 해당 인물들과 관련이 없으며 그들의 보증을 받지 않았고, 실제 삶이나 발언 또는 행위를 묘사하지 않습니다."
+    },
+    "heroes": [
+      {
+        "id": "yann-lecun",
+        "name": {
+          "en": "Yann LeCun",
+          "ko": "얀 르쿤"
+        },
+        "role": {
+          "en": "Pattern Warden",
+          "ko": "문양의 수호자"
+        },
+        "description": {
+          "en": "A fictional founder starting with 38 health, 8 food, 6 gold, 9 morale, and a varied deck.",
+          "ko": "체력 38, 식량 8, 금화 6, 민심 9와 다양한 덱으로 시작하는 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "elon-musk",
+        "name": {
+          "en": "Elon Musk",
+          "ko": "일론 머스크"
+        },
+        "role": {
+          "en": "Frontier Smith",
+          "ko": "개척의 대장장이"
+        },
+        "description": {
+          "en": "A fictional founder starting with 36 health, 7 food, 8 gold, 7 morale, and several defense cards.",
+          "ko": "체력 36, 식량 7, 금화 8, 민심 7과 여러 방어 카드로 시작하는 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "demis-hassabis",
+        "name": {
+          "en": "Demis Hassabis",
+          "ko": "데미스 허사비스"
+        },
+        "role": {
+          "en": "Realm Tactician",
+          "ko": "왕국의 전술가"
+        },
+        "description": {
+          "en": "A fictional founder starting with 35 health, 8 food, 6 gold, 8 morale, and a varied deck.",
+          "ko": "체력 35, 식량 8, 금화 6, 민심 8과 다양한 덱으로 시작하는 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "jensen-huang",
+        "name": {
+          "en": "Jensen Huang",
+          "ko": "젠슨 황"
+        },
+        "role": {
+          "en": "Forge Steward",
+          "ko": "제련소의 집정관"
+        },
+        "description": {
+          "en": "A fictional founder starting with 38 health, 7 food, 7 gold, 7 morale, and three Guild Forge cards.",
+          "ko": "체력 38, 식량 7, 금화 7, 민심 7과 길드 제련소 카드 세 장으로 시작하는 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "dario-amodei",
+        "name": {
+          "en": "Dario Amodei",
+          "ko": "다리오 아모데이"
+        },
+        "role": {
+          "en": "Oath Keeper",
+          "ko": "서약의 수호자"
+        },
+        "description": {
+          "en": "A fictional founder starting with 40 health, 8 food, 5 gold, 10 morale, and two Village Council cards.",
+          "ko": "체력 40, 식량 8, 금화 5, 민심 10과 마을 평의회 카드 두 장으로 시작하는 허구의 창립자입니다."
+        }
+      },
+      {
+        "id": "sam-altman",
+        "name": {
+          "en": "Sam Altman",
+          "ko": "샘 알트먼"
+        },
+        "role": {
+          "en": "Guild Convener",
+          "ko": "길드의 소집자"
+        },
+        "description": {
+          "en": "A fictional founder starting with 38 health, 10 food, 7 gold, 8 morale, and a resource-focused deck.",
+          "ko": "체력 38, 식량 10, 금화 7, 민심 8과 자원 중심 덱으로 시작하는 허구의 창립자입니다."
+        }
+      }
+    ],
+    "cards": [
+      {
+        "id": "stone-rampart",
+        "name": {
+          "en": "Stone Rampart",
+          "ko": "석조 성벽"
+        },
+        "description": {
+          "en": "Spend 2 gold to add 9 defense to one selected tile.",
+          "ko": "금화 2를 소모해 선택한 타일 하나에 방어 9를 추가합니다."
+        }
+      },
+      {
+        "id": "watch-beacon",
+        "name": {
+          "en": "Watch Beacon",
+          "ko": "감시 봉화"
+        },
+        "description": {
+          "en": "Add 4 defense to one selected tile at no resource cost.",
+          "ko": "자원 소모 없이 선택한 타일 하나에 방어 4를 추가합니다."
+        }
+      },
+      {
+        "id": "granary-charter",
+        "name": {
+          "en": "Granary Charter",
+          "ko": "곡물창고 칙령"
+        },
+        "description": {
+          "en": "Gain 5 food.",
+          "ko": "식량 5를 얻습니다."
+        }
+      },
+      {
+        "id": "fair-levy",
+        "name": {
+          "en": "Fair Levy",
+          "ko": "공정 징세"
+        },
+        "description": {
+          "en": "Spend 1 morale to gain 4 gold.",
+          "ko": "민심 1을 소모해 금화 4를 얻습니다."
+        }
+      },
+      {
+        "id": "guild-forge",
+        "name": {
+          "en": "Guild Forge",
+          "ko": "길드 제련소"
+        },
+        "description": {
+          "en": "Spend 1 food and 1 gold to gain 2 gold and add 5 defense to one selected tile.",
+          "ko": "식량 1과 금화 1을 소모해 금화 2를 얻고 선택한 타일 하나에 방어 5를 추가합니다."
+        }
+      },
+      {
+        "id": "village-council",
+        "name": {
+          "en": "Village Council",
+          "ko": "마을 평의회"
+        },
+        "description": {
+          "en": "Spend 1 gold to gain 3 morale.",
+          "ko": "금화 1을 소모해 민심 3을 얻습니다."
+        }
+      },
+      {
+        "id": "relief-caravan",
+        "name": {
+          "en": "Relief Caravan",
+          "ko": "구호 마차대"
+        },
+        "description": {
+          "en": "Spend 1 gold to restore 6 health and gain 3 food.",
+          "ko": "금화 1을 소모해 체력 6을 회복하고 식량 3을 얻습니다."
+        }
+      },
+      {
+        "id": "crown-bastion",
+        "name": {
+          "en": "Crown Bastion",
+          "ko": "왕관 보루"
+        },
+        "description": {
+          "en": "Spend 1 food, 3 gold, and 1 morale to add 14 defense to one selected tile.",
+          "ko": "식량 1, 금화 3, 민심 1을 소모해 선택한 타일 하나에 방어 14를 추가합니다."
+        }
+      }
+    ],
+    "enemies": [
+      {
+        "id": "mist-raider",
+        "name": {
+          "en": "Mist Raider",
+          "ko": "안개 약탈자"
+        }
+      },
+      {
+        "id": "thorn-brute",
+        "name": {
+          "en": "Thorn Brute",
+          "ko": "가시 거한"
+        }
+      },
+      {
+        "id": "ember-wyvern",
+        "name": {
+          "en": "Ember Wyvern",
+          "ko": "잿불 와이번"
+        }
+      }
+    ],
+    "waves": [
+      {
+        "title": {
+          "en": "Wave 1: The First Test",
+          "ko": "공세 1: 첫 시험"
+        },
+        "description": {
+          "en": "One Mist Raider attacks its assigned tile with 4 strength. Ending the wave costs 1 food.",
+          "ko": "안개 약탈자 하나가 배정된 타일을 힘 4로 공격합니다. 공세 종료 시 식량 1이 필요합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 2: Twin Raiders",
+          "ko": "공세 2: 두 약탈자"
+        },
+        "description": {
+          "en": "Two Mist Raiders attack their assigned tiles with 4 strength each. Ending the wave costs 2 food.",
+          "ko": "안개 약탈자 둘이 각자 배정된 타일을 힘 4로 공격합니다. 공세 종료 시 식량 2가 필요합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 3: Thorns and Mist",
+          "ko": "공세 3: 가시와 안개"
+        },
+        "description": {
+          "en": "One Thorn Brute and two Mist Raiders attack their assigned tiles. Ending the wave costs 3 food.",
+          "ko": "가시 거한 하나와 안개 약탈자 둘이 각자 배정된 타일을 공격합니다. 공세 종료 시 식량 3이 필요합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 4: The Gathering",
+          "ko": "공세 4: 집결"
+        },
+        "description": {
+          "en": "Two Thorn Brutes and two Mist Raiders attack their assigned tiles. Ending the wave costs 4 food.",
+          "ko": "가시 거한 둘과 안개 약탈자 둘이 각자 배정된 타일을 공격합니다. 공세 종료 시 식량 4가 필요합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 5: Ember and Thorn",
+          "ko": "공세 5: 잿불과 가시"
+        },
+        "description": {
+          "en": "Two Ember Wyverns and two Thorn Brutes attack their assigned tiles. Ending the wave costs 5 food.",
+          "ko": "잿불 와이번 둘과 가시 거한 둘이 각자 배정된 타일을 공격합니다. 공세 종료 시 식량 5가 필요합니다."
+        }
+      },
+      {
+        "title": {
+          "en": "Wave 6: The Final Defense",
+          "ko": "공세 6: 최후의 방어"
+        },
+        "description": {
+          "en": "Two of each enemy type attack their assigned tiles. Ending the final wave costs 4 food.",
+          "ko": "각 적 종류가 둘씩 배정된 타일을 공격합니다. 마지막 공세 종료 시 식량 4가 필요합니다."
+        }
+      }
+    ]
+  },
+  "art": {
+    "background": "#17251D",
+    "panel": "#F4E6C1",
+    "accent": "#A9672B",
+    "ink": "#172018",
+    "muted": "#596458",
+    "heroIcons": [
+      {
+        "id": "yann-lecun",
+        "icon": "spark"
+      },
+      {
+        "id": "elon-musk",
+        "icon": "star"
+      },
+      {
+        "id": "demis-hassabis",
+        "icon": "book"
+      },
+      {
+        "id": "jensen-huang",
+        "icon": "anvil"
+      },
+      {
+        "id": "dario-amodei",
+        "icon": "leaf"
+      },
+      {
+        "id": "sam-altman",
+        "icon": "crown"
+      }
+    ],
+    "cardImages": [
+      {
+        "id": "stone-rampart",
+        "assetId": "card-stone-rampart"
+      },
+      {
+        "id": "watch-beacon",
+        "assetId": "card-watch-beacon"
+      },
+      {
+        "id": "granary-charter",
+        "assetId": "card-granary-charter"
+      },
+      {
+        "id": "fair-levy",
+        "assetId": "card-fair-levy"
+      },
+      {
+        "id": "guild-forge",
+        "assetId": "card-guild-forge"
+      },
+      {
+        "id": "village-council",
+        "assetId": "card-village-council"
+      },
+      {
+        "id": "relief-caravan",
+        "assetId": "card-relief-caravan"
+      },
+      {
+        "id": "crown-bastion",
+        "assetId": "card-crown-bastion"
+      }
+    ],
+    "boardImage": {
+      "assetId": "board-forest-stone"
+    },
+    "heroImage": {
+      "assetId": "founder-portrait"
+    }
+  },
+  "assets": [
+    {
+      "id": "card-stone-rampart",
+      "path": "assets/cards/stone-rampart.png",
+      "mediaType": "image/png",
+      "bytes": 492931,
+      "sha256": "ccd9060d9cc6af842559072f796be4f1d7ab70e85b7d31a1026059cf719b1d78",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-watch-beacon",
+      "path": "assets/cards/watch-beacon.png",
+      "mediaType": "image/png",
+      "bytes": 379761,
+      "sha256": "f3d29742f73404e74f8d30647726b9d1b184c1bfdd103c84c578e378adeaf795",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-granary-charter",
+      "path": "assets/cards/granary-charter.png",
+      "mediaType": "image/png",
+      "bytes": 462642,
+      "sha256": "5605cd590cbdaf13045aea369ef2315a549929bd0cfb42d39366b125bc4ece74",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-fair-levy",
+      "path": "assets/cards/fair-levy.png",
+      "mediaType": "image/png",
+      "bytes": 414708,
+      "sha256": "b4973c54cf0d6bf613d4016f51b290c24f4fb3a246ad74fee687f6eca14e467d",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-guild-forge",
+      "path": "assets/cards/guild-forge.png",
+      "mediaType": "image/png",
+      "bytes": 454323,
+      "sha256": "ed3e212b082a426aac3dfbc566880a034231112556bc8efd26e6d7f9aa821126",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-village-council",
+      "path": "assets/cards/village-council.png",
+      "mediaType": "image/png",
+      "bytes": 430072,
+      "sha256": "029d30d8ee0e6da0661fc98c2cd659e9e305504f19578814ab720211aeab005d",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-relief-caravan",
+      "path": "assets/cards/relief-caravan.png",
+      "mediaType": "image/png",
+      "bytes": 458949,
+      "sha256": "10266303fd5435a042f911e081366bdb27bbaf2e7b1881d2699594831d869dfd",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "card-crown-bastion",
+      "path": "assets/cards/crown-bastion.png",
+      "mediaType": "image/png",
+      "bytes": 459591,
+      "sha256": "538d290c1993694bd5569fee2a6adbdec2a8798a5ab36e53bb99fd22ff114131",
+      "width": 512,
+      "height": 512
+    },
+    {
+      "id": "board-forest-stone",
+      "path": "assets/board/forest-stone.png",
+      "mediaType": "image/png",
+      "bytes": 2142607,
+      "sha256": "b74ab8e0ee198d63464c57e43bbd226030b396bb51530707438e1b7990891ecd",
+      "width": 1254,
+      "height": 1254
+    },
+    {
+      "id": "founder-portrait",
+      "path": "assets/founder/portrait.png",
+      "mediaType": "image/png",
+      "bytes": 1956832,
+      "sha256": "a37b1462610883189a75e844e7daaa394b527801663df2bf51cf11cffd195299",
+      "width": 1254,
+      "height": 1254
+    }
+  ],
+  "experience": {
+    "choiceMode": "single-fixed",
+    "founderId": "yann-lecun",
+    "rewardRule": "first-seeded"
+  }
+}

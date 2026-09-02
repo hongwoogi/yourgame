@@ -82,7 +82,7 @@ async function fixture(page, options = {}) {
         voteQuota: { roundId: 'initial', limit: 3, used: 0, remaining: 3, closesAt: CUTOFF },
         votes: [], publications: [] });
     }
-    if (pathname === '/api/community') return reply({ recent: [], popular: [], leaderboard: { items: [] },
+    if (pathname === '/api/community') return reply(state.community || { recent: [], popular: [], leaderboard: { items: [] },
       publicationPolicy: { version: 'public-default-v1', defaultPublic: true },
       round: { id: 'initial', status: 'open', closesAt: CUTOFF, limit: 3 },
       scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null },
@@ -117,14 +117,14 @@ async function fixture(page, options = {}) {
       if (state.submissionFailure) return reply({ error: { code: 'SERVICE_UNAVAILABLE', message: '저장에 실패했습니다. 입력 내용은 유지됩니다.' } }, 503);
       if (state.quota.remaining === 0) return reply({ error: { code: 'QUOTA_EXCEEDED', message: '제출 가능 횟수를 모두 사용했습니다.' }, quota: state.quota }, 429);
       const existing = state.proposals.find((p) => p.requestId === payload.requestId);
-      if (existing) return reply({ proposal: existing, quota: state.quota });
+      if (existing) return reply({ proposal: existing, quota: state.quota, anonymous: !state.session.user });
       const proposal = { id: `proposal-${state.proposals.length + 1}`, requestId: payload.requestId,
         body: payload.body, createdAt: new Date(state.serverTime).toISOString(), updatedAt: new Date(state.serverTime).toISOString(),
         roundId: 'initial', revision: 1, editable: true };
       state.proposals.unshift(proposal);
       state.quota = { ...state.quota, remaining: state.quota.remaining - 1,
         nextAvailableAt: new Date(state.serverTime + 3600000).toISOString() };
-      return reply({ proposal, quota: state.quota }, 201);
+      return reply({ proposal, quota: state.quota, anonymous: !state.session.user }, 201);
     }
     if (pathname === '/api/proposals' && request.method() === 'PATCH') {
       const payload = request.postDataJSON();
@@ -272,16 +272,47 @@ for (const code of ['EDIT_RATE_LIMITED', 'PROPOSAL_ATTEMPT_RATE_LIMITED']) {
   });
 }
 
-test('anonymous Send opens login then submits exactly once with the rotated CSRF token', async ({ page }) => {
+test('anonymous Send submits directly, records a local slot and awards no points', async ({ page }) => {
   const state = await fixture(page);
   await page.locator('#prompt').fill('서로 다른 능력의 무기를 주워서 조합하고 싶어요.');
   await page.locator('#submit-button').click();
-  await googleLogin(page);
   await expect(page.locator('#prompt')).toHaveValue('');
   await expect.poll(() => state.posts.length).toBe(1);
   expect(state.posts[0].requestId).toBeTruthy();
-  await expect(page.locator('#open-my-proposals')).toBeVisible();
-  await expect(page.locator('#my-proposals-dialog')).toBeHidden();
+  expect(state.loginCalls).toBe(0);
+  await expect(page.locator('#form-message')).toContainText('기여도 포인트는 지급되지 않습니다');
+  await expect(page.locator('#quota-status')).toContainText('ㅇㅇ · 남은 제안 2 / 3');
+  const local = await page.evaluate(() => JSON.parse(localStorage.getItem('yourgame.anonymous-submissions.v1')));
+  expect(local).toHaveLength(1);
+  expect(local[0].requestId).toBe(state.posts[0].requestId);
+});
+
+test('anonymous local rolling-hour history blocks a fourth browser submission', async ({ page }) => {
+  const state = await fixture(page);
+  for (let index = 0; index < 3; index += 1) {
+    await page.locator('#prompt').fill(`익명 로컬 제한 ${index}`);
+    await page.locator('#submit-button').click();
+    await expect.poll(() => state.posts.length).toBe(index + 1);
+  }
+  await expect(page.locator('#quota-status')).toContainText('남은 제안 0 / 3');
+  await page.locator('#prompt').fill('네 번째는 로컬에서 차단');
+  await expect(page.locator('#submit-button')).toBeDisabled();
+  expect(state.posts).toHaveLength(3);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yourgame.anonymous-submissions.v1')).length)).toBe(3);
+});
+
+test('anonymous public author name is anonymous in English and ㅇㅇ in Korean', async ({ page }) => {
+  const idea = { id: 'anonymous-public-idea', body: '익명 공개 이름 확인', proposalRevision: 1, publicationRevision: 1,
+    author: { id: 'anonymous-public-profile-v1', alias: 'anonymous', anonymous: true },
+    createdAt: new Date(START).toISOString(), upvotes: 0, downvotes: 0, votingOpen: true, roundId: 'initial' };
+  await fixture(page, { community: { recent: [idea], popular: [idea], leaderboard: { items: [] },
+    publicationPolicy: { version: 'public-default-v1', defaultPublic: true },
+    round: { id: 'initial', status: 'open', closesAt: CUTOFF, limit: 3 },
+    scoring: { status: 'pending_confirmation', issuanceEnabled: false, policyVersion: null },
+    serverTime: new Date(START).toISOString() } });
+  await expect(page.locator('.community-alias').first()).toHaveText('ㅇㅇ');
+  await page.locator('#language-select').selectOption('en');
+  await expect(page.locator('.community-alias').first()).toHaveText('anonymous');
 });
 
 test('header login keeps a draft and never implies Send', async ({ page }) => {
@@ -299,7 +330,7 @@ for (const dismissal of ['close button', 'Escape']) {
     const state = await fixture(page);
     const draft = '닫은 로그인으로 전송하지 않고 브라우저에 보존할 초안';
     await page.locator('#prompt').fill(draft);
-    await page.locator('#submit-button').click();
+    await page.locator('#login-button').click();
     await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
     await page.evaluate(() => { window.dismissedGoogleCallback = window.testGoogleOptions.callback; });
     if (dismissal === 'Escape') await page.keyboard.press('Escape');
@@ -328,7 +359,7 @@ for (const dismissal of ['close button', 'Escape']) {
   });
 }
 
-test('a queued close after immediate reopen preserves the fresh Google button and new Send intent', async ({ page }) => {
+test('a queued close after immediate reopen preserves the fresh Google button and draft', async ({ page }) => {
   const state = await fixture(page);
   const draft = '새로 연 로그인에서 명시적으로 한 번만 전송할 초안';
   await page.locator('#prompt').fill(draft);
@@ -341,12 +372,12 @@ test('a queued close after immediate reopen preserves the fresh Google button an
     // Native close queues its event. Reopen for a different purpose in the same
     // task, before that event can run.
     document.getElementById('close-login').click();
-    document.getElementById('submit-button').click();
+    document.getElementById('login-button').click();
   });
   await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.queuedCloseSawOpen)).toBe(true);
   const pending = await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'));
-  expect(pending).not.toBeNull();
+  expect(pending).toBeNull();
   const afterLateClose = await page.evaluate(() => {
     const dialog = document.getElementById('login-dialog');
     const button = document.querySelector('#google-signin > button');
@@ -360,10 +391,9 @@ test('a queued close after immediate reopen preserves the fresh Google button an
   });
   expect(afterLateClose).toEqual({ open: true, buttonPreserved: true, callbackPreserved: true, pending });
   await googleLogin(page);
-  await expect.poll(() => state.posts.length).toBe(1);
-  await expect(page.locator('#prompt')).toHaveValue('');
+  expect(state.posts).toHaveLength(0);
+  await expect(page.locator('#prompt')).toHaveValue(draft);
   expect(state.loginCalls).toBe(1);
-  expect(state.posts[0].body).toBe(draft);
 });
 
 test('header login waits for delayed initial status without a false Google configuration error', async ({ page }, testInfo) => {
@@ -505,7 +535,7 @@ test('a late Google retry from a closed modal cannot reset a reopened modal or i
 test('zero quota after login preserves the draft, including after capacity returns and reload', async ({ page }) => {
   const state = await fixture(page, { quota: { remaining: 0, limit: 3, nextAvailableAt: new Date(START + 30000).toISOString() } });
   await page.locator('#prompt').fill('횟수가 돌아와도 내가 다시 전송할 제안');
-  await page.locator('#submit-button').click();
+  await page.locator('#login-button').click();
   await googleLogin(page);
   await expect(page.locator('#logout-button')).toBeVisible();
   await expect(page.locator('#prompt')).toHaveValue('횟수가 돌아와도 내가 다시 전송할 제안');
@@ -522,7 +552,7 @@ test('zero quota after login preserves the draft, including after capacity retur
 test('login and submission failures retain the original draft', async ({ page }) => {
   const state = await fixture(page, { loginFailure: true });
   await page.locator('#prompt').fill('오류가 나더라도 보존해야 하는 내용');
-  await page.locator('#submit-button').click();
+  await page.locator('#login-button').click();
   await googleLogin(page);
   await expect(page.locator('#login-message')).toContainText('Google 로그인 연결을 확인할 수 없습니다');
   await expect(page.locator('#prompt')).toHaveValue('오류가 나더라도 보존해야 하는 내용');
@@ -530,6 +560,7 @@ test('login and submission failures retain the original draft', async ({ page })
   state.submissionFailure = true;
   await page.locator('#retry-google').click();
   await page.getByRole('button', { name: 'Google 테스트 로그인' }).click();
+  await page.locator('#submit-button').click();
   await expect.poll(() => state.posts.length).toBe(1);
   await expect(page.locator('#form-message')).toContainText('잠시 서비스를 이용할 수 없습니다');
   await expect(page.locator('#prompt')).toHaveValue('오류가 나더라도 보존해야 하는 내용');
@@ -558,9 +589,9 @@ test('editing is available at zero quota and does not become a new submission', 
 });
 
 for (const width of [360, 390]) {
-  test(`mobile ${width}px supports byte limits, Google auto-submit and editing without horizontal overflow`, async ({ page }, testInfo) => {
+  test(`mobile ${width}px supports byte limits, signed-in submission and editing without horizontal overflow`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
-    const state = await fixture(page);
+    const state = await fixture(page, { session: structuredClone(signedIn) });
     await expect(page.locator('#hero-title')).toBeVisible();
     await expect(page.locator('#countdown')).toBeVisible();
     await expect(page.locator('.hero-description')).toContainText('싱글플레이 로그라이크');
@@ -582,15 +613,6 @@ for (const width of [360, 390]) {
     await page.locator('#prompt').fill('가'.repeat(666) + 'ab');
     await expect(page.locator('#byte-count')).toContainText('2,000');
     await page.locator('#submit-button').click();
-    const googleButton = page.getByRole('button', { name: 'Google 테스트 로그인' });
-    await expect(googleButton).toBeVisible();
-    for (const element of [page.locator('#login-dialog'), googleButton]) {
-      const bounds = await element.boundingBox();
-      expect(bounds.x).toBeGreaterThanOrEqual(0);
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    }
-    expect(await page.locator('#login-dialog').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    await googleLogin(page);
     await expect.poll(() => state.posts.length).toBe(1);
     await expect(page.locator('#prompt')).toHaveValue('');
     await page.locator('#open-my-proposals').click();
@@ -618,29 +640,24 @@ test('IME composition and a mobile orientation change retain the draft and expli
   await expect(page.locator('#prompt')).toHaveValue('모바일 한글 조합 중인 초안');
   await page.locator('#prompt').dispatchEvent('compositionend', { data: '안' });
   await page.locator('#submit-button').click();
-  await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
   await page.setViewportSize({ width: 844, height: 390 });
-  await expect(page.locator('#login-dialog')).toBeVisible();
   await page.setViewportSize({ width: 360, height: 740 });
-  await expect(page.locator('#login-dialog')).toBeVisible();
-  expect(await page.locator('#login-dialog').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await googleLogin(page);
   await expect.poll(() => state.posts.length).toBe(1);
   expect(state.posts[0].body).toBe('모바일 한글 조합 중인 초안');
+  expect(state.loginCalls).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('closing a Send login modal cancels auto-send before a later header login', async ({ page }) => {
+test('header login never resubmits a previously sent anonymous idea', async ({ page }) => {
   const state = await fixture(page);
-  await page.locator('#prompt').fill('로그인 취소 뒤에는 전송하지 않을 내용');
+  await page.locator('#prompt').fill('익명으로 한 번만 전송할 내용');
   await page.locator('#submit-button').click();
-  await expect(page.locator('#login-dialog')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#login-dialog')).toBeHidden();
+  await expect.poll(() => state.posts.length).toBe(1);
   await page.locator('#login-button').click();
   await googleLogin(page);
   await expect(page.locator('#logout-button')).toBeVisible();
-  await expect(page.locator('#prompt')).toHaveValue('로그인 취소 뒤에는 전송하지 않을 내용');
-  expect(state.posts).toHaveLength(0);
+  await expect(page.locator('#prompt')).toHaveValue('');
+  expect(state.posts).toHaveLength(1);
 });
 
 test('logout clears account management content while preserving the unsubmitted new draft', async ({ page }) => {
@@ -845,10 +862,10 @@ test('a development-only pause keeps proposal submission available', async ({ pa
   await expect(page.locator('#prompt')).toHaveValue('');
 });
 
-test('a pause during the Google popup cancels auto-send permanently but still permits login', async ({ page }) => {
+test('a pause during the Google popup preserves the draft and still permits login', async ({ page }) => {
   const state = await fixture(page);
   await page.locator('#prompt').fill('중지 중에는 자동 전송하면 안 되는 내용');
-  await page.locator('#submit-button').click();
+  await page.locator('#login-button').click();
   await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
   state.service = { ...activeService, mode: 'maintenance', message: '잠시 점검합니다.' };
   // Login rechecks status even if the normal background poll has not run yet.
@@ -867,15 +884,14 @@ test('a pause during the Google popup cancels auto-send permanently but still pe
   expect(state.posts).toHaveLength(0);
 });
 
-test('a failed status check after discovering an existing login cancels the pending Send', async ({ page }) => {
+test('a failed status check after discovering an existing login preserves the draft', async ({ page }) => {
   const state = await fixture(page);
   await page.locator('#prompt').fill('다른 창 로그인 확인 뒤에도 보존할 초안');
   // Another tab has signed in, but the public page still displays its anonymous session.
   state.session = structuredClone(signedIn);
   state.statusFailure = true;
-  await page.locator('#submit-button').click();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect(page.locator('#connection-notice')).toBeVisible();
-  await expect(page.locator('#form-message')).toContainText('자동 제출하지 않았어요');
   await expect(page.locator('#prompt')).toHaveValue('다른 창 로그인 확인 뒤에도 보존할 초안');
   expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
   state.statusFailure = false;
@@ -996,24 +1012,23 @@ test('English copy and Washington release time keep the UTC target without trans
   expect(await page.evaluate(() => window.translationXss)).toBeUndefined();
 });
 
-test('changing language in a pending Google login preserves nonce and explicit Send exactly once', async ({ page }) => {
+test('changing language during header login preserves nonce and requires one explicit Send', async ({ page }) => {
   let completeLogin;
   const loginGate = new Promise(resolve => { completeLogin = resolve; });
   const state = await fixture(page, { locale: 'en', loginGate });
   const draft = 'Different weapons, one shared roguelike. 한글도 그대로.';
   await page.locator('#prompt').fill(draft);
-  await page.locator('#submit-button').click();
+  await page.locator('#login-button').click();
   await expect(page.getByRole('button', { name: 'Continue with Google (test)' })).toBeVisible();
   const nonce = await page.evaluate(() => window.testGoogleOptions.nonce);
-  const queued = await page.evaluate(() => JSON.parse(sessionStorage.getItem('yourgame.pending.v1')).requestId);
   await page.locator('#login-language-select').selectOption('ko');
   await expect(page.getByRole('button', { name: 'Google 테스트 로그인' })).toBeVisible();
-  await expect(page.locator('#login-description')).toContainText('Google 계정으로 로그인');
+  await expect(page.locator('#login-description')).toContainText('Google로 로그인');
   await page.locator('#login-language-select').selectOption('en');
   await expect(page.locator('#login-description')).toContainText('Log in with Google');
   expect(await page.evaluate(() => window.testGoogleOptions.nonce)).toBe(nonce);
   expect(await page.evaluate(() => window.testGoogleInitializations)).toBe(1);
-  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('yourgame.pending.v1')).requestId)).toBe(queued);
+  expect(await page.evaluate(() => sessionStorage.getItem('yourgame.pending.v1'))).toBeNull();
   expect(state.loginCalls).toBe(0);
   expect(state.posts).toHaveLength(0);
   await page.getByRole('button', { name: 'Continue with Google (test)' }).click();
@@ -1023,9 +1038,12 @@ test('changing language in a pending Google login preserves nonce and explicit S
   await expect(page.locator('#login-message')).toContainText('Google 계정과 남은 제출 횟수');
   expect(state.posts).toHaveLength(0);
   completeLogin();
+  await expect(page.locator('#logout-button')).toBeVisible();
+  await expect(page.locator('#prompt')).toHaveValue(draft);
+  await page.locator('#submit-button').click();
   await expect.poll(() => state.posts.length).toBe(1);
   expect(state.posts[0].body).toBe(draft);
-  expect(state.posts[0].requestId).toBe(queued);
+  expect(state.posts[0].requestId).toBeTruthy();
   await expect(page.locator('#prompt')).toHaveValue('');
   await expect(page.locator('#form-message')).toContainText('제안이 접수됐어요');
   await page.locator('#language-select').selectOption('en');
