@@ -143,6 +143,33 @@ test('the main-page isolated frame plays a synthetic defend, reward, victory and
   expect(state.unexpected).toEqual([]);
 });
 
+test('a dragged card cannot suppress the same card when it is offered as the next reward', async ({ page, context }) => {
+  await fixture(context);
+  await openMain(page);
+  const frame = await readyFrame(page);
+  await start(frame);
+  const before = await saved(page);
+  const tileId = before.data.state.incoming[0].tileId;
+  const card = frame.locator('.card[data-card="guard"]');
+  await card.evaluate((node, targetTileId) => {
+    const cardBox = node.getBoundingClientRect();
+    const tileBox = document.querySelector(`.hex[data-tile="${targetTileId}"]`).getBoundingClientRect();
+    const init = { bubbles: true, button: 0, pointerId: 41, pointerType: 'touch' };
+    node.dispatchEvent(new PointerEvent('pointerdown', {
+      ...init, clientX: cardBox.x + cardBox.width / 2, clientY: cardBox.y + cardBox.height / 2,
+    }));
+    node.dispatchEvent(new PointerEvent('pointerup', {
+      ...init, clientX: tileBox.x + tileBox.width / 2, clientY: tileBox.y + tileBox.height / 2,
+    }));
+  }, tileId);
+  await expect(frame.locator('.card[data-card="guard"]')).toHaveCount(0);
+  await endWave(frame);
+  await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
+  await frame.locator('.reward[data-card="guard"]').click();
+  await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
+  expect((await saved(page)).data.state.acquired).toEqual(['guard']);
+});
+
 test('image games load without response streams or HTMLImageElement.decode', async ({ page, context }) => {
   await context.addInitScript(() => {
     delete HTMLImageElement.prototype.decode;

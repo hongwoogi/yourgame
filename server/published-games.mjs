@@ -6,4 +6,5 @@ export const publishedGames = Object.freeze([
   Object.freeze({"version":"v20260902-r1","sha256":"61b4c3b25d003a6925d73c2425d40aa8114626515a79c9e69062649684b90786","reviewId":"daily-correction-review-20260902-r1"}),
   Object.freeze({"version":"v20260903","sha256":"17f93107562afd5ce2fe3d3b1b63b792eb775a4a114f5f46368dddf80ca6d531","reviewId":"daily-game-review-20260903-r1"}),
   Object.freeze({"version":"v20260904","sha256":"c559a942942fc1c0d3d0fe4e638a7729e4214df8124cc687fb5c9b35221946ba","reviewId":"daily-game-review-20260904-r1"}),
+  Object.freeze({"version":"v20260904-r1","sha256":"ebbc6856fd4342a20b50d97ad28547eb2530024d431f455e6cafbc767b42435b","reviewId":"daily-game-review-20260904-r2"}),
 ]);
