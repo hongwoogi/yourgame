@@ -187,24 +187,55 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
       try {
         await page.goto('/?lang=en');
         phase = 'start';
-        const frame = page.frameLocator('#live-game-frame');
-        const noOverflow = () => page.frames().find(candidate => candidate.url().endsWith('/game-frame.html')).evaluate(() => {
-          const game = document.getElementById('game');
-          return game.scrollWidth <= game.clientWidth && game.scrollHeight <= game.clientHeight
-            && document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight;
-        });
+        const frame = page.frameLocator('#live-game-frame'), layoutSamples = [];
+        const noOverflow = async label => {
+          const measurement = await page.frames().find(candidate => candidate.url().endsWith('/game-frame.html')).evaluate(() => {
+            const game = document.getElementById('game');
+            const gameBounds = game.getBoundingClientRect();
+            const visible = [...game.querySelectorAll('button,.topbar,.stats,.board,.hand,.section-label,.notice,.save-status')]
+              .filter(node => { const box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0; });
+            return { locale: document.documentElement.lang, viewportWidth: innerWidth, viewportHeight: innerHeight,
+              gameClientWidth: game.clientWidth, gameClientHeight: game.clientHeight,
+              gameScrollWidth: game.scrollWidth, gameScrollHeight: game.scrollHeight,
+              documentScrollWidth: document.documentElement.scrollWidth,
+              documentScrollHeight: document.documentElement.scrollHeight,
+              contentInside: visible.every(node => { const box = node.getBoundingClientRect();
+                return box.left >= gameBounds.left - 1 && box.top >= gameBounds.top - 1
+                  && box.right <= gameBounds.right + 1 && box.bottom <= gameBounds.bottom + 1; }) };
+          });
+          layoutSamples.push({ label, ...measurement });
+          return measurement.gameScrollWidth <= measurement.gameClientWidth
+            && measurement.gameScrollHeight <= measurement.gameClientHeight
+            && measurement.documentScrollWidth <= measurement.viewportWidth
+            && measurement.documentScrollHeight <= measurement.viewportHeight && measurement.contentInside;
+        };
         phase = 'start_button';
         await expect(frame.getByRole('button', { name: 'Begin expedition', exact: true })).toBeEnabled();
         phase = 'start_layout';
-        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        check(await noOverflow('start-en'), 'BROWSER_VERTICAL_OVERFLOW');
         phase = 'start_help';
         await frame.getByRole('button', { name: 'How to play', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'help');
-        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        check(await noOverflow('help-en'), 'BROWSER_VERTICAL_OVERFLOW');
         await frame.getByRole('button', { name: 'Return to game', exact: true }).click({ trial: true }).catch(() => {});
         await frame.getByRole('button', { name: 'Next', exact: true }).click();
+        check(await noOverflow('help-en-page-2'), 'BROWSER_VERTICAL_OVERFLOW');
         await frame.getByRole('button', { name: 'Next', exact: true }).click();
+        check(await noOverflow('help-en-page-3'), 'BROWSER_VERTICAL_OVERFLOW');
         await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
+        await page.locator('#language-select').selectOption('ko');
+        await expect(frame.locator('html')).toHaveAttribute('lang', 'ko');
+        check(await noOverflow('start-ko'), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: '게임 방법', exact: true }).click();
+        check(await noOverflow('help-ko-page-1'), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: '다음', exact: true }).click();
+        check(await noOverflow('help-ko-page-2'), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: '다음', exact: true }).click();
+        check(await noOverflow('help-ko-page-3'), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: '게임으로', exact: true }).click();
+        check(await noOverflow('start-ko-return'), 'BROWSER_VERTICAL_OVERFLOW');
+        await page.locator('#language-select').selectOption('en');
+        await expect(frame.locator('html')).toHaveAttribute('lang', 'en');
         phase = 'start_fixed';
         if (bundle.experience?.choiceMode === 'single-fixed') {
           await expect(frame.locator('.hero')).toHaveCount(1);
@@ -217,10 +248,27 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
         phase = 'playing_cards';
         await expect(frame.locator('.card-art')).toHaveCount(4);
+        const accessibility = await page.frames().find(candidate => candidate.url().endsWith('/game-frame.html')).evaluate(() => {
+          const cards = [...document.querySelectorAll('.card')], first = cards[0];
+          const pixels = selector => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
+          const bounds = cards.map(card => card.getBoundingClientRect());
+          return { rootFont: pixels(':root'), cardNameFont: pixels('.card strong'),
+            cardDescriptionFont: pixels('.card .description'), effectFont: pixels('.card .effect'),
+            cardCount: cards.length, minimumCardWidth: Math.min(...bounds.map(box => box.width)),
+            minimumCardHeight: Math.min(...bounds.map(box => box.height)),
+            cardTextFits: cards.every(card => [...card.querySelectorAll('strong,.description,.effect')]
+              .every(node => node.scrollHeight <= node.clientHeight + 1 && node.scrollWidth <= node.clientWidth + 1)),
+            handColumns: getComputedStyle(first.parentElement).gridTemplateColumns.split(' ').length };
+        });
+        check(accessibility.rootFont >= 13 && accessibility.cardNameFont >= 11
+          && accessibility.cardDescriptionFont >= 10 && accessibility.effectFont >= 10
+          && accessibility.cardCount === 4 && accessibility.minimumCardWidth >= 140
+          && accessibility.minimumCardHeight >= 92 && accessibility.cardTextFits && accessibility.handColumns === 2,
+        'BROWSER_ACCESSIBILITY_SCALE_FAILED');
         phase = 'playing_board_art';
         if (bundle.art.boardImage) await expect(frame.locator('.hex').first()).toHaveCSS('background-image', /blob:/);
         phase = 'playing_layout';
-        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        check(await noOverflow('playing-en'), 'BROWSER_VERTICAL_OVERFLOW');
         const saved = () => page.evaluate(async version => {
           const { createGameSaveStore } = await import('/game-save-store.js'); const store = createGameSaveStore(version);
           try { return await store.load(); } finally { store.close(); }
@@ -247,18 +295,24 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         }
         check(played && fortified, 'BROWSER_NO_CARD_DEFENSE');
         phase = 'reward';
+        await page.locator('#language-select').selectOption('ko');
+        await expect(frame.locator('html')).toHaveAttribute('lang', 'ko');
+        check(await noOverflow('playing-ko-before-reward'), 'BROWSER_VERTICAL_OVERFLOW');
         await frame.locator('[data-action="endTurn"]').click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'reward');
-        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
+        check(await noOverflow('reward-ko'), 'BROWSER_VERTICAL_OVERFLOW');
         const rewardState = (await saved()).data.state;
         const reward = bundle.experience?.rewardRule === 'first-seeded'
           ? { cardId: rewardState.rewardChoices[0] } : chooseStrategyAction(bundle.config, rewardState);
         if (bundle.experience?.rewardRule === 'first-seeded') await expect(frame.locator('.reward')).toHaveCount(1);
         await frame.locator(`.reward[data-card="${reward.cardId}"]`).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'growth');
-        check(await noOverflow(), 'BROWSER_VERTICAL_OVERFLOW');
-        await frame.getByRole('button', { name: 'Return to game', exact: true }).click();
+        check(await noOverflow('growth-ko'), 'BROWSER_VERTICAL_OVERFLOW');
+        await frame.getByRole('button', { name: '게임으로', exact: true }).click();
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
+        check(await noOverflow('playing-ko-after-growth'), 'BROWSER_VERTICAL_OVERFLOW');
+        await page.locator('#language-select').selectOption('en');
+        await expect(frame.locator('html')).toHaveAttribute('lang', 'en');
         phase = 'pause_resume';
         const snapshot = await saved();
         await page.locator('#prompt').fill('Synthetic QA draft; not submitted.');
@@ -268,6 +322,7 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         phase = 'save_locale';
         await page.locator('#language-select').selectOption('ko');
         await expect(frame.locator('html')).toHaveAttribute('lang', 'ko');
+        check(await noOverflow('playing-ko'), 'BROWSER_VERTICAL_OVERFLOW');
         check(JSON.stringify(await saved()) === JSON.stringify(snapshot), 'BROWSER_SAVE_CHANGED');
         phase = 'isolation';
         await page.locator('#language-select').selectOption('en'); await page.reload();
@@ -292,7 +347,7 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
         check(Math.abs(bounds.width / bounds.height - 9 / 16) < 0.01
           && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
           && await child.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
-          && await noOverflow(), 'BROWSER_LAYOUT_FAILED');
+          && await noOverflow('playing-en-reload'), 'BROWSER_LAYOUT_FAILED');
         const visibleGame = page.locator('#live-game-frame');
         await expect(frame.locator('#game')).toHaveAttribute('data-phase', 'playing');
         await expect(frame.locator('#game')).toBeVisible();
@@ -309,6 +364,7 @@ export async function runCandidateBrowser(raw, { baseURL = 'http://localhost:300
           'public/game-frame.html', 'public/game-host.js'].every(file => served.has(file)), 'SERVED_RUNTIME_MISSING');
         check(errors.length === 0 && unexpected.length === 0 && blocked.length === 0, 'BROWSER_RUNTIME_FAILED');
         results.push({ width, seed, passed: true, checks: ['card_hex', 'wave_reward', 'pause_resume', 'locale', 'reload_save', 'isolation', 'layout', 'served_runtime_bytes'],
+          accessibility, layoutSamples, frameBounds: { width: bounds.width, height: bounds.height, ratio: bounds.width / bounds.height },
           screenshot: path.relative(privateRoot, output).split(path.sep).join('/'), screenshotSha256: sha(capture),
           gameScreenshot: path.relative(privateRoot, gameOutput).split(path.sep).join('/'), gameScreenshotSha256: sha(gameCapture), servedFiles: [...served].sort() });
       } catch (error) {
