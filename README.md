@@ -36,6 +36,7 @@ The repository contains the website, server APIs, game runtime and versioned gam
 - Up to three new proposals per rolling 60 minutes, limited to 2,000 UTF-8 bytes each. The browser keeps the anonymous count locally and the server independently enforces the session quota. Clearing local data is not an identity-grade reset guarantee.
 - Google sign-in remains available for managing proposals, voting, editable public names, and contribution leaderboards. Editing an eligible signed-in proposal does not use another submission.
 - Version-specific local saves, reviewed game publication, and a fallback to the last verified game when a candidate fails.
+- The mobile game loader supports browsers without streaming Fetch bodies or `HTMLImageElement.decode`, limits concurrent image transfers, and retries one transient first-load failure without replacing a working game.
 - A daily target of **23:00 KST for collecting that day's ideas and the next midnight for release**, subject to review and validation. This is a target, not a guarantee of an on-time release.
 - A Teen content ceiling as a design constraint, **not an official ESRB rating**.
 

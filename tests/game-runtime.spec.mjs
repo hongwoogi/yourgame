@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { fixtureBundle } from './fixtures/game-bundle.mjs';
 
@@ -8,7 +9,7 @@ const START = '2026-08-31T03:00:00.000Z';
 const CUTOFF = '2026-08-31T14:00:00.000Z';
 const RELEASE = '2026-08-31T15:00:00.000Z';
 
-async function fixture(context, { bundle = fixtureBundle(), digest } = {}) {
+async function fixture(context, { bundle = fixtureBundle(), digest, assetBytes = new Map() } = {}) {
   const raw = JSON.stringify(bundle);
   const version = bundle.config.gameVersion;
   const sha256 = digest ?? createHash('sha256').update(raw).digest('hex');
@@ -20,11 +21,15 @@ async function fixture(context, { bundle = fixtureBundle(), digest } = {}) {
   });
   await context.route('**/games/**', route => {
     state.bundleReads += 1;
-    if (new URL(route.request().url()).pathname !== `/games/${version}/game.json`) {
-      state.unexpected.push('game-path');
-      return route.fulfill({ status: 404, body: '' });
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === `/games/${version}/game.json`) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: raw });
     }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: raw });
+    if (assetBytes.has(pathname)) {
+      return route.fulfill({ status: 200, contentType: 'image/png', body: assetBytes.get(pathname) });
+    }
+    state.unexpected.push('game-path');
+    return route.fulfill({ status: 404, body: '' });
   });
   await context.route('**/api/**', route => {
     const request = route.request();
@@ -53,6 +58,17 @@ async function fixture(context, { bundle = fixtureBundle(), digest } = {}) {
     return reply({ error: { code: 'UNEXPECTED_FIXTURE_REQUEST' } }, 400);
   });
   return state;
+}
+
+function imageBundle() {
+  const bundle = fixtureBundle({ version: 'fixture-image-v2' });
+  const bytes = readFileSync(new URL('../public/games/v20260903/assets/cards/stone-rampart.png', import.meta.url));
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  bundle.schemaVersion = 2;
+  bundle.assets = bundle.config.cards.map(card => ({ id: `card-${card.id}`, path: `assets/cards/${card.id}.png`,
+    mediaType: 'image/png', bytes: bytes.byteLength, sha256, width: 512, height: 512 }));
+  bundle.art.cardImages = bundle.config.cards.map(card => ({ id: card.id, assetId: `card-${card.id}` }));
+  return { bundle, assetBytes: new Map(bundle.assets.map(asset => [`/games/${bundle.config.gameVersion}/${asset.path}`, bytes])) };
 }
 
 async function openMain(page) {
@@ -125,6 +141,22 @@ test('the main-page isolated frame plays a synthetic defend, reward, victory and
   expect(restarted.revision).toBe(finished.revision + 1);
   expect(state.mutations).toEqual([]);
   expect(state.unexpected).toEqual([]);
+});
+
+test('image games load without response streams or HTMLImageElement.decode', async ({ page, context }) => {
+  await context.addInitScript(() => {
+    delete HTMLImageElement.prototype.decode;
+    const descriptor = Object.getOwnPropertyDescriptor(Response.prototype, 'body');
+    if (descriptor?.configurable) Object.defineProperty(Response.prototype, 'body', { configurable: true, get: () => null });
+  });
+  await fixture(context, imageBundle());
+  await openMain(page);
+  const frame = await readyFrame(page);
+  await expect(frame.locator('.card-art')).toHaveCount(0);
+  await start(frame);
+  await expect(frame.locator('.card-art')).toHaveCount(2);
+  expect(await page.evaluate(() => ({ hasDecode: typeof HTMLImageElement.prototype.decode === 'function', hasBody: Boolean(new Response('').body) })))
+    .toEqual({ hasDecode: false, hasBody: false });
 });
 
 test('skipping defense loses and a full reload preserves the finished save until explicit continuation/retry', async ({ page, context }) => {

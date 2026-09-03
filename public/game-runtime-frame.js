@@ -71,7 +71,12 @@ async function loadAssets(records) {
       || !(record.bytes instanceof ArrayBuffer) || record.bytes.byteLength !== asset.bytes) throw new Error('GAME_ASSET_INVALID');
     const url = URL.createObjectURL(new Blob([record.bytes], { type: record.mediaType }));
     try {
-      const image = new Image(); image.src = url; await image.decode();
+      const image = new Image(); image.decoding = 'async';
+      await new Promise((resolve, reject) => {
+        image.addEventListener('load', resolve, { once: true });
+        image.addEventListener('error', () => reject(new Error('GAME_ASSET_INVALID')), { once: true });
+        image.src = url;
+      });
       if (image.naturalWidth !== asset.width || image.naturalHeight !== asset.height) throw new Error('GAME_ASSET_INVALID');
       assetUrls.set(asset.id, url);
     } catch (error) { URL.revokeObjectURL(url); throw error; }
@@ -324,12 +329,18 @@ document.addEventListener('keydown', event => {
 window.addEventListener('pagehide', () => { for (const url of assetUrls.values()) URL.revokeObjectURL(url); assetUrls.clear(); });
 window.addEventListener('message', async event => {
   if (port || event.source !== parent || event.data?.type !== 'runtime:init' || event.data.protocol !== 1 || event.ports.length !== 1) return;
-  try { bundle = validateGameBundle(event.data.bundle); await loadAssets(event.data.assets || []); } catch { return; }
+  const initPort = event.ports[0];
+  const expectedVersion = typeof event.data?.bundle?.config?.gameVersion === 'string' ? event.data.bundle.config.gameVersion : '';
+  port = initPort;
+  try { bundle = validateGameBundle(event.data.bundle); await loadAssets(event.data.assets || []); }
+  catch {
+    try { initPort.postMessage({ protocol: 1, type: 'runtime:error', gameVersion: expectedVersion }); initPort.close(); } catch { /* Parent timeout remains the fallback. */ }
+    port = null; return;
+  }
   locale = event.data.locale === 'ko' ? 'ko' : 'en';
   heroId = bundle.experience?.founderId || bundle.config.heroes[0].id;
   // Palette values are fixed hex strings. They are never inserted into markup.
   for (const key of ['background', 'panel', 'accent', 'ink', 'muted']) document.documentElement.style.setProperty('--' + key, bundle.art[key]);
-  port = event.ports[0];
   port.addEventListener('message', ({ data }) => {
     if (data?.protocol !== 1) return;
     if (data.type === 'runtime:pause') pause();

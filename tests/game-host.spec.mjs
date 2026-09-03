@@ -24,6 +24,7 @@ async function fixture(context, { firstFailure = null } = {}) {
   });
   await context.route('**/games/**', route => {
     state.bundleReads++;
+    if (state.failure === 'http-once') { state.failure = null; return route.fulfill({ status: 503, body: '' }); }
     if (state.failure === 'http') return route.fulfill({ status: 503, body: '' });
     const version = new URL(route.request().url()).pathname.split('/')[2];
     return route.fulfill({ contentType: 'application/json', body: state.failure === 'digest' ? '{}'
@@ -86,7 +87,10 @@ for (const failure of ['http', 'runtime']) {
     await openMain(page);
     if (failure === 'runtime') {
       await expect.poll(() => state.frameLoads).toBe(1);
-      await page.clock.fastForward(16000);
+      await page.clock.fastForward(46000);
+      await page.clock.fastForward(2000);
+      await expect.poll(() => state.frameLoads).toBe(2);
+      await page.clock.fastForward(46000);
     }
     await expect(page.locator('#preview-note')).toContainText('The game could not load');
     await expect(page.locator('#live-game-frame')).toHaveCount(0);
@@ -115,7 +119,7 @@ for (const failure of ['http', 'digest', 'schema', 'runtime', 'descriptor']) {
       // The still-working frame remains visible while the new hidden frame times out.
       await expect(page.locator('iframe[data-game-version="fixture-v1"]')).toBeVisible();
       expect(await saved(page)).toEqual(record);
-      await page.clock.fastForward(16000);
+      await page.clock.fastForward(46000);
     }
     await expect(page.locator('#preview-note')).toContainText('Keeping the previous working game');
     await expect(page.locator('#preview-note')).toContainText('fixture-v1');
@@ -139,6 +143,17 @@ for (const failure of ['http', 'digest', 'schema', 'runtime', 'descriptor']) {
     expect(state.unexpected).toEqual([]);
   });
 }
+
+test('a transient first-load failure retries once and mounts the same verified game', async ({ page, context }) => {
+  const state = await fixture(context, { firstFailure: 'http-once' });
+  await openMain(page);
+  await page.clock.fastForward(2000);
+  await expect.poll(() => state.bundleReads).toBe(2);
+  await expect(page.locator('#live-game-frame')).toBeVisible();
+  await expect(page.locator('#preview-note')).toContainText('Playable here');
+  expect(state.mutations).toEqual([]);
+  expect(state.unexpected).toEqual([]);
+});
 
 test('maintenance pauses and locks the existing game without discarding progress; returning active needs explicit resume', async ({ page, context }) => {
   const state = await fixture(context);
